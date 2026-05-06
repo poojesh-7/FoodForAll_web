@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { getOnboardingRedirect } from "@/lib/onboarding";
+import { getRouteAccessRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
 const protectedRoutes = [
@@ -13,6 +13,7 @@ const protectedRoutes = [
   "/restaurant/register",
   "/pending-verification",
   "/profile",
+  "/provider",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -56,7 +57,7 @@ export default function AuthProvider({
         return;
       }
 
-      const redirectPath = getOnboardingRedirect(authUser, pathname);
+      const redirectPath = getRouteAccessRedirect(authUser, pathname);
 
       if (redirectPath) {
         router.replace(redirectPath);

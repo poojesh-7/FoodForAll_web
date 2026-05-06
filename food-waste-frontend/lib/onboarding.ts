@@ -27,7 +27,8 @@ export function isProfileComplete(user: OnboardingUser | null | undefined) {
   return Boolean(user?.role && user?.name && user?.email && user?.phone);
 }
 
-export function getRoleDashboard(_role: UserRole | null | undefined) {
+export function getRoleDashboard(role: UserRole | null | undefined) {
+  void role;
   return "/dashboard";
 }
 
@@ -69,4 +70,60 @@ export function getOnboardingRedirect(
   if (isOnboardingRoute(pathname)) return target;
 
   return target === getRoleDashboard(user?.role) ? null : target;
+}
+
+export function getRouteAccessRedirect(
+  user: OnboardingUser | null | undefined,
+  pathname: string
+) {
+  if (!user?.role) {
+    return pathname === "/select-role" ? null : "/select-role";
+  }
+
+  if (
+    (user.role === "user" || user.role === "volunteer") &&
+    !isProfileComplete(user)
+  ) {
+    return pathname === "/complete-profile" ? null : "/complete-profile";
+  }
+
+  if (pathname === "/select-role" || pathname.startsWith("/select-role/")) {
+    return getPostAuthRedirect(user);
+  }
+
+  if (
+    (pathname === "/complete-profile" || pathname.startsWith("/complete-profile/")) &&
+    (user.role === "provider" || user.role === "ngo")
+  ) {
+    return getPostAuthRedirect(user);
+  }
+
+  if (
+    (pathname.startsWith("/provider") || pathname.startsWith("/restaurant/register")) &&
+    user?.role !== "provider"
+  ) {
+    return getPostAuthRedirect(user);
+  }
+
+  if (pathname.startsWith("/ngo/register") && user?.role !== "ngo") {
+    return getPostAuthRedirect(user);
+  }
+
+  if (
+    pathname.startsWith(pendingVerificationRoute) &&
+    user.role !== "provider" &&
+    user.role !== "ngo"
+  ) {
+    return getPostAuthRedirect(user);
+  }
+
+  return null;
+}
+
+export function isPendingVerificationError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("not verified") ||
+    normalized.includes("verification")
+  );
 }

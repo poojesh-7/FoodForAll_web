@@ -1,51 +1,147 @@
 import { create } from "zustand";
-import api from "@/lib/axios";
-import { User } from "@/types/auth";
+import * as authApi from "@/services/auth";
+import type { AuthMeUser, AuthUser } from "@backend/contracts/api-contracts";
+
+type AuthStoreUser = AuthMeUser | AuthUser;
 
 interface AuthState {
-  user: User | null;
+  user: AuthStoreUser | null;
+  isAuthenticated: boolean;
+  initialized: boolean;
   loading: boolean;
-  setUser: (user: User | null) => void;
-  fetchMe: () => Promise<void>;
+  authError: string | null;
+  authSuccess: string | null;
+  setUser: (user: AuthStoreUser | null) => void;
+  clearMessages: () => void;
+  fetchMe: () => Promise<AuthMeUser | null>;
+  sendOtp: (phone: string) => Promise<boolean>;
+  verifyOtp: (
+    params: authApi.VerifyOtpPayload
+  ) => Promise<{ user: AuthUser; isNewUser: boolean } | null>;
   logout: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
+  isAuthenticated: false,
+  initialized: false,
   loading: false,
+  authError: null,
+  authSuccess: null,
 
-  setUser: (user) => set({ user }),
+  setUser: (user) =>
+    set({
+      user,
+      isAuthenticated: Boolean(user),
+      initialized: true,
+      authError: null,
+      authSuccess: null,
+    }),
+
+  clearMessages: () => set({ authError: null, authSuccess: null }),
 
   fetchMe: async () => {
     try {
-      set({ loading: true });
-
-      // 🍪 cookies automatically sent
-      const res = await api.get("/auth/me");
+      set({ loading: true, authError: null, authSuccess: null });
+      const user = await authApi.fetchMe();
 
       set({
-        user: res.data.user,
+        user,
+        isAuthenticated: true,
+        initialized: true,
+        authError: null,
+        authSuccess: null,
       });
 
+      return user;
     } catch {
-      // ❌ if unauthorized → user is not logged in
-      set({ user: null });
+      set({
+        user: null,
+        isAuthenticated: false,
+        initialized: true,
+        authError: null,
+        authSuccess: null,
+      });
+
+      return null;
     } finally {
       set({ loading: false });
     }
   },
+
+  sendOtp: async (phone) => {
+    try {
+      set({ loading: true, authError: null, authSuccess: null });
+      const response = await authApi.sendOtp({ phone });
+
+      set({
+        authError: null,
+        authSuccess: response.message || "OTP sent successfully.",
+      });
+
+      return true;
+    } catch (error) {
+      set({
+        authError: authApi.getErrorMessage(error),
+        authSuccess: null,
+      });
+      return false;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  verifyOtp: async (params) => {
+    try {
+      set({ loading: true, authError: null, authSuccess: null });
+      const result = await authApi.verifyOtp(params);
+
+      set({
+        user: result.user,
+        isAuthenticated: true,
+        initialized: true,
+        authError: null,
+        authSuccess: result.message || "Login successful.",
+      });
+
+      return {
+        user: result.user,
+        isNewUser: result.isNewUser,
+      };
+    } catch (error) {
+      set({
+        user: null,
+        isAuthenticated: false,
+        initialized: true,
+        authError: authApi.getErrorMessage(error),
+        authSuccess: null,
+      });
+
+      return null;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
   logout: async () => {
     try {
-      await api.post("/auth/logout");
+      set({ loading: true, authError: null, authSuccess: null });
+      await authApi.logout();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      set({
+        user: null,
+        isAuthenticated: false,
+        initialized: true,
+        loading: false,
+        authError: null,
+        authSuccess: null,
+      });
 
-      // clear state
-      set({ user: null });
-
-      // redirect
-      window.location.href = "/login";
-
-    } catch (err) {
-      console.error(err);
+      if (typeof window !== "undefined") {
+        window.location.assign("/login");
+      }
     }
   },
 }));

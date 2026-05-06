@@ -1,26 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import api from "@/lib/axios";
+import { authService } from "@/services/auth";
+import { useAuthStore } from "@/store/authStore";
+import type { UserRole } from "@backend/contracts/api-contracts";
 
 export default function SelectRolePage() {
   const router = useRouter();
+  const setUser = useAuthStore((state) => state.setUser);
 
-  const [role, setRole] = useState("");
+  const [role, setRole] = useState<UserRole | "">("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // 🔐 Ensure user is authenticated via cookies
-  useEffect(() => {
-    const phone = localStorage.getItem("phone");
-
-    if (!phone) {
-      router.replace("/login");
-    }
-  }, [router]);
-
-  const getRouteByRole = (role: string) => {
-    switch (role) {
+  const getRouteByRole = (selectedRole: UserRole) => {
+    switch (selectedRole) {
       case "user":
       case "volunteer":
         return "/complete-profile";
@@ -29,45 +24,48 @@ export default function SelectRolePage() {
       case "provider":
         return "/restaurant/register";
       default:
-        return "/login";
+        return "/dashboard";
     }
   };
 
   const handleSubmit = async () => {
-    if (!role) {
-      alert("Please select a role");
+    if (!role || loading) {
+      setError("Please select a role.");
       return;
     }
 
     try {
       setLoading(true);
+      setError("");
 
-      // 🔥 Cookie-based auth → no phone needed
-      await api.post("/auth/set-role", { role });
-
-      const nextRoute = getRouteByRole(role);
-      router.push(nextRoute);
-
-    } catch (err: any) {
-      console.error(err);
-      alert(err?.response?.data?.error || "Failed to set role");
+      const result = await authService.setRole({ role });
+      setUser(result.user);
+      router.push(getRouteByRole(role));
+    } catch (err) {
+      setError(authService.getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md border rounded-xl p-6 space-y-4">
+    <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
+      <div className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-semibold text-zinc-950">Select Your Role</h1>
 
-        <h1 className="text-2xl font-semibold text-center">
-          Select Your Role
-        </h1>
+        {error && (
+          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
 
         <select
           value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="w-full border p-3 rounded-lg"
+          onChange={(event) => {
+            setRole(event.target.value as UserRole | "");
+            setError("");
+          }}
+          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
         >
           <option value="">Select role</option>
           <option value="user">User</option>
@@ -78,13 +76,12 @@ export default function SelectRolePage() {
 
         <button
           onClick={handleSubmit}
-          disabled={loading}
-          className="w-full bg-black text-white p-3 rounded-lg disabled:opacity-50"
+          disabled={loading || !role}
+          className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "Processing..." : "Continue"}
         </button>
-
       </div>
-    </div>
+    </main>
   );
 }

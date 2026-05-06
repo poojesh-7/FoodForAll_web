@@ -17,7 +17,11 @@ interface AuthState {
   sendOtp: (phone: string) => Promise<boolean>;
   verifyOtp: (
     params: authApi.VerifyOtpPayload
-  ) => Promise<{ user: AuthUser; isNewUser: boolean } | null>;
+  ) => Promise<{ user: AuthStoreUser; isNewUser: boolean } | null>;
+  setRole: (role: authApi.SetRolePayload["role"]) => Promise<AuthStoreUser | null>;
+  completeProfile: (
+    params: authApi.CompleteProfilePayload
+  ) => Promise<AuthStoreUser | null>;
   logout: () => Promise<void>;
 }
 
@@ -95,9 +99,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       set({ loading: true, authError: null, authSuccess: null });
       const result = await authApi.verifyOtp(params);
+      const me = await authApi.fetchMe().catch(() => null);
+      const user = me ?? result.user;
 
       set({
-        user: result.user,
+        user,
         isAuthenticated: true,
         initialized: true,
         authError: null,
@@ -105,7 +111,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
 
       return {
-        user: result.user,
+        user,
         isNewUser: result.isNewUser,
       };
     } catch (error) {
@@ -113,6 +119,62 @@ export const useAuthStore = create<AuthState>((set) => ({
         user: null,
         isAuthenticated: false,
         initialized: true,
+        authError: authApi.getErrorMessage(error),
+        authSuccess: null,
+      });
+
+      return null;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  setRole: async (role) => {
+    try {
+      set({ loading: true, authError: null, authSuccess: null });
+      const result = await authApi.setRole({ role });
+      const me = await authApi.fetchMe().catch(() => null);
+      const user = me ?? result.user;
+
+      set({
+        user,
+        isAuthenticated: true,
+        initialized: true,
+        authError: null,
+        authSuccess: "Role saved successfully.",
+      });
+
+      return user;
+    } catch (error) {
+      set({
+        authError: authApi.getErrorMessage(error),
+        authSuccess: null,
+      });
+
+      return null;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  completeProfile: async (params) => {
+    try {
+      set({ loading: true, authError: null, authSuccess: null });
+      const result = await authApi.completeProfile(params);
+      const me = await authApi.fetchMe().catch(() => null);
+      const user = me ?? result.user;
+
+      set({
+        user,
+        isAuthenticated: true,
+        initialized: true,
+        authError: null,
+        authSuccess: "Profile completed successfully.",
+      });
+
+      return user;
+    } catch (error) {
+      set({
         authError: authApi.getErrorMessage(error),
         authSuccess: null,
       });

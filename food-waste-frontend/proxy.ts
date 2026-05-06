@@ -8,6 +8,7 @@ const protectedRoutes = [
   "/ngo/register",
   "/restaurant/register",
   "/pending-verification",
+  "/profile",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -49,6 +50,7 @@ export const config = {
     "/ngo/register/:path*",
     "/restaurant/register/:path*",
     "/pending-verification/:path*",
+    "/profile/:path*",
     "/login",
   ],
 };

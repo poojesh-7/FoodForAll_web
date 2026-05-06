@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { getOnboardingRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
 const protectedRoutes = [
@@ -11,6 +12,7 @@ const protectedRoutes = [
   "/ngo/register",
   "/restaurant/register",
   "/pending-verification",
+  "/profile",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -47,9 +49,18 @@ export default function AuthProvider({
     let active = true;
 
     fetchMe().then((authUser) => {
-      if (!active || authUser) return;
+      if (!active) return;
 
-      router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+      if (!authUser) {
+        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+        return;
+      }
+
+      const redirectPath = getOnboardingRedirect(authUser, pathname);
+
+      if (redirectPath) {
+        router.replace(redirectPath);
+      }
     });
 
     return () => {

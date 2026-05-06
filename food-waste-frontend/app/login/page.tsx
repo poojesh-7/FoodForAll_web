@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
+import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
 type LoginFormValues = {
@@ -57,7 +58,10 @@ export default function LoginPage() {
   useEffect(() => {
     if (!user?.id) return;
 
-    router.replace(getSafeNextPath() ?? "/dashboard");
+    const redirectPath = getPostAuthRedirect(user);
+    router.replace(
+      redirectPath === "/dashboard" ? getSafeNextPath() ?? redirectPath : redirectPath
+    );
   }, [router, user]);
 
   const phoneInput = register("phone", {
@@ -114,12 +118,10 @@ export default function LoginPage() {
 
     setRedirecting(true);
 
-    if (result.isNewUser || !result.user.role) {
-      router.push("/select-role");
-      return;
-    }
-
-    router.push(getSafeNextPath() ?? "/dashboard");
+    const redirectPath = getPostAuthRedirect(result.user);
+    router.push(
+      redirectPath === "/dashboard" ? getSafeNextPath() ?? redirectPath : redirectPath
+    );
   };
 
   const busy = loading || redirecting;

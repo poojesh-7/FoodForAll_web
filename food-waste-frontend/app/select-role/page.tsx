@@ -1,85 +1,121 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { authService } from "@/services/auth";
+import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 import type { UserRole } from "@backend/contracts/api-contracts";
 
+const roles: Array<{ value: UserRole; label: string; description: string }> = [
+  {
+    value: "user",
+    label: "Food Seeker",
+    description: "Reserve available food for yourself or your family.",
+  },
+  {
+    value: "volunteer",
+    label: "Volunteer",
+    description: "Help NGOs collect and deliver food.",
+  },
+  {
+    value: "ngo",
+    label: "NGO",
+    description: "Coordinate food collection and distribution.",
+  },
+  {
+    value: "provider",
+    label: "Food Provider",
+    description: "Share surplus food from your restaurant or kitchen.",
+  },
+];
+
 export default function SelectRolePage() {
   const router = useRouter();
-  const setUser = useAuthStore((state) => state.setUser);
+  const user = useAuthStore((state) => state.user);
+  const loading = useAuthStore((state) => state.loading);
+  const authError = useAuthStore((state) => state.authError);
+  const setRole = useAuthStore((state) => state.setRole);
+  const clearMessages = useAuthStore((state) => state.clearMessages);
 
-  const [role, setRole] = useState<UserRole | "">("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [selectedRole, setSelectedRole] = useState<UserRole | "">("");
+  const [formError, setFormError] = useState("");
 
-  const getRouteByRole = (selectedRole: UserRole) => {
-    switch (selectedRole) {
-      case "user":
-      case "volunteer":
-        return "/complete-profile";
-      case "ngo":
-        return "/ngo/register";
-      case "provider":
-        return "/restaurant/register";
-      default:
-        return "/dashboard";
-    }
-  };
+  useEffect(() => {
+    if (!user?.role) return;
+
+    router.replace(getPostAuthRedirect(user));
+  }, [router, user]);
 
   const handleSubmit = async () => {
-    if (!role || loading) {
-      setError("Please select a role.");
+    if (!selectedRole) {
+      setFormError("Please select a role.");
       return;
     }
 
-    try {
-      setLoading(true);
-      setError("");
+    setFormError("");
+    clearMessages();
 
-      const result = await authService.setRole({ role });
-      setUser(result.user);
-      router.push(getRouteByRole(role));
-    } catch (err) {
-      setError(authService.getErrorMessage(err));
-    } finally {
-      setLoading(false);
+    const updatedUser = await setRole(selectedRole);
+
+    if (updatedUser) {
+      router.push(getPostAuthRedirect(updatedUser));
     }
   };
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-zinc-950">Select Your Role</h1>
+      <div className="w-full max-w-2xl space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <div>
+          <h1 className="text-2xl font-semibold text-zinc-950">Select Your Role</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Choose the account type that matches how you will use the platform.
+          </p>
+        </div>
 
-        {error && (
+        {(formError || authError) && (
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
+            {formError || authError}
           </p>
         )}
 
-        <select
-          value={role}
-          onChange={(event) => {
-            setRole(event.target.value as UserRole | "");
-            setError("");
-          }}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-        >
-          <option value="">Select role</option>
-          <option value="user">User</option>
-          <option value="volunteer">Volunteer</option>
-          <option value="ngo">NGO</option>
-          <option value="provider">Provider</option>
-        </select>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {roles.map((role) => (
+            <label
+              key={role.value}
+              className={`cursor-pointer rounded-lg border p-4 transition ${
+                selectedRole === role.value
+                  ? "border-zinc-950 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-400"
+              }`}
+            >
+              <input
+                type="radio"
+                name="role"
+                value={role.value}
+                checked={selectedRole === role.value}
+                onChange={() => {
+                  setSelectedRole(role.value);
+                  setFormError("");
+                  clearMessages();
+                }}
+                className="sr-only"
+              />
+              <span className="block text-sm font-semibold text-zinc-950">
+                {role.label}
+              </span>
+              <span className="mt-1 block text-sm text-zinc-600">
+                {role.description}
+              </span>
+            </label>
+          ))}
+        </div>
 
         <button
           onClick={handleSubmit}
-          disabled={loading || !role}
+          disabled={loading || !selectedRole}
           className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? "Processing..." : "Continue"}
+          {loading ? "Saving..." : "Continue"}
         </button>
       </div>
     </main>

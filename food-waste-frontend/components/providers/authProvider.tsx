@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { getRouteAccessRedirect } from "@/lib/onboarding";
+import { getRoleDashboard, getRouteAccessRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
 const protectedRoutes = [
@@ -14,6 +14,8 @@ const protectedRoutes = [
   "/pending-verification",
   "/profile",
   "/provider",
+  "/ngo",
+  "/volunteer",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -71,9 +73,9 @@ export default function AuthProvider({
 
   useEffect(() => {
     if (isGuestOnlyRoute && isAuthenticated) {
-      router.replace("/dashboard");
+      router.replace(getRoleDashboard(user?.role));
     }
-  }, [isAuthenticated, isGuestOnlyRoute, router]);
+  }, [isAuthenticated, isGuestOnlyRoute, router, user?.role]);
 
   if (isProtectedRoute && (!initialized || loading) && !user) {
     return (

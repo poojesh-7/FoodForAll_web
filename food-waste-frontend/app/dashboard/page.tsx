@@ -3,8 +3,21 @@
 import { useEffect } from "react";
 import { socket } from "@/lib/socket";
 import LogoutButton from "@/components/LogoutButton";
+import { getRoleDashboard } from "@/lib/onboarding";
+import { useAuthStore } from "@/store/authStore";
+import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const user = useAuthStore((state) => state.user);
+
+  useEffect(() => {
+    const dashboard = getRoleDashboard(user?.role);
+    if (dashboard !== "/dashboard") {
+      router.replace(dashboard);
+    }
+  }, [router, user?.role]);
+
   useEffect(() => {
     socket.connect();
 

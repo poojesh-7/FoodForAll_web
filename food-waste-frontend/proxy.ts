@@ -10,6 +10,8 @@ const protectedRoutes = [
   "/pending-verification",
   "/profile",
   "/provider",
+  "/ngo",
+  "/volunteer",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -53,6 +55,8 @@ export const config = {
     "/pending-verification/:path*",
     "/profile/:path*",
     "/provider/:path*",
+    "/ngo/:path*",
+    "/volunteer/:path*",
     "/login",
   ],
 };

@@ -28,7 +28,8 @@ export function isProfileComplete(user: OnboardingUser | null | undefined) {
 }
 
 export function getRoleDashboard(role: UserRole | null | undefined) {
-  void role;
+  if (role === "ngo") return "/ngo";
+  if (role === "volunteer") return "/volunteer/dashboard";
   return "/dashboard";
 }
 
@@ -105,7 +106,19 @@ export function getRouteAccessRedirect(
     return getPostAuthRedirect(user);
   }
 
+  if (pathname.startsWith("/volunteer") && user?.role !== "volunteer") {
+    return getPostAuthRedirect(user);
+  }
+
   if (pathname.startsWith("/ngo/register") && user?.role !== "ngo") {
+    return getPostAuthRedirect(user);
+  }
+
+  if (
+    pathname.startsWith("/ngo") &&
+    !pathname.startsWith("/ngo/register") &&
+    user?.role !== "ngo"
+  ) {
     return getPostAuthRedirect(user);
   }
 

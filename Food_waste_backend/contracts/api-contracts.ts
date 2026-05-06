@@ -1,0 +1,1236 @@
+// API contracts derived from Food_waste_backend routes/controllers.
+// Response envelopes are the strict contract shape requested for frontend use:
+// { success, message, data }. Data shapes below match the backend payloads.
+
+export type DbId = string | number;
+export type ISODateString = string;
+export type DbRow = Record<string, unknown>;
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "ALL";
+export type UserRole = "user" | "volunteer" | "ngo" | "provider";
+export type VolunteerRequestAction = "accepted" | "rejected";
+
+export interface ApiResponse<TData> {
+  success: boolean;
+  message: string;
+  data: TData;
+}
+
+export interface ApiErrorResponse {
+  success: false;
+  message: string;
+  data: null;
+}
+
+export type EmptyData = null;
+export type NoRequestBody = Record<string, never>;
+export type NoRequestQuery = Record<string, never>;
+export type NoRequestParams = Record<string, never>;
+
+export interface IdParams {
+  id: string;
+}
+
+export interface ListingIdParams {
+  listingId: string;
+}
+
+export interface ProviderIdParams {
+  providerId: string;
+}
+
+export interface RequestIDParams {
+  requestID: string;
+}
+
+export interface PaginationQuery {
+  page?: string;
+  limit?: string;
+}
+
+export interface CoordinatesQuery {
+  lat: string;
+  lng: string;
+  radius?: string;
+}
+
+export interface OptionalCoordinatesQuery {
+  lat?: string;
+  lng?: string;
+  radius?: string;
+}
+
+export interface AuthUser {
+  id: DbId;
+  role: UserRole | null;
+}
+
+export interface UserProfile {
+  id: DbId;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  role: UserRole | null;
+  created_at: ISODateString;
+}
+
+export interface UserUpdateResult {
+  id: DbId;
+  name: string | null;
+  email: string | null;
+  role: UserRole | null;
+  profile_image: string | null;
+}
+
+export interface UserLocationResult {
+  id: DbId;
+  address: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+}
+
+export interface AuthMeUser extends UserProfile {
+  is_verified: boolean;
+}
+
+export interface CompleteProfileUser {
+  id: DbId;
+  name: string;
+  email: string;
+  role: UserRole;
+  address: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+}
+
+export interface RestaurantRegistration {
+  id: DbId;
+  user_id: DbId;
+  restaurant_name: string;
+  fssai_number: string;
+  is_verified: boolean;
+}
+
+export interface NGORegistration {
+  id: DbId;
+  user_id: DbId;
+  organization_name: string;
+  service_radius_km: number | string;
+  is_verified: boolean;
+}
+
+export interface FoodListingRow extends DbRow {
+  id?: DbId;
+  provider_id?: DbId;
+  title?: string;
+  description?: string | null;
+  quantity?: number | string;
+  remaining_quantity?: number | string;
+  price?: number | string;
+  is_free?: boolean;
+  pickup_start_time?: ISODateString | null;
+  pickup_end_time?: ISODateString;
+  latitude?: number | string;
+  longitude?: number | string;
+  status?: string;
+}
+
+export interface FoodListingWithDistance extends FoodListingRow {
+  distance: number | string;
+}
+
+export interface NearbyFoodListing {
+  id: DbId;
+  title: string;
+  remaining_quantity: number | string;
+}
+
+export interface FoodNGOOption {
+  id: DbId;
+  organization_name: string;
+  urgent_flag: boolean | null;
+}
+
+export interface ReservationRow extends DbRow {
+  id?: DbId;
+  listing_id?: DbId;
+  user_id?: DbId;
+  quantity_reserved?: number | string;
+  pickup_type?: string;
+  task_status?: string;
+  status?: string;
+  pickup_code?: string;
+  receive_code?: string;
+  payment_status?: string;
+}
+
+export interface PaymentCreateResult {
+  order_id: string;
+  payment_session_id: string;
+  amount: number;
+}
+
+export interface ReservationWithPaymentData {
+  reservation: ReservationRow;
+  payment: PaymentCreateResult;
+}
+
+export interface BulkReserveData {
+  reservations: ReservationRow[];
+  payment: PaymentCreateResult | null;
+}
+
+export interface ReservationDetails extends ReservationRow {
+  provider_id: DbId;
+}
+
+export interface ReservationHistoryRow extends ReservationRow {
+  title: string;
+  pickup_end_time: ISODateString;
+}
+
+export type UserHistoryItem = FoodListingRow | ReservationHistoryRow;
+
+export interface VolunteerAvailableNGO {
+  id: DbId;
+  organization_name: string;
+  urgent_flag: boolean | null;
+  active_listings: string;
+  total_volunteers: string;
+  volunteer_status?: string | null;
+}
+
+export interface VolunteerRequestRow extends DbRow {
+  id?: DbId;
+  ngo_id?: DbId;
+  volunteer_id?: DbId;
+  status?: string;
+  organization_name: string;
+}
+
+export interface VolunteerMembershipRow extends DbRow {
+  user_id?: DbId;
+  ngo_id?: DbId;
+  status?: string;
+}
+
+export interface VolunteerTask {
+  reservation_id: DbId;
+  quantity_reserved: number | string;
+  pickup_type?: string;
+  status?: string;
+  task_status: string;
+  listing_id: DbId;
+  title: string;
+  latitude: number | string;
+  longitude: number | string;
+  pickup_start_time?: ISODateString | null;
+  pickup_end_time?: ISODateString | null;
+  provider_id?: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  distance: number | string;
+}
+
+export interface VolunteerCurrentTask extends Omit<VolunteerTask, "distance"> {
+  pickup_code: string;
+  receive_code: string;
+  assigned_at: ISODateString | null;
+  picked_up_at: ISODateString | null;
+  completed_at: ISODateString | null;
+}
+
+export interface VolunteerStats {
+  total_completed: number | string;
+  avg_completion_time: number | string;
+}
+
+export interface VolunteerDashboardData {
+  active_ngo: VolunteerAvailableNGO | null;
+  current_task: VolunteerCurrentTask | null;
+  stats: VolunteerStats;
+  pending_requests: VolunteerRequestRow[];
+}
+
+export interface NGOAssignedVolunteer {
+  id: DbId;
+  name: string | null;
+  status: string;
+}
+
+export interface NGOUnassignedVolunteer {
+  id: DbId;
+  name: string | null;
+  is_available: boolean | null;
+}
+
+export interface NGOIncomingRequest {
+  request_id: DbId;
+  listing_id: DbId;
+  title: string;
+  remaining_quantity: number | string;
+  provider_name: string | null;
+}
+
+export interface NGOReservationHistoryRow extends ReservationRow {
+  id: DbId;
+  quantity_reserved: number | string;
+  pickup_type: string;
+  task_status: string;
+  pickup_code: string;
+  receive_code: string;
+  created_at: ISODateString;
+  listing_id: DbId;
+  title: string;
+  description: string | null;
+  pickup_start_time: ISODateString | null;
+  pickup_end_time: ISODateString | null;
+  is_free: boolean;
+  price: number | string | null;
+  provider_id: DbId;
+  provider_name: string | null;
+  provider_phone: string | null;
+}
+
+export interface RatingRow extends DbRow {
+  id?: DbId;
+  listing_id?: DbId;
+  reviewer_id?: DbId;
+  rating?: number | string;
+  review?: string | null;
+}
+
+export interface ListingRating {
+  rating: number | string;
+  review: string | null;
+  created_at: ISODateString;
+  name: string | null;
+}
+
+export interface ProviderRatingSummary {
+  average_rating: number | string;
+  total_reviews: number | string;
+}
+
+export interface ImpactSummary {
+  total_pickups: number | string;
+  total_meals_saved: number | string;
+  estimated_co2_saved: number | string;
+}
+
+export interface NotificationRow extends DbRow {
+  id?: DbId;
+  user_id?: DbId;
+  type?: string;
+  title?: string;
+  message?: string;
+  is_read?: boolean;
+  created_at?: ISODateString;
+}
+
+export interface UnreadCountData {
+  unread: number;
+}
+
+export interface PendingNGORow extends DbRow {
+  phone: string | null;
+}
+
+export interface PendingRestaurantRow extends DbRow {
+  phone: string | null;
+}
+
+export interface CashfreePaymentDetails {
+  payment_method?: string | null;
+  cf_payment_id?: string | null;
+}
+
+export interface CashfreeRefundPayload {
+  refund_id?: string;
+  refund_status?: string;
+}
+
+export interface CashfreeWebhookData {
+  order_id?: string;
+  order_status?: "PAID" | "FAILED" | string;
+  payment_details?: CashfreePaymentDetails;
+  refund?: CashfreeRefundPayload;
+}
+
+export interface CashfreeWebhookRequest {
+  data?: CashfreeWebhookData;
+}
+
+// Auth requests/responses
+export interface SendOTPRequest {
+  phone: string;
+}
+export type SendOTPResponse = ApiResponse<EmptyData>;
+
+export interface VerifyOTPRequest {
+  phone: string;
+}
+export interface VerifyOTPData {
+  user: AuthUser;
+  isNewUser: boolean;
+}
+export type VerifyOTPResponse = ApiResponse<VerifyOTPData>;
+
+export interface SetRoleRequest {
+  role: UserRole;
+}
+export interface SetRoleData {
+  user: AuthUser;
+}
+export type SetRoleResponse = ApiResponse<SetRoleData>;
+
+export type RefreshTokenResponse = ApiResponse<EmptyData>;
+
+export interface CompleteProfileRequest {
+  phone: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  address?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+}
+export interface CompleteProfileData {
+  user: CompleteProfileUser;
+}
+export type CompleteProfileResponse = ApiResponse<CompleteProfileData>;
+
+export interface UpdateLocationRequest {
+  address?: string | null;
+  latitude: number | string;
+  longitude: number | string;
+}
+export interface UpdateLocationData {
+  user: UserLocationResult;
+}
+export type UpdateLocationResponse = ApiResponse<UpdateLocationData>;
+
+export interface GetMeData {
+  user: AuthMeUser;
+}
+export type GetMeResponse = ApiResponse<GetMeData>;
+export type LogoutResponse = ApiResponse<EmptyData>;
+
+// User requests/responses
+export interface UpdateUserRequest {
+  name?: string | null;
+  email?: string | null;
+  profile_image?: string | null;
+}
+export type GetUserResponse = ApiResponse<UserProfile>;
+export type UpdateUserResponse = ApiResponse<UserUpdateResult>;
+export type UserHistoryResponse = ApiResponse<UserHistoryItem[]>;
+
+// Food requests/responses
+export interface RegisterRestaurantRequest {
+  restaurant_name: string;
+  fssai_number: string;
+  service_radius_km?: number | string;
+  latitude: number | string;
+  longitude: number | string;
+  fssai_certificate: File;
+}
+export interface RegisterRestaurantData {
+  restaurant: RestaurantRegistration;
+}
+export type RegisterRestaurantResponse = ApiResponse<RegisterRestaurantData>;
+
+export interface CreateFoodRequest {
+  title: string;
+  description?: string | null;
+  quantity: number | string;
+  price?: number | string;
+  is_free?: boolean | "true" | "false";
+  pickup_start_time?: ISODateString;
+  pickup_end_time: ISODateString;
+}
+export interface FoodListingData {
+  listing: FoodListingRow;
+}
+export type CreateFoodResponse = ApiResponse<FoodListingData>;
+
+export interface UpdateFoodRequest {
+  title?: string | null;
+  description?: string | null;
+  price?: number | string | null;
+  pickup_start_time?: ISODateString | null;
+  pickup_end_time?: ISODateString | null;
+}
+export type UpdateFoodResponse = ApiResponse<FoodListingRow>;
+export type DeleteFoodResponse = ApiResponse<EmptyData>;
+export type GetAllFoodResponse = ApiResponse<FoodListingRow[]>;
+export type GetActiveFoodResponse = ApiResponse<Array<FoodListingRow | FoodListingWithDistance>>;
+export type GetNearbyFoodResponse = ApiResponse<NearbyFoodListing[]>;
+export type GetFoodByIdResponse = ApiResponse<FoodListingRow>;
+export type ViewNGOsForFoodResponse = ApiResponse<FoodNGOOption[]>;
+
+export interface RequestNGORequest {
+  ngo_id: DbId;
+}
+export type RequestNGOResponse = ApiResponse<EmptyData>;
+
+// NGO requests/responses
+export interface RegisterNGORequest {
+  organization_name: string;
+  registration_number: string;
+  service_radius_km?: number | string;
+  latitude: number | string;
+  longitude: number | string;
+}
+export interface RegisterNGOData {
+  ngo: NGORegistration;
+}
+export type RegisterNGOResponse = ApiResponse<RegisterNGOData>;
+export type GetMyNGOResponse = ApiResponse<DbRow>;
+export type NGONearbyListingsResponse = ApiResponse<NearbyFoodListing[]>;
+
+export interface BulkReserveItem {
+  listing_id: DbId;
+  quantity: number | string;
+}
+export interface BulkReserveRequest {
+  reservations: BulkReserveItem[];
+}
+export type BulkReserveResponse = ApiResponse<BulkReserveData>;
+export type NGOAssignedVolunteersResponse = ApiResponse<NGOAssignedVolunteer[]>;
+export type NGOUnassignedVolunteersResponse = ApiResponse<NGOUnassignedVolunteer[]>;
+
+export interface RequestVolunteerRequest {
+  volunteer_id: DbId;
+}
+export type RequestVolunteerResponse = ApiResponse<EmptyData>;
+
+export interface SetUrgentRequest {
+  urgent_flag: unknown;
+}
+export type SetUrgentResponse = ApiResponse<EmptyData>;
+export type NGOIncomingRequestsResponse = ApiResponse<NGOIncomingRequest[]>;
+export type AcceptNGORequestResponse = ApiResponse<EmptyData>;
+export type RejectNGORequestResponse = ApiResponse<EmptyData>;
+export type NGOReservationsResponse = ApiResponse<NGOReservationHistoryRow[]>;
+
+// Volunteer requests/responses
+export type VolunteerAvailableResponse = ApiResponse<VolunteerAvailableNGO[]>;
+export type VolunteerRequestsResponse = ApiResponse<VolunteerRequestRow[]>;
+export type VolunteerDashboardResponse = ApiResponse<VolunteerDashboardData>;
+
+export interface RespondToVolunteerRequestBody {
+  action: VolunteerRequestAction;
+}
+export type RespondToVolunteerRequestResponse = ApiResponse<EmptyData>;
+
+export interface JoinNGORequest {
+  ngo_id: DbId;
+}
+export type JoinNGOResponse = ApiResponse<VolunteerMembershipRow>;
+
+export interface LeaveNGORequest {
+  ngo_id: DbId;
+}
+export type LeaveNGOResponse = ApiResponse<EmptyData>;
+export type StartTaskResponse = ApiResponse<{ reservation: ReservationRow }>;
+
+export type VolunteerTasksResponse = ApiResponse<VolunteerTask[]>;
+
+export interface CompleteTaskRequest {
+  receive_code: string;
+}
+export type CompleteTaskResponse = ApiResponse<EmptyData>;
+
+// Reservation requests/responses
+export interface CreateReservationRequest {
+  listing_id: DbId;
+  quantity: number | string;
+}
+export type CreateReservationResponse = ApiResponse<ReservationWithPaymentData>;
+export type GetReservationByIdResponse = ApiResponse<ReservationDetails>;
+export type GetMyReservationsResponse = ApiResponse<ReservationHistoryRow[]>;
+export type CancelReservationResponse = ApiResponse<EmptyData>;
+
+export interface MarkAsPickedUpRequest {
+  pickup_code: string;
+}
+export type MarkAsPickedUpResponse = ApiResponse<EmptyData>;
+
+// Rating requests/responses
+export interface CreateRatingRequest {
+  listing_id: DbId;
+  rating: number | string;
+  review?: string | null;
+}
+export type CreateRatingResponse = ApiResponse<RatingRow>;
+export type ListingRatingsResponse = ApiResponse<ListingRating[]>;
+export type ProviderRatingsResponse = ApiResponse<ProviderRatingSummary>;
+
+// Impact responses
+export type ImpactSummaryResponse = ApiResponse<ImpactSummary>;
+
+// Notification requests/responses
+export type GetNotificationsResponse = ApiResponse<NotificationRow[]>;
+export type MarkNotificationReadResponse = ApiResponse<NotificationRow>;
+export type UnreadCountResponse = ApiResponse<UnreadCountData>;
+export type MarkAllNotificationsReadResponse = ApiResponse<EmptyData>;
+
+export interface SaveTokenRequest {
+  token: string;
+}
+export type SaveTokenResponse = ApiResponse<EmptyData>;
+
+// Admin responses
+export type PendingNGOsResponse = ApiResponse<PendingNGORow[]>;
+export type PendingRestaurantsResponse = ApiResponse<PendingRestaurantRow[]>;
+export type ApproveNGOResponse = ApiResponse<EmptyData>;
+export interface RejectNGOAdminRequest {
+  reason?: string;
+}
+export type RejectNGOAdminResponse = ApiResponse<EmptyData>;
+export type ApproveRestaurantResponse = ApiResponse<EmptyData>;
+export interface RejectRestaurantRequest {
+  reason?: string;
+}
+export type RejectRestaurantResponse = ApiResponse<EmptyData>;
+
+// Payment webhook response is documented as strict target contract.
+// Current backend sends bare 200 with no JSON body.
+export type CashfreeWebhookResponse = ApiResponse<EmptyData>;
+export type BullBoardResponse = unknown;
+
+export interface RouteContract {
+  method: HttpMethod;
+  path: string;
+  auth: "public" | "protected" | "cookie" | "webhook";
+  middleware: readonly string[];
+  request: {
+    params: string;
+    query: string;
+    body: string;
+    contentType?: string;
+  };
+  response: string;
+  statusCodes: readonly number[];
+  notes?: string;
+}
+
+export const apiContracts = {
+  auth: [
+    {
+      method: "POST",
+      path: "/api/v1/auth/send-otp",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "SendOTPRequest" },
+      response: "SendOTPResponse",
+      statusCodes: [200, 400, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/auth/verify-otp",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "VerifyOTPRequest" },
+      response: "VerifyOTPResponse",
+      statusCodes: [200, 400, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/auth/set-role",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "SetRoleRequest" },
+      response: "SetRoleResponse",
+      statusCodes: [200, 400, 401, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/auth/refresh-token",
+      auth: "cookie",
+      middleware: ["cookieParser"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "RefreshTokenResponse",
+      statusCodes: [200, 401, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/auth/complete-profile",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CompleteProfileRequest" },
+      response: "CompleteProfileResponse",
+      statusCodes: [200, 400, 409, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/auth/update-location",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "UpdateLocationRequest" },
+      response: "UpdateLocationResponse",
+      statusCodes: [200, 400, 401, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/auth/me",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetMeResponse",
+      statusCodes: [200, 401, 404, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/auth/logout",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "LogoutResponse",
+      statusCodes: [200, 500],
+    },
+  ],
+  users: [
+    {
+      method: "GET",
+      path: "/api/v1/users/:id",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetUserResponse",
+      statusCodes: [200, 400, 401, 404],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/users/:id",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateUserRequest" },
+      response: "UpdateUserResponse",
+      statusCodes: [200, 400, 401, 403],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/users/:id/history",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "UserHistoryResponse",
+      statusCodes: [200, 400, 401, 403],
+    },
+  ],
+  food: [
+    {
+      method: "POST",
+      path: "/api/v1/food/register",
+      auth: "protected",
+      middleware: ["authMiddleware", "upload.single('fssai_certificate')"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "RegisterRestaurantRequest", contentType: "multipart/form-data" },
+      response: "RegisterRestaurantResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/food",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateFoodRequest" },
+      response: "CreateFoodResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/food/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateFoodRequest" },
+      response: "UpdateFoodResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/food/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "DeleteFoodResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food/ngos",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ViewNGOsForFoodResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/food/:id/request-ngo",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "RequestNGORequest" },
+      response: "RequestNGOResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "PaginationQuery", body: "NoRequestBody" },
+      response: "GetAllFoodResponse",
+      statusCodes: [200],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food/active",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "OptionalCoordinatesQuery", body: "NoRequestBody" },
+      response: "GetActiveFoodResponse",
+      statusCodes: [200, 400],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food/nearby",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "CoordinatesQuery", body: "NoRequestBody" },
+      response: "GetNearbyFoodResponse",
+      statusCodes: [200, 400],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food/:id",
+      auth: "public",
+      middleware: [],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetFoodByIdResponse",
+      statusCodes: [200, 400, 404],
+    },
+  ],
+  reservations: [
+    {
+      method: "POST",
+      path: "/api/v1/reservations",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateReservationRequest" },
+      response: "CreateReservationResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/reservations/my",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetMyReservationsResponse",
+      statusCodes: [200, 401],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/reservations/:id",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetReservationByIdResponse",
+      statusCodes: [200, 400, 401, 404],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/reservations/:id/cancel",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "CancelReservationResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/reservations/:id/pickup",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "MarkAsPickedUpRequest" },
+      response: "MarkAsPickedUpResponse",
+      statusCodes: [200, 400, 401, 403, 404],
+    },
+  ],
+  ngo: [
+    {
+      method: "POST",
+      path: "/api/v1/ngos/register",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "RegisterNGORequest" },
+      response: "RegisterNGOResponse",
+      statusCodes: [201, 400, 401, 403, 409, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/me",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetMyNGOResponse",
+      statusCodes: [200, 401, 403, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/listings/nearby",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "CoordinatesQuery", body: "NoRequestBody" },
+      response: "NGONearbyListingsResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/ngos/bulk-reserve",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "BulkReserveRequest" },
+      response: "BulkReserveResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/reservations",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "NGOReservationsResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/volunteers/assigned",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "NGOAssignedVolunteersResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/volunteers",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "NGOUnassignedVolunteersResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/ngos/request-volunteer",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "RequestVolunteerRequest" },
+      response: "RequestVolunteerResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/ngos/urgent",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "SetUrgentRequest" },
+      response: "SetUrgentResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ngos/requests",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "NGOIncomingRequestsResponse",
+      statusCodes: [200, 401, 403, 404, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/ngos/requests/:requestID/accept",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "RequestIDParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "AcceptNGORequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/ngos/requests/:requestID/reject",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "RequestIDParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "RejectNGORequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+  ],
+  volunteers: [
+    {
+      method: "GET",
+      path: "/api/v1/volunteers/available",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "VolunteerAvailableResponse",
+      statusCodes: [200, 401, 403],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/volunteers/join",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "JoinNGORequest" },
+      response: "JoinNGOResponse",
+      statusCodes: [200, 201, 400, 401, 403, 409, 500],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/volunteers/leave",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "LeaveNGORequest" },
+      response: "LeaveNGOResponse",
+      statusCodes: [200, 400, 401, 403],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/volunteers/requests",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "VolunteerRequestsResponse",
+      statusCodes: [200, 401],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/volunteers/requests/:id/respond",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "RespondToVolunteerRequestBody" },
+      response: "RespondToVolunteerRequestResponse",
+      statusCodes: [200, 400, 401, 403, 409],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/volunteers/tasks/:id/start",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "StartTaskResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/volunteers/tasks/:id/complete",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "CompleteTaskRequest" },
+      response: "CompleteTaskResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/volunteers/tasks",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "CoordinatesQuery", body: "NoRequestBody" },
+      response: "VolunteerTasksResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+  ],
+  ratings: [
+    {
+      method: "POST",
+      path: "/api/v1/ratings",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateRatingRequest" },
+      response: "CreateRatingResponse",
+      statusCodes: [201, 400, 401, 403, 409],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ratings/listing/:listingId",
+      auth: "public",
+      middleware: [],
+      request: { params: "ListingIdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ListingRatingsResponse",
+      statusCodes: [200, 400, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/ratings/provider/:providerId",
+      auth: "public",
+      middleware: [],
+      request: { params: "ProviderIdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ProviderRatingsResponse",
+      statusCodes: [200, 400, 500],
+    },
+  ],
+  impact: [
+    {
+      method: "GET",
+      path: "/api/v1/impact/summary",
+      auth: "public",
+      middleware: [],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ImpactSummaryResponse",
+      statusCodes: [200],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/impact/user/:id",
+      auth: "public",
+      middleware: [],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ImpactSummaryResponse",
+      statusCodes: [200, 400],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/impact/listing/:id",
+      auth: "public",
+      middleware: [],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ImpactSummaryResponse",
+      statusCodes: [200, 400],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/impact/ngo/:id",
+      auth: "public",
+      middleware: [],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ImpactSummaryResponse",
+      statusCodes: [200, 400],
+    },
+  ],
+  notifications: [
+    {
+      method: "GET",
+      path: "/api/v1/notifications",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetNotificationsResponse",
+      statusCodes: [200, 401],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/notifications/:id/read",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "MarkNotificationReadResponse",
+      statusCodes: [200, 400, 401, 404],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/notifications/count/unread",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "UnreadCountResponse",
+      statusCodes: [200, 401],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/notifications/read-all",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "MarkAllNotificationsReadResponse",
+      statusCodes: [200, 401],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/notifications/save-token",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "SaveTokenRequest" },
+      response: "SaveTokenResponse",
+      statusCodes: [200, 400, 401, 500],
+    },
+  ],
+  admin: [
+    {
+      method: "GET",
+      path: "/api/v1/admin/ngos/pending",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "PendingNGOsResponse",
+      statusCodes: [200, 401, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/ngos/:id/approve",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ApproveNGOResponse",
+      statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/ngos/:id/reject",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "RejectNGOAdminRequest" },
+      response: "RejectNGOAdminResponse",
+      statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/restaurants/pending",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "PendingRestaurantsResponse",
+      statusCodes: [200, 401, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/restaurants/:id/approve",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ApproveRestaurantResponse",
+      statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/restaurants/:id/reject",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "RejectRestaurantRequest" },
+      response: "RejectRestaurantResponse",
+      statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "ALL",
+      path: "/admin/queues/*",
+      auth: "public",
+      middleware: ["bullBoardServer.getRouter()"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "BullBoardResponse",
+      statusCodes: [200],
+      notes: "Current backend mounts the third-party Bull Board router here; it is not a strict JSON API envelope.",
+    },
+  ],
+  payments: [
+    {
+      method: "POST",
+      path: "/api/v1/payments/webhook",
+      auth: "webhook",
+      middleware: ["express.raw({ type: 'application/json' })"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CashfreeWebhookRequest", contentType: "application/json" },
+      response: "CashfreeWebhookResponse",
+      statusCodes: [200],
+    },
+  ],
+} as const satisfies Record<string, readonly RouteContract[]>;

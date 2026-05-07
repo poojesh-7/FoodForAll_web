@@ -109,9 +109,25 @@ exports.getReservationById = async (req, res) => {
   }
 
   const result = await pool.query(
-    `SELECT r.*, f.provider_id
+    `SELECT r.*,
+            f.provider_id,
+            f.title,
+            f.description,
+            f.pickup_start_time,
+            f.pickup_end_time,
+            f.is_free,
+            f.price,
+            provider.name AS provider_name,
+            provider.phone AS provider_phone,
+            requester.name AS requester_name,
+            requester.phone AS requester_phone,
+            volunteer.name AS assigned_volunteer_name,
+            volunteer.phone AS assigned_volunteer_phone
     FROM reservations r
     JOIN food_listings f ON r.listing_id = f.id
+    JOIN users provider ON provider.id = f.provider_id
+    JOIN users requester ON requester.id = r.user_id
+    LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     WHERE r.id=$1
     FOR UPDATE`,
     [id],
@@ -124,15 +140,72 @@ exports.getReservationById = async (req, res) => {
 
 exports.getMyReservations = async (req, res) => {
   const result = await pool.query(
-    `SELECT r.*, f.title, f.pickup_end_time
+    `SELECT r.*,
+            f.title,
+            f.description,
+            f.pickup_start_time,
+            f.pickup_end_time,
+            f.is_free,
+            f.price,
+            provider.id AS provider_id,
+            provider.name AS provider_name,
+            provider.phone AS provider_phone,
+            volunteer.name AS assigned_volunteer_name,
+            volunteer.phone AS assigned_volunteer_phone
      FROM reservations r
      JOIN food_listings f ON r.listing_id = f.id
+     JOIN users provider ON provider.id = f.provider_id
+     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
      WHERE r.user_id=$1
      ORDER BY r.reserved_at DESC`,
     [req.user.id],
   );
 
   res.json(result.rows);
+};
+
+exports.getProviderReservations = async (req, res) => {
+  try {
+    if (req.user.role !== "provider")
+      return res.status(403).json({ error: "Only providers allowed" });
+
+    const result = await pool.query(
+      `
+      SELECT r.*,
+             f.id AS listing_id,
+             f.title,
+             f.description,
+             f.pickup_start_time,
+             f.pickup_end_time,
+             f.is_free,
+             f.price,
+             requester.id AS requester_id,
+             requester.name AS requester_name,
+             requester.phone AS requester_phone,
+             volunteer.name AS assigned_volunteer_name,
+             volunteer.phone AS assigned_volunteer_phone,
+             CASE
+               WHEN r.pickup_type = 'ngo' THEN 'ngo'
+               ELSE 'user'
+             END AS reservation_kind
+      FROM reservations r
+      JOIN food_listings f ON f.id = r.listing_id
+      JOIN users requester ON requester.id = r.user_id
+      LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+      WHERE f.provider_id = $1
+      ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
+      `,
+      [req.user.id],
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Failed to fetch provider reservations:", err);
+    res.status(500).json({
+      error: "Failed to fetch provider reservations",
+      details: process.env.NODE_ENV === "production" ? undefined : err.message,
+    });
+  }
 };
 
 
@@ -195,7 +268,10 @@ exports.cancelReservation = async (req, res) => {
       throw withStatus("Cannot cancel this reservation", 400);
     }
 
-    if (reservation.task_status !== "pending") {
+    if (
+      reservation.task_status !== "pending" &&
+      reservation.task_status !== "self_pickup"
+    ) {
       throw withStatus("Cannot cancel after volunteer started", 400);
     }
 
@@ -361,20 +437,31 @@ exports.markAsPickedUp = async (req, res) => {
     )
       throw withStatus("Volunteer has not started pickup", 400);
 
+    const isNGOPickup = reservation.pickup_type === "ngo";
     const update = await client.query(
-      `
-      UPDATE reservations
-      SET task_status='picked_from_provider',
-          picked_up_at = NOW()
-      WHERE id=$1
-      RETURNING *
-      `,
+      isNGOPickup
+        ? `
+          UPDATE reservations
+          SET task_status='picked_from_provider',
+              picked_up_at = NOW()
+          WHERE id=$1
+          RETURNING *
+          `
+        : `
+          UPDATE reservations
+          SET task_status='picked_up',
+              status='picked_up',
+              picked_up_at = NOW(),
+              completed_at = NOW()
+          WHERE id=$1
+          RETURNING *
+          `,
       [id]
     );
 
     await client.query("COMMIT");
 
-    if (reservation.pickup_type === "ngo") {
+    if (isNGOPickup) {
       // cancel pickup timeout
       await pickupQueue.remove(`pickup-${id}`);
 
@@ -402,7 +489,9 @@ exports.markAsPickedUp = async (req, res) => {
     }
 
     res.json({
-      message: "Pickup confirmed. Volunteer must deliver to NGO.",
+      message: isNGOPickup
+        ? "Pickup confirmed. Volunteer must deliver to NGO."
+        : "Pickup confirmed successfully.",
     });
 
   } catch (err) {

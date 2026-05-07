@@ -12,6 +12,7 @@ const protectedRoutes = [
   "/provider",
   "/ngo",
   "/volunteer",
+  "/reservations",
 ];
 
 const guestOnlyRoutes = ["/login"];
@@ -57,6 +58,7 @@ export const config = {
     "/provider/:path*",
     "/ngo/:path*",
     "/volunteer/:path*",
+    "/reservations/:path*",
     "/login",
   ],
 };

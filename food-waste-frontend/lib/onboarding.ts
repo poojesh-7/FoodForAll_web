@@ -110,6 +110,10 @@ export function getRouteAccessRedirect(
     return getPostAuthRedirect(user);
   }
 
+  if (pathname.startsWith("/reservations") && user?.role !== "user") {
+    return getPostAuthRedirect(user);
+  }
+
   if (pathname.startsWith("/ngo/register") && user?.role !== "ngo") {
     return getPostAuthRedirect(user);
   }

@@ -16,6 +16,7 @@ const protectedRoutes = [
   "/provider",
   "/ngo",
   "/volunteer",
+  "/reservations",
 ];
 
 const guestOnlyRoutes = ["/login"];

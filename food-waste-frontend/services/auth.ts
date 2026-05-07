@@ -59,17 +59,44 @@ function getResponseMessage(body: unknown): string | undefined {
 
 export function getErrorMessage(error: unknown): string {
   if (typeof error === "string") return error;
-  if (error instanceof Error && !("isAxiosError" in error)) return error.message;
 
-  const axiosError = error as AxiosError<BackendErrorResponse>;
+  if (error instanceof Error && !("isAxiosError" in error)) {
+    return error.message;
+  }
 
-  return (
-    axiosError.response?.data?.message ??
-    ("error" in (axiosError.response?.data ?? {})
-      ? (axiosError.response?.data as { error?: string }).error
-      : undefined) ??
-    "Something went wrong. Please try again."
-  );
+  const axiosError = error as AxiosError<BackendErrorResponse | string | unknown>;
+
+  const responseData = axiosError.response?.data;
+
+  if (typeof responseData === "string") {
+    const trimmed = responseData.trim();
+
+    if (!trimmed) return axiosError.message || "Something went wrong. Please try again.";
+
+    if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+      return axiosError.response?.status
+        ? `Server error (${axiosError.response.status}). Please try again.`
+        : "Server returned an unexpected HTML response.";
+    }
+
+    return trimmed;
+  }
+
+  if (responseData && typeof responseData === "object") {
+    if ("message" in responseData && responseData.message) {
+      return String(responseData.message);
+    }
+
+    if ("error" in responseData && responseData.error) {
+      return String(responseData.error);
+    }
+
+    if ("details" in responseData && responseData.details) {
+      return String(responseData.details);
+    }
+  }
+
+  return axiosError.message || "Something went wrong. Please try again.";
 }
 
 export async function sendOtp(payload: SendOtpPayload): Promise<SendOtpResult> {

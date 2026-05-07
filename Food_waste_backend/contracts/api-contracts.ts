@@ -154,6 +154,7 @@ export interface ReservationRow extends DbRow {
   id?: DbId;
   listing_id?: DbId;
   user_id?: DbId;
+  assigned_volunteer_id?: DbId | null;
   quantity_reserved?: number | string;
   pickup_type?: string;
   task_status?: string;
@@ -161,6 +162,11 @@ export interface ReservationRow extends DbRow {
   pickup_code?: string;
   receive_code?: string;
   payment_status?: string;
+  reserved_at?: ISODateString | null;
+  created_at?: ISODateString | null;
+  assigned_at?: ISODateString | null;
+  picked_up_at?: ISODateString | null;
+  completed_at?: ISODateString | null;
 }
 
 export interface PaymentCreateResult {
@@ -181,11 +187,32 @@ export interface BulkReserveData {
 
 export interface ReservationDetails extends ReservationRow {
   provider_id: DbId;
+  title?: string;
+  description?: string | null;
+  pickup_start_time?: ISODateString | null;
+  pickup_end_time?: ISODateString | null;
+  is_free?: boolean;
+  price?: number | string | null;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  requester_name?: string | null;
+  requester_phone?: string | null;
+  assigned_volunteer_name?: string | null;
+  assigned_volunteer_phone?: string | null;
 }
 
 export interface ReservationHistoryRow extends ReservationRow {
   title: string;
   pickup_end_time: ISODateString;
+  description?: string | null;
+  pickup_start_time?: ISODateString | null;
+  is_free?: boolean;
+  price?: number | string | null;
+  provider_id?: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  assigned_volunteer_name?: string | null;
+  assigned_volunteer_phone?: string | null;
 }
 
 export type UserHistoryItem = FoodListingRow | ReservationHistoryRow;
@@ -289,6 +316,14 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   provider_id: DbId;
   provider_name: string | null;
   provider_phone: string | null;
+}
+
+export interface ProviderReservationRow extends ReservationDetails {
+  listing_id: DbId;
+  requester_id: DbId;
+  requester_name: string | null;
+  requester_phone: string | null;
+  reservation_kind: "user" | "ngo" | string;
 }
 
 export interface RatingRow extends DbRow {
@@ -549,6 +584,7 @@ export interface CreateReservationRequest {
 export type CreateReservationResponse = ApiResponse<ReservationWithPaymentData>;
 export type GetReservationByIdResponse = ApiResponse<ReservationDetails>;
 export type GetMyReservationsResponse = ApiResponse<ReservationHistoryRow[]>;
+export type GetProviderReservationsResponse = ApiResponse<ProviderReservationRow[]>;
 export type CancelReservationResponse = ApiResponse<EmptyData>;
 
 export interface MarkAsPickedUpRequest {
@@ -829,6 +865,15 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
       response: "GetMyReservationsResponse",
       statusCodes: [200, 401],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/reservations/provider",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetProviderReservationsResponse",
+      statusCodes: [200, 401, 403],
     },
     {
       method: "GET",

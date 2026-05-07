@@ -14,7 +14,7 @@ exports.getSummary = async (req, res) => {
       SELECT
         COUNT(r.id) AS total_pickups,
         COALESCE(SUM(r.quantity_reserved),0) AS total_meals_saved,
-        COALESCE(SUM(r.quantity_reserved) * $1,0) AS estimated_co2_saved,
+        COALESCE(SUM(r.quantity_reserved)::numeric * $1,0) AS estimated_co2_saved,
         COUNT(*) FILTER (WHERE r.pickup_type='self_pickup') AS self_pickups,
         COUNT(*) FILTER (WHERE r.pickup_type='ngo') AS ngo_pickups,
         COALESCE(SUM(r.quantity_reserved) FILTER (WHERE r.pickup_type='ngo'),0) AS ngo_meals_rescued
@@ -44,7 +44,7 @@ exports.getUserImpact = async (req, res) => {
       SELECT
         COUNT(*) AS total_pickups,
         COALESCE(SUM(quantity_reserved),0) AS total_meals_saved,
-        COALESCE(SUM(quantity_reserved) * $2,0) AS estimated_co2_saved,
+        COALESCE(SUM(quantity_reserved) * CAST($2 AS numeric),0) AS estimated_co2_saved,
         COUNT(*) FILTER (WHERE pickup_type='self_pickup') AS self_pickups,
         COUNT(*) FILTER (WHERE pickup_type='ngo') AS ngo_pickups,
         COALESCE(SUM(quantity_reserved) FILTER (WHERE pickup_type='self_pickup'),0) AS self_pickup_meals,
@@ -76,7 +76,7 @@ exports.getListingImpact = async (req, res) => {
       SELECT
         COUNT(r.id) AS total_pickups,
         COALESCE(SUM(r.quantity_reserved),0) AS total_meals_saved,
-        COALESCE(SUM(r.quantity_reserved) * $2,0) AS estimated_co2_saved
+        COALESCE(SUM(r.quantity_reserved) * CAST($2 AS numeric),0) AS estimated_co2_saved
       FROM reservations r
       WHERE r.status='picked_up'
       AND r.listing_id=$1
@@ -104,7 +104,7 @@ exports.getNGOImpact = async (req, res) => {
       SELECT
         COUNT(r.id) AS total_pickups,
         COALESCE(SUM(r.quantity_reserved),0) AS total_meals_saved,
-        COALESCE(SUM(r.quantity_reserved) * $2,0) AS estimated_co2_saved,
+        COALESCE(SUM(r.quantity_reserved) * CAST($2 AS numeric),0) AS estimated_co2_saved,
         COUNT(r.id) FILTER (WHERE r.assigned_volunteer_id IS NOT NULL) AS delivery_pickups,
         COALESCE(SUM(r.quantity_reserved) FILTER (WHERE r.assigned_volunteer_id IS NOT NULL),0) AS delivery_meals_rescued
       FROM reservations r

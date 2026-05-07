@@ -120,6 +120,8 @@ const ratingRoutes = require("../../routes/rating.routes");
 const impactRoutes = require("../../routes/impact.routes");
 const notificationRoutes = require("../../routes/notification.routes");
 const paymentRoutes = require("../../routes/payment.routes");
+const authMiddleware = require("../../middlewares/auth.middleware");
+const requireAdmin = require("../../middlewares/admin.middleware");
 
 app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/auth", authRoutes);
@@ -131,7 +133,7 @@ app.use("/api/v1/volunteers", volunteerRoutes);
 app.use("/api/v1/ratings", ratingRoutes);
 app.use("/api/v1/impact", impactRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
-app.use("/admin/queues", bullBoardServer.getRouter());
+app.use("/admin/queues", authMiddleware, requireAdmin, bullBoardServer.getRouter());
 
 
 const PORT = process.env.PORT || 5000;

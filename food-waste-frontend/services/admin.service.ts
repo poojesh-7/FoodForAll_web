@@ -1,0 +1,143 @@
+import api from "@/lib/axios";
+import { getErrorMessage } from "@/services/auth";
+import type {
+  AdminOperationalSummary,
+  AdminOperationalSummaryResponse,
+  AdminQueueHealth,
+  AdminQueueHealthResponse,
+  DbId,
+  PendingNGORow,
+  PendingNGOsResponse,
+  PendingRestaurantRow,
+  PendingRestaurantsResponse,
+} from "@backend/contracts/api-contracts";
+
+export type AdminNGO = PendingNGORow & {
+  id?: DbId;
+  user_id?: DbId;
+  organization_name?: string | null;
+  registration_number?: string | null;
+  service_radius_km?: number | string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  is_verified?: boolean | null;
+  rejection_reason?: string | null;
+  created_at?: string | null;
+};
+
+export type AdminRestaurant = PendingRestaurantRow & {
+  id?: DbId;
+  user_id?: DbId;
+  restaurant_name?: string | null;
+  fssai_number?: string | null;
+  fssai_certificate_url?: string | null;
+  service_radius_km?: number | string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  is_verified?: boolean | null;
+  rejection_reason?: string | null;
+  created_at?: string | null;
+};
+
+type MessageResponse = { message?: string };
+
+function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
+  if (body && typeof body === "object" && "data" in body) {
+    return (body as { data: TData }).data;
+  }
+
+  return body as TData;
+}
+
+function getApiBaseUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const baseUrl = configuredUrl || "http://localhost:5000/api/v1";
+  const normalized = baseUrl.replace(/\/+$/, "");
+  return normalized.endsWith("/api/v1") ? normalized : `${normalized}/api/v1`;
+}
+
+export function getBackendOrigin() {
+  const baseUrl = getApiBaseUrl();
+
+  try {
+    const url = new URL(baseUrl);
+    return url.origin;
+  } catch {
+    return "http://localhost:5000";
+  }
+}
+
+export function getBullBoardUrl() {
+  return `${getBackendOrigin()}/admin/queues`;
+}
+
+export function getAssetUrl(path: string | null | undefined) {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${getBackendOrigin()}/${path.replace(/^\/+/, "").replaceAll("\\", "/")}`;
+}
+
+export async function getPendingNGOs(): Promise<AdminNGO[]> {
+  const { data } = await api.get<PendingNGOsResponse | AdminNGO[]>(
+    "/admin/ngos/pending"
+  );
+
+  return getEnvelopeData<AdminNGO[]>(data);
+}
+
+export async function approveNGO(id: DbId): Promise<void> {
+  await api.patch<MessageResponse>(`/admin/ngos/${String(id)}/approve`);
+}
+
+export async function rejectNGO(id: DbId, reason: string): Promise<void> {
+  await api.patch<MessageResponse>(`/admin/ngos/${String(id)}/reject`, { reason });
+}
+
+export async function getPendingRestaurants(): Promise<AdminRestaurant[]> {
+  const { data } = await api.get<PendingRestaurantsResponse | AdminRestaurant[]>(
+    "/admin/restaurants/pending"
+  );
+
+  return getEnvelopeData<AdminRestaurant[]>(data);
+}
+
+export async function approveRestaurant(id: DbId): Promise<void> {
+  await api.patch<MessageResponse>(`/admin/restaurants/${String(id)}/approve`);
+}
+
+export async function rejectRestaurant(id: DbId, reason: string): Promise<void> {
+  await api.patch<MessageResponse>(
+    `/admin/restaurants/${String(id)}/reject`,
+    { reason }
+  );
+}
+
+export async function getOperationalSummary(): Promise<AdminOperationalSummary> {
+  const { data } = await api.get<
+    AdminOperationalSummaryResponse | AdminOperationalSummary
+  >("/admin/operations/summary");
+
+  return getEnvelopeData<AdminOperationalSummary>(data);
+}
+
+export async function getQueueHealth(): Promise<AdminQueueHealth[]> {
+  const { data } = await api.get<
+    AdminQueueHealthResponse | { queues: AdminQueueHealth[] }
+  >("/admin/queues/health");
+
+  return getEnvelopeData<{ queues: AdminQueueHealth[] }>(data).queues;
+}
+
+export const adminService = {
+  getPendingNGOs,
+  approveNGO,
+  rejectNGO,
+  getPendingRestaurants,
+  approveRestaurant,
+  rejectRestaurant,
+  getOperationalSummary,
+  getQueueHealth,
+  getBullBoardUrl,
+  getAssetUrl,
+  getErrorMessage,
+};

@@ -6,7 +6,7 @@ export type DbId = string | number;
 export type ISODateString = string;
 export type DbRow = Record<string, unknown>;
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "ALL";
-export type UserRole = "user" | "volunteer" | "ngo" | "provider";
+export type UserRole = "user" | "volunteer" | "ngo" | "provider" | "admin";
 export type VolunteerRequestAction = "accepted" | "rejected";
 
 export interface ApiResponse<TData> {
@@ -635,6 +635,31 @@ export interface RejectRestaurantRequest {
   reason?: string;
 }
 export type RejectRestaurantResponse = ApiResponse<EmptyData>;
+export interface AdminOperationalSummary {
+  total_ngos: number | string;
+  total_restaurants: number | string;
+  active_reservations: number | string;
+  expired_reservations: number | string;
+  active_volunteers: number | string;
+}
+export interface AdminQueueCounts {
+  active?: number;
+  waiting?: number;
+  delayed?: number;
+  failed?: number;
+  completed?: number;
+  paused?: number;
+}
+export interface AdminQueueHealth {
+  name: string;
+  is_paused: boolean;
+  counts: AdminQueueCounts;
+}
+export interface AdminQueueHealthData {
+  queues: AdminQueueHealth[];
+}
+export type AdminOperationalSummaryResponse = ApiResponse<AdminOperationalSummary>;
+export type AdminQueueHealthResponse = ApiResponse<AdminQueueHealthData>;
 
 // Payment webhook response is documented as strict target contract.
 // Current backend sends bare 200 with no JSON body.
@@ -1263,10 +1288,28 @@ export const apiContracts = {
       statusCodes: [200, 400, 401, 404, 500],
     },
     {
+      method: "GET",
+      path: "/api/v1/admin/operations/summary",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "AdminOperationalSummaryResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/queues/health",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "AdminQueueHealthResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
       method: "ALL",
       path: "/admin/queues/*",
-      auth: "public",
-      middleware: ["bullBoardServer.getRouter()"],
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "bullBoardServer.getRouter()"],
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
       response: "BullBoardResponse",
       statusCodes: [200],

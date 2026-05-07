@@ -55,6 +55,10 @@ next-env.d.ts
 # ======================
 uploads/
 admin/
+!food-waste-frontend/app/admin/
+!food-waste-frontend/app/admin/**
+!food-waste-frontend/components/admin/
+!food-waste-frontend/components/admin/**
 
 # ======================
 # Misc

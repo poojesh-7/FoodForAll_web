@@ -2,7 +2,8 @@ export type Role =
   | "user"
   | "volunteer"
   | "provider"
-  | "ngo";
+  | "ngo"
+  | "admin";
 
 export interface User {
   id: number;

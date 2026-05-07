@@ -13,6 +13,7 @@ const protectedRoutes = [
   "/restaurant/register",
   "/pending-verification",
   "/profile",
+  "/admin",
   "/provider",
   "/ngo",
   "/volunteer",

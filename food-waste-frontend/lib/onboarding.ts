@@ -28,6 +28,7 @@ export function isProfileComplete(user: OnboardingUser | null | undefined) {
 }
 
 export function getRoleDashboard(role: UserRole | null | undefined) {
+  if (role === "admin") return "/admin";
   if (role === "ngo") return "/ngo";
   if (role === "volunteer") return "/volunteer/dashboard";
   return "/dashboard";
@@ -95,6 +96,13 @@ export function getRouteAccessRedirect(
   if (
     (pathname === "/complete-profile" || pathname.startsWith("/complete-profile/")) &&
     (user.role === "provider" || user.role === "ngo")
+  ) {
+    return getPostAuthRedirect(user);
+  }
+
+  if (
+    pathname.startsWith("/admin") &&
+    user?.role !== "admin"
   ) {
     return getPostAuthRedirect(user);
   }

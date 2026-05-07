@@ -115,7 +115,7 @@ new Worker(
       6️⃣ USER penalty (self pickup)
       */
       const normalUsers = expired.rows
-        .filter((r) => r.pickup_type === "self")
+        .filter((r) => r.pickup_type === "self_pickup")
         .map((r) => r.user_id);
 
       if (normalUsers.length) {

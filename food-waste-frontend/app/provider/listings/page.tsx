@@ -3,10 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import FoodCard from "@/components/FoodCard";
+import ProviderReputation from "@/components/ratings/ProviderReputation";
+import ReviewList from "@/components/ratings/ReviewList";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
+import { ratingService } from "@/services/rating.service";
 import { useAuthStore } from "@/store/authStore";
-import type { DbId, FoodListingRow, FoodNGOOption } from "@backend/contracts/api-contracts";
+import type {
+  DbId,
+  FoodListingRow,
+  FoodNGOOption,
+  ListingRating,
+  ProviderRatingSummary,
+} from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 export default function ProviderListingsPage() {
@@ -15,6 +24,9 @@ export default function ProviderListingsPage() {
 
   const [listings, setListings] = useState<FoodListingRow[]>([]);
   const [ngos, setNgos] = useState<FoodNGOOption[]>([]);
+  const [providerRatings, setProviderRatings] =
+    useState<ProviderRatingSummary | null>(null);
+  const [listingRatings, setListingRatings] = useState<Record<string, ListingRating[]>>({});
   const [selectedListingId, setSelectedListingId] = useState<DbId | null>(null);
   const [selectedNGOId, setSelectedNGOId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -32,22 +44,45 @@ export default function ProviderListingsPage() {
   useEffect(() => {
     let active = true;
 
-    foodService
-      .getAllFood()
-      .then((result) => {
-        if (active) setListings(result);
-      })
-      .catch((err) => {
+    async function loadListings() {
+      try {
+        setLoading(true);
+        setError("");
+        const result = await foodService.getAllFood();
+        const ownedListings = result.filter(
+          (listing) => String(listing.provider_id) === String(user?.id)
+        );
+        const [reputation, ratingPairs] = await Promise.all([
+          user?.id
+            ? ratingService.getProviderRatings(user.id)
+            : Promise.resolve<ProviderRatingSummary | null>(null),
+          Promise.all(
+            ownedListings
+              .filter((listing) => listing.id)
+              .map(async (listing) => [
+                String(listing.id),
+                await ratingService.getListingRatings(listing.id as DbId),
+              ] as const)
+          ),
+        ]);
+
+        if (!active) return;
+        setListings(result);
+        setProviderRatings(reputation);
+        setListingRatings(Object.fromEntries(ratingPairs));
+      } catch (err) {
         if (active) setError(foodService.getErrorMessage(err));
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
+      }
+    }
+
+    loadListings();
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [user?.id]);
 
   const deleteListing = async (id: DbId) => {
     if (!confirm("Delete this listing?")) return;
@@ -189,6 +224,15 @@ export default function ProviderListingsPage() {
           </section>
         )}
 
+        {!loading && (
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold text-zinc-950">
+              Provider Reputation
+            </h2>
+            <ProviderReputation summary={providerRatings} />
+          </section>
+        )}
+
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
             Loading...
@@ -200,35 +244,40 @@ export default function ProviderListingsPage() {
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {providerListings.map((listing) => (
-              <FoodCard
-                key={String(listing.id)}
-                listing={listing}
-                href={undefined}
-                actions={
-                  <>
-                    <Link
-                      href={`/provider/listings/edit/${String(listing.id)}`}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
-                    >
-                      Edit
-                    </Link>
-                    <button
-                      onClick={() => listing.id && openNGORequest(listing.id)}
-                      disabled={!listing.id || actionLoading}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 disabled:opacity-50"
-                    >
-                      Request NGO
-                    </button>
-                    <button
-                      onClick={() => listing.id && deleteListing(listing.id)}
-                      disabled={!listing.id || actionLoading}
-                      className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </>
-                }
-              />
+              <div key={String(listing.id)} className="space-y-3">
+                <FoodCard
+                  listing={listing}
+                  href={undefined}
+                  actions={
+                    <>
+                      <Link
+                        href={`/provider/listings/edit/${String(listing.id)}`}
+                        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
+                      >
+                        Edit
+                      </Link>
+                      <button
+                        onClick={() => listing.id && openNGORequest(listing.id)}
+                        disabled={!listing.id || actionLoading}
+                        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                      >
+                        Request NGO
+                      </button>
+                      <button
+                        onClick={() => listing.id && deleteListing(listing.id)}
+                        disabled={!listing.id || actionLoading}
+                        className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </>
+                  }
+                />
+                <ReviewList
+                  ratings={listingRatings[String(listing.id)] ?? []}
+                  emptyMessage="No reviews for this listing yet."
+                />
+              </div>
             ))}
           </div>
         )}

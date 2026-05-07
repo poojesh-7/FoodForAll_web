@@ -2,38 +2,70 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import RatingForm from "@/components/ratings/RatingForm";
+import ReviewList from "@/components/ratings/ReviewList";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
+import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
-import type { ReservationDetails } from "@backend/contracts/api-contracts";
+import type {
+  ListingRating,
+  ReservationDetails,
+} from "@backend/contracts/api-contracts";
 import { useParams } from "next/navigation";
 
 function canCancel(reservation: ReservationDetails) {
   return reservation.status === "reserved" && reservation.task_status === "pending";
 }
 
+function canRate(reservation: ReservationDetails) {
+  return (
+    reservation.status === "picked_up" &&
+    reservation.pickup_type === "self_pickup" &&
+    Boolean(reservation.listing_id)
+  );
+}
+
+function isRatingWindowExpired(reservation: ReservationDetails) {
+  if (!reservation.completed_at) return false;
+  const completedAt = new Date(reservation.completed_at).getTime();
+  if (Number.isNaN(completedAt)) return false;
+  return Date.now() - completedAt > 48 * 60 * 60 * 1000;
+}
+
 export default function ReservationDetailPage() {
   const params = useParams<{ id: string }>();
   const [reservation, setReservation] = useState<ReservationDetails | null>(null);
+  const [ratings, setRatings] = useState<ListingRating[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
     let active = true;
 
-    reservationService
-      .getReservationById(params.id)
-      .then((result) => {
-        if (active) setReservation(result);
-      })
-      .catch((err) => {
+    async function loadReservation() {
+      try {
+        setLoading(true);
+        setError("");
+        const result = await reservationService.getReservationById(params.id);
+        const listingRatings = result.listing_id
+          ? await ratingService.getListingRatings(result.listing_id)
+          : [];
+
+        if (!active) return;
+        setReservation(result);
+        setRatings(listingRatings);
+      } catch (err) {
         if (active) setError(reservationService.getErrorMessage(err));
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
+      }
+    }
+
+    loadReservation();
 
     return () => {
       active = false;
@@ -58,6 +90,33 @@ export default function ReservationDetailPage() {
       setError(reservationService.getErrorMessage(err));
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const submitRating = async (rating: number, review: string) => {
+    if (!reservation?.listing_id) return;
+
+    try {
+      setError("");
+      setSuccess("");
+      const created = await ratingService.createRating({
+        listing_id: reservation.listing_id,
+        rating,
+        review: review || null,
+      });
+      setRatingSubmitted(true);
+      setSuccess("Rating submitted successfully.");
+      setRatings((current) => [
+        {
+          rating: created.rating ?? rating,
+          review: created.review ?? (review || null),
+          created_at: new Date().toISOString(),
+          name: "You",
+        },
+        ...current,
+      ]);
+    } catch (err) {
+      setError(ratingService.getErrorMessage(err));
     }
   };
 
@@ -117,6 +176,22 @@ export default function ReservationDetailPage() {
                 )
               }
             />
+            {canRate(reservation) && !ratingSubmitted && !isRatingWindowExpired(reservation) && (
+              <RatingForm onSubmit={submitRating} />
+            )}
+            {canRate(reservation) && isRatingWindowExpired(reservation) && (
+              <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+                Rating window expired for this pickup.
+              </div>
+            )}
+            {reservation.listing_id && (
+              <section className="space-y-3">
+                <h2 className="text-base font-semibold text-zinc-950">
+                  Listing Reviews
+                </h2>
+                <ReviewList ratings={ratings} />
+              </section>
+            )}
           </>
         ) : (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

@@ -85,6 +85,8 @@ export default function NGODashboardPage() {
       pickups: toCount(impact?.total_pickups),
       meals: toCount(impact?.total_meals_saved),
       co2: toCount(impact?.estimated_co2_saved),
+      deliveries: toCount(impact?.delivery_pickups),
+      deliveryMeals: toCount(impact?.delivery_meals_rescued),
     }),
     [impact]
   );
@@ -128,6 +130,11 @@ export default function NGODashboardPage() {
               label="Meals Rescued"
               value={rescueStats.meals}
               detail={`${rescueStats.pickups} completed pickups`}
+            />
+            <NGOSummaryCard
+              label="Delivery Impact"
+              value={rescueStats.deliveryMeals}
+              detail={`${rescueStats.deliveries} volunteer deliveries`}
             />
             <NGOSummaryCard
               label="Active Volunteers"

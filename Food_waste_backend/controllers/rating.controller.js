@@ -41,7 +41,7 @@ exports.createRating = async (req, res) => {
       WHERE r.listing_id=$1
       AND r.user_id=$2
       AND r.status='picked_up'
-      AND r.pickup_type='self'
+      AND r.pickup_type='self_pickup'
       LIMIT 1
       `,
       [listing_id, user_id]

@@ -350,6 +350,12 @@ export interface ImpactSummary {
   total_pickups: number | string;
   total_meals_saved: number | string;
   estimated_co2_saved: number | string;
+  self_pickups?: number | string;
+  ngo_pickups?: number | string;
+  self_pickup_meals?: number | string;
+  ngo_meals_rescued?: number | string;
+  delivery_pickups?: number | string;
+  delivery_meals_rescued?: number | string;
 }
 
 export interface NotificationRow extends DbRow {

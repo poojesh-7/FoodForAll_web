@@ -1,5 +1,7 @@
 import Link from "next/link";
+import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import { formatFoodDate } from "@/lib/food";
+import { getReservationPaymentState } from "@/lib/payment-flow";
 import type {
   DbId,
   ProviderReservationRow,
@@ -63,7 +65,10 @@ export default function ReservationCard({
         <p>Status: {displayValue(reservation.status)}</p>
         <p>Task: {displayValue(reservation.task_status)}</p>
         <p>Pickup type: {displayValue(reservation.pickup_type)}</p>
-        <p>Payment: {displayValue(reservation.payment_status)}</p>
+        <p className="flex items-center gap-2">
+          <span>Payment:</span>
+          <PaymentStatusBadge state={getReservationPaymentState(reservation)} />
+        </p>
         <p>Pickup ends: {formatFoodDate(reservation.pickup_end_time)}</p>
         <p>Reserved: {formatFoodDate(reservation.reserved_at)}</p>
         <p>Assigned: {formatFoodDate(reservation.assigned_at)}</p>

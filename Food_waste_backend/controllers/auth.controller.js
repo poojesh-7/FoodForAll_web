@@ -1,9 +1,13 @@
 const pool = require("../shared/config/db");
 const redis = require("../shared/config/redis");
-const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const axios = require("axios");
 const twilio = require("twilio");
+const {
+  generateAccessToken,
+  generateRefreshToken,
+} = require("../utils/token");
 const {
   isProvided,
   isValidEmail,
@@ -17,6 +21,93 @@ const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
+
+const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
+const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_REUSE_GRACE_SECONDS = 30;
+
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
+function getCookieOptions(maxAge) {
+  return {
+    httpOnly: true,
+    secure: isProduction(),
+    sameSite: isProduction() ? "none" : "lax",
+    maxAge,
+  };
+}
+
+function getClearCookieOptions() {
+  const { maxAge, ...options } = getCookieOptions(0);
+  return options;
+}
+
+function setAccessCookie(res, accessToken) {
+  res.cookie(
+    "accessToken",
+    accessToken,
+    getCookieOptions(ACCESS_TOKEN_MAX_AGE_MS)
+  );
+}
+
+function setRefreshCookie(res, refreshToken) {
+  res.cookie(
+    "refreshToken",
+    refreshToken,
+    getCookieOptions(REFRESH_TOKEN_MAX_AGE_MS)
+  );
+}
+
+function setAuthCookies(res, { accessToken, refreshToken }) {
+  setAccessCookie(res, accessToken);
+  setRefreshCookie(res, refreshToken);
+}
+
+function getRefreshReuseKey(refreshToken) {
+  return `auth:refresh-reuse:${crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex")}`;
+}
+
+async function rememberRotatedRefreshToken(oldRefreshToken, session) {
+  await redis.setEx(
+    getRefreshReuseKey(oldRefreshToken),
+    REFRESH_REUSE_GRACE_SECONDS,
+    JSON.stringify(session)
+  );
+}
+
+async function getRecentlyRotatedRefreshToken(oldRefreshToken) {
+  const raw = await redis.get(getRefreshReuseKey(oldRefreshToken));
+  if (!raw) return null;
+
+  try {
+    const session = JSON.parse(raw);
+    return session?.accessToken && session?.refreshToken ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getRecentlyRotatedRefreshTokenWithRetry(oldRefreshToken) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const session = await getRecentlyRotatedRefreshToken(oldRefreshToken);
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  return null;
+}
+
+function getRefreshExpiry() {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + 7);
+  return expiry;
+}
+
 // SEND OTP
 exports.sendOTP = async (req, res) => {
   try {
@@ -189,16 +280,10 @@ exports.verifyOTP = async (req, res) => {
       user = result.rows[0];
     }
 
-    const {
-      generateAccessToken,
-      generateRefreshToken,
-    } = require("../utils/token");
-
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
 
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 7);
+    const expiry = getRefreshExpiry();
 
     await pool.query(
       `
@@ -211,19 +296,7 @@ exports.verifyOTP = async (req, res) => {
     );
 
     // 🍪 SET COOKIES
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setAuthCookies(res, { accessToken, refreshToken });
 
     return res.json({
       success: true,
@@ -275,16 +348,9 @@ exports.setRole = async (req, res) => {
     const updatedUser = result.rows[0];
 
     // 🔥 Regenerate access token with updated role
-    const { generateAccessToken } = require("../utils/token");
-
     const accessToken = generateAccessToken(updatedUser);
 
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
+    setAccessCookie(res, accessToken);
 
     return res.json({
       success: true,
@@ -325,6 +391,15 @@ exports.refreshToken = async (req, res) => {
     );
 
     if (!result.rows.length) {
+      const reusedSession = await getRecentlyRotatedRefreshTokenWithRetry(
+        refreshToken
+      );
+
+      if (reusedSession) {
+        setAuthCookies(res, reusedSession);
+        return res.json({ success: true });
+      }
+
       return res.status(401).json({
         error: "Invalid refresh token",
       });
@@ -339,46 +414,48 @@ exports.refreshToken = async (req, res) => {
     }
 
     // 🔁 Rotate refresh token
-    const newRefreshToken = require("crypto")
-      .randomBytes(64)
-      .toString("hex");
+    const newRefreshToken = generateRefreshToken();
+    const expiry = getRefreshExpiry();
 
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 7);
-
-    await pool.query(
+    const updateResult = await pool.query(
       `
       UPDATE users
       SET refresh_token=$1,
           refresh_token_expiry=$2
       WHERE id=$3
+        AND refresh_token=$4
+      RETURNING id
       `,
-      [newRefreshToken, expiry, user.id]
+      [newRefreshToken, expiry, user.id, refreshToken]
     );
 
     // 🔐 Generate new access token
-    const accessToken = jwt.sign(
-      { id: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "15m" }
-    );
+    if (!updateResult.rows.length) {
+      const reusedSession = await getRecentlyRotatedRefreshTokenWithRetry(
+        refreshToken
+      );
+
+      if (reusedSession) {
+        setAuthCookies(res, reusedSession);
+        return res.json({ success: true });
+      }
+
+      return res.status(401).json({
+        error: "Refresh token was already rotated",
+      });
+    }
+
+    const accessToken = generateAccessToken(user);
+    const session = { accessToken, refreshToken: newRefreshToken };
+
+    try {
+      await rememberRotatedRefreshToken(refreshToken, session);
+    } catch (err) {
+      console.warn("Unable to store refresh reuse grace entry:", err.message);
+    }
 
     // 🍪 Set cookies (IMPORTANT FIX)
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      // secure: process.env.NODE_ENV === "production",
-      secure: false,
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000,
-    });
-
-    res.cookie("refreshToken", newRefreshToken, {
-      httpOnly: true,
-      // secure: process.env.NODE_ENV === "production",
-      secure: false,
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setAuthCookies(res, session);
 
     return res.json({ success: true });
 
@@ -529,19 +606,13 @@ exports.completeProfile = async (req, res) => {
     );
     const user = result.rows[0];
 
-    const {
-      generateAccessToken,
-      generateRefreshToken,
-    } = require("../utils/token");
-
     const accessToken =
       generateAccessToken(user);
 
     const refreshToken =
       generateRefreshToken();
 
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 7);
+    const expiry = getRefreshExpiry();
 
     await pool.query(
       `
@@ -554,21 +625,7 @@ exports.completeProfile = async (req, res) => {
     );
 
     // 🍪 SET COOKIES (FIX)
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      // secure: process.env.NODE_ENV === "production",
-      secure: false,
-      sameSite: "lax",
-      maxAge: 15 * 60 * 1000, // 15 min
-    });
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      // secure: process.env.NODE_ENV === "production",
-      secure: false,
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    setAuthCookies(res, { accessToken, refreshToken });
 
     // ✅ SEND CLEAN RESPONSE
     res.json({
@@ -726,8 +783,8 @@ exports.logout = async (req, res) => {
     }
 
     // 🍪 Always clear cookies
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
+    res.clearCookie("accessToken", getClearCookieOptions());
+    res.clearCookie("refreshToken", getClearCookieOptions());
 
     return res.json({ success: true });
 

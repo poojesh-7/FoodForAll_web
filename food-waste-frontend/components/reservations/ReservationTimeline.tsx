@@ -5,6 +5,7 @@ type ReservationTimelineProps = {
 };
 
 const steps = [
+  { key: "payment_pending", label: "Payment Pending" },
   { key: "reserved", label: "Reserved" },
   { key: "pending", label: "Pending" },
   { key: "self_pickup", label: "Self Pickup" },
@@ -16,6 +17,7 @@ const steps = [
 ];
 
 function getOperationalState(reservation: ReservationRow | ReservationDetails) {
+  if (reservation.status === "payment_pending") return "payment_pending";
   if (reservation.status === "cancelled") return "cancelled";
   if (reservation.task_status === "delivered") return "delivered";
   if (reservation.status === "picked_up") return "picked_up";

@@ -5,10 +5,7 @@ const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
 const refundQueue = require("../queues/refund.queue");
 
-
-const paymentQueue = require("../queues/payment.queue");
-
-const { createPayment,cancelPayment } = require("../shared/services/payment.service");
+const { createPayment, cancelPayment } = require("../shared/services/payment.service");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
 
 const withStatus = (message, statusCode) => {
@@ -64,14 +61,29 @@ exports.createReservation = async (req, res) => {
     const reservationResult = await client.query(
       `
       INSERT INTO reservations
-      (listing_id, user_id, quantity_reserved, task_status, pickup_code, payment_status)
-      VALUES ($1,$2,$3,'self_pickup',$4,'pending')
+      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status)
+      VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending')
       RETURNING *
       `,
       [listing_id, req.user.id, quantityValue, generatePickupCode()]
     );
 
     const reservation = reservationResult.rows[0];
+
+    const stockUpdate = await client.query(
+      `
+      UPDATE food_listings
+      SET remaining_quantity = remaining_quantity - $1
+      WHERE id=$2
+      AND remaining_quantity >= $1
+      RETURNING remaining_quantity
+      `,
+      [quantityValue, listing_id]
+    );
+
+    if (!stockUpdate.rows.length) {
+      throw withStatus("Not enough quantity", 409);
+    }
 
     /*
     💳 PAYMENT (MANDATORY NOW)
@@ -129,7 +141,7 @@ exports.getReservationById = async (req, res) => {
     JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     WHERE r.id=$1
-    FOR UPDATE`,
+    FOR UPDATE OF r`,
     [id],
   );
 
@@ -140,24 +152,34 @@ exports.getReservationById = async (req, res) => {
 
 exports.getMyReservations = async (req, res) => {
   const result = await pool.query(
-    `SELECT r.*,
-            f.title,
-            f.description,
-            f.pickup_start_time,
-            f.pickup_end_time,
-            f.is_free,
-            f.price,
-            provider.id AS provider_id,
-            provider.name AS provider_name,
-            provider.phone AS provider_phone,
-            volunteer.name AS assigned_volunteer_name,
-            volunteer.phone AS assigned_volunteer_phone
-     FROM reservations r
-     JOIN food_listings f ON r.listing_id = f.id
-     JOIN users provider ON provider.id = f.provider_id
-     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
-     WHERE r.user_id=$1
-     ORDER BY r.reserved_at DESC`,
+    `
+    SELECT r.*,
+          f.id AS listing_id,
+          f.title,
+          f.description,
+          f.pickup_start_time,
+          f.pickup_end_time,
+          f.is_free,
+          f.price,
+          requester.id AS requester_id,
+          requester.name AS requester_name,
+          requester.phone AS requester_phone,
+          volunteer.name AS assigned_volunteer_name,
+          volunteer.phone AS assigned_volunteer_phone,
+          CASE
+            WHEN r.pickup_type = 'ngo' THEN 'ngo'
+            ELSE 'self_pickup'
+          END AS reservation_kind
+    FROM reservations r
+    JOIN food_listings f ON f.id = r.listing_id
+    LEFT JOIN users requester ON requester.id = r.user_id
+    LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+    JOIN restaurants restaurant
+      ON restaurant.id = f.provider_id
+
+    WHERE restaurant.user_id = $1
+    ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
+    `,
     [req.user.id],
   );
 
@@ -186,7 +208,7 @@ exports.getProviderReservations = async (req, res) => {
              volunteer.phone AS assigned_volunteer_phone,
              CASE
                WHEN r.pickup_type = 'ngo' THEN 'ngo'
-               ELSE 'user'
+               ELSE 'self_pickup'
              END AS reservation_kind
       FROM reservations r
       JOIN food_listings f ON f.id = r.listing_id
@@ -264,15 +286,18 @@ exports.cancelReservation = async (req, res) => {
     4️⃣ STATUS CHECK
     ========================
     */
-    if (reservation.status !== "reserved") {
+    if (!["reserved", "payment_pending"].includes(reservation.status)) {
       throw withStatus("Cannot cancel this reservation", 400);
     }
 
     if (
-      reservation.task_status !== "pending" &&
-      reservation.task_status !== "self_pickup"
+      reservation.pickup_type === "ngo" &&
+      reservation.task_status !== "pending"
     ) {
-      throw withStatus("Cannot cancel after volunteer started", 400);
+      throw withStatus(
+        "Cannot cancel after volunteer started",
+        400
+      );
     }
 
     /*
@@ -297,6 +322,14 @@ exports.cancelReservation = async (req, res) => {
     if (reservation.payment_status === "pending") {
       // 🔥 Cancel payment (no refund)
       await cancelPayment(client, reservation.id);
+      await client.query(
+        `
+        UPDATE reservations
+        SET payment_status='failed'
+        WHERE id=$1
+        `,
+        [id]
+      );
     }
 
     /*
@@ -427,6 +460,9 @@ exports.markAsPickedUp = async (req, res) => {
 
     if (reservation.provider_id !== req.user.id)
       throw withStatus("Only provider can confirm pickup", 403);
+
+    if (reservation.status !== "reserved")
+      throw withStatus("Reservation is not active", 409);
 
     if (reservation.pickup_code !== pickup_code)
       throw withStatus("Invalid pickup code", 400);

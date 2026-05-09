@@ -14,6 +14,8 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
 };
 
+let refreshPromise: Promise<unknown> | null = null;
+
 function getApiBaseUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
 
@@ -49,6 +51,18 @@ function shouldSkipRefresh(url?: string) {
   return PUBLIC_AUTH_PATHS.some((path) => pathname.endsWith(path));
 }
 
+function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post(REFRESH_TOKEN_PATH)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
 api.interceptors.request.use((config) => {
   config.withCredentials = true;
   return config;
@@ -71,13 +85,9 @@ api.interceptors.response.use(
     originalRequest._retry = true;
 
     try {
-      await api.post(REFRESH_TOKEN_PATH);
+      await refreshAccessToken();
       return api(originalRequest);
     } catch (refreshError) {
-      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-        window.location.assign("/login");
-      }
-
       return Promise.reject(refreshError);
     }
   }

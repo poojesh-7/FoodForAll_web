@@ -4,6 +4,31 @@ import type { AuthMeUser, AuthUser } from "@backend/contracts/api-contracts";
 
 type AuthStoreUser = AuthMeUser | AuthUser;
 
+const AUTH_HYDRATION_ATTEMPTS = 3;
+const AUTH_HYDRATION_RETRY_DELAY_MS = 350;
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchMeWithRecovery() {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < AUTH_HYDRATION_ATTEMPTS; attempt += 1) {
+    try {
+      if (attempt > 0) {
+        await delay(AUTH_HYDRATION_RETRY_DELAY_MS * attempt);
+      }
+
+      return await authApi.fetchMe();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
 interface AuthState {
   user: AuthStoreUser | null;
   isAuthenticated: boolean;
@@ -47,7 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   fetchMe: async () => {
     try {
       set({ loading: true, authError: null, authSuccess: null });
-      const user = await authApi.fetchMe();
+      const user = await fetchMeWithRecovery();
 
       set({
         user,

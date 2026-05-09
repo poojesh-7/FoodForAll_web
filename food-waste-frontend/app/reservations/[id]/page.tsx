@@ -2,20 +2,30 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import RatingForm from "@/components/ratings/RatingForm";
 import ReviewList from "@/components/ratings/ReviewList";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
+import { openCashfreeCheckout } from "@/lib/cashfree";
+import {
+  getPaymentSessionByReservationId,
+  getReservationPaymentState,
+  isRetryablePaymentState,
+} from "@/lib/payment-flow";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
 import type {
   ListingRating,
   ReservationDetails,
 } from "@backend/contracts/api-contracts";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 function canCancel(reservation: ReservationDetails) {
-  return reservation.status === "reserved" && reservation.task_status === "pending";
+  return (
+    (reservation.status === "reserved" || reservation.status === "payment_pending") &&
+    (reservation.task_status === "pending" || reservation.task_status === "self_pickup")
+  );
 }
 
 function canRate(reservation: ReservationDetails) {
@@ -33,12 +43,23 @@ function isRatingWindowExpired(reservation: ReservationDetails) {
   return Date.now() - completedAt > 48 * 60 * 60 * 1000;
 }
 
+async function fetchReservationData(id: string) {
+  const result = await reservationService.getReservationById(id);
+  const listingRatings = result.listing_id
+    ? await ratingService.getListingRatings(result.listing_id)
+    : [];
+
+  return { result, listingRatings };
+}
+
 export default function ReservationDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const [reservation, setReservation] = useState<ReservationDetails | null>(null);
   const [ratings, setRatings] = useState<ListingRating[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -46,18 +67,18 @@ export default function ReservationDetailPage() {
   useEffect(() => {
     let active = true;
 
-    async function loadReservation() {
+    async function loadInitialReservation() {
       try {
         setLoading(true);
         setError("");
-        const result = await reservationService.getReservationById(params.id);
-        const listingRatings = result.listing_id
-          ? await ratingService.getListingRatings(result.listing_id)
-          : [];
-
+        const { result, listingRatings } = await fetchReservationData(params.id);
         if (!active) return;
         setReservation(result);
         setRatings(listingRatings);
+
+        if (getReservationPaymentState(result) === "payment_pending") {
+          setSuccess("Payment is pending. Continue checkout or wait for confirmation.");
+        }
       } catch (err) {
         if (active) setError(reservationService.getErrorMessage(err));
       } finally {
@@ -65,12 +86,28 @@ export default function ReservationDetailPage() {
       }
     }
 
-    loadReservation();
+    loadInitialReservation();
 
     return () => {
       active = false;
     };
   }, [params.id]);
+
+  const loadReservation = async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true);
+      setError("");
+      const { result, listingRatings } = await fetchReservationData(params.id);
+      setReservation(result);
+      setRatings(listingRatings);
+      return result;
+    } catch (err) {
+      setError(reservationService.getErrorMessage(err));
+      return null;
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
 
   const cancelReservation = async () => {
     if (!reservation?.id) return;
@@ -120,6 +157,63 @@ export default function ReservationDetailPage() {
     }
   };
 
+  const continuePayment = async () => {
+    if (!reservation?.id) return;
+
+    const session = getPaymentSessionByReservationId(reservation.id);
+    if (!session) {
+      setError("Payment session was not found in this browser. Create a fresh reservation if this one expires.");
+      return;
+    }
+
+    try {
+      setPaymentProcessing(true);
+      setError("");
+      setSuccess("Opening secure Cashfree checkout...");
+      const checkoutResult = await openCashfreeCheckout({
+        paymentSessionId: session.paymentSessionId,
+      });
+
+      setSuccess(
+        checkoutResult?.error?.message || "Verifying payment status from the backend..."
+      );
+
+      const latest = await loadReservation(false);
+      const state = latest ? getReservationPaymentState(latest) : "payment_pending";
+
+      if (state === "paid") {
+        const params = new URLSearchParams({
+          order_id: session.orderId,
+          reservation_id: String(reservation.id),
+        });
+        router.push(`/payment-success?${params.toString()}`);
+        return;
+      }
+
+      if (state === "failed" || state === "expired") {
+        const params = new URLSearchParams({
+          order_id: session.orderId,
+          reservation_id: String(reservation.id),
+        });
+        router.push(`/payment-failed?${params.toString()}`);
+        return;
+      }
+
+      setSuccess("Payment is still pending. We will keep showing the backend state here.");
+    } catch (err) {
+      setError(reservationService.getErrorMessage(err));
+      setSuccess("");
+    } finally {
+      setPaymentProcessing(false);
+    }
+  };
+
+  const paymentState = reservation
+    ? getReservationPaymentState(reservation)
+    : "unknown";
+  const canRetryPayment =
+    reservation?.id && isRetryablePaymentState(paymentState);
+
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-5xl space-y-5">
@@ -157,6 +251,36 @@ export default function ReservationDetailPage() {
           </div>
         ) : reservation ? (
           <>
+            <section className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center">
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Payment state
+                </p>
+                <div className="mt-2">
+                  <PaymentStatusBadge state={paymentState} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => loadReservation(false)}
+                  disabled={paymentProcessing}
+                  className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+                {canRetryPayment && (
+                  <button
+                    type="button"
+                    onClick={continuePayment}
+                    disabled={paymentProcessing}
+                    className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {paymentProcessing ? "Processing..." : "Continue Payment"}
+                  </button>
+                )}
+              </div>
+            </section>
             <ReservationTimeline reservation={reservation} />
             <ReservationCard
               reservation={reservation}

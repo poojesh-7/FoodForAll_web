@@ -8,10 +8,12 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
+const paymentRoutes = require("../../routes/payment.routes");
+const frontendOrigin = process.env.FRONTEND_URL || "http://localhost:3000";
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: frontendOrigin,
     credentials: true,
   },
 });
@@ -45,15 +47,12 @@ io.use((socket, next) => {
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: frontendOrigin,
     credentials: true,
   })
 );
 
-app.use(
-  "/api/v1/payments/webhook",
-  express.raw({ type: "application/json" })
-);
+app.use("/api/v1/payments", paymentRoutes);
 
 app.use(express.json());
 app.set("io", io);
@@ -119,11 +118,9 @@ const volunteerRoutes = require("../../routes/volunteer.routes");
 const ratingRoutes = require("../../routes/rating.routes");
 const impactRoutes = require("../../routes/impact.routes");
 const notificationRoutes = require("../../routes/notification.routes");
-const paymentRoutes = require("../../routes/payment.routes");
 const authMiddleware = require("../../middlewares/auth.middleware");
 const requireAdmin = require("../../middlewares/admin.middleware");
 
-app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/food", foodRoutes);

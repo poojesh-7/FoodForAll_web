@@ -2,7 +2,6 @@ const pool = require("../shared/config/db");
 const generatePickupCode = require("../utils/codeGenerator");
 const { addNGOLocation } = require("../services/geo.service");
 const notificationQueue = require("../queues/notification.queue");
-const { createPayment } = require("../shared/services/payment.service");
 const {
   isProvided,
   isValidId,
@@ -193,6 +192,8 @@ exports.getNearbyListings = async (req, res) => {
     SELECT id, title, remaining_quantity
     FROM food_listings
     WHERE status='active'
+    AND is_free = true
+    AND remaining_quantity > 0
     AND ST_DWithin(
         location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
@@ -238,7 +239,7 @@ exports.bulkReserve = async (req, res) => {
     0
   );
   
-  if (totalQuantity > NGO_MAX_LIMIT && totalQuantity < 20) {
+  if (totalQuantity > NGO_MAX_LIMIT) {
     return res.status(400).json({
       error: `NGO cannot reserve more than ${NGO_MAX_LIMIT} items at once`,
     });
@@ -249,10 +250,8 @@ exports.bulkReserve = async (req, res) => {
     await client.query("BEGIN");
 
     const created = [];
-    let totalAmount = 0;
-    const paidReservations = [];
-
     for (const item of reservations) {
+      const quantity = toNumber(item.quantity);
       const foodResult = await client.query(
         `SELECT * FROM food_listings WHERE id=$1 FOR UPDATE`,
         [item.listing_id]
@@ -266,7 +265,13 @@ exports.bulkReserve = async (req, res) => {
         throw error;
       }
 
-      if (food.remaining_quantity < item.quantity) {
+      if (!food.is_free) {
+        const error = new Error("NGOs can reserve only free listings");
+        error.statusCode = 403;
+        throw error;
+      }
+
+      if (food.remaining_quantity < quantity) {
         const error = new Error("Not enough quantity");
         error.statusCode = 409;
         throw error;
@@ -275,14 +280,14 @@ exports.bulkReserve = async (req, res) => {
       const reservation = await client.query(
         `
         INSERT INTO reservations
-        (listing_id, user_id, quantity_reserved, pickup_type, task_status, pickup_code, receive_code)
-        VALUES ($1,$2,$3,'ngo','pending',$4,$5)
+        (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
+        VALUES ($1,$2,$3,'ngo','pending','reserved','paid',$4,$5)
         RETURNING *
         `,
         [
           item.listing_id,
           req.user.id,
-          item.quantity,
+          quantity,
           generatePickupCode(),
           generatePickupCode(),
         ]
@@ -291,38 +296,29 @@ exports.bulkReserve = async (req, res) => {
       const r = reservation.rows[0];
       created.push(r);
 
-      if (!food.is_free) {
-        totalAmount += Number(food.price) * item.quantity;
-        paidReservations.push(r);
-      } else {
-        await client.query(
-          `UPDATE food_listings
-           SET remaining_quantity = remaining_quantity - $1
-           WHERE id=$2`,
-          [item.quantity, item.listing_id]
-        );
+      const stockUpdate = await client.query(
+        `
+        UPDATE food_listings
+        SET remaining_quantity = remaining_quantity - $1
+        WHERE id=$2
+        AND remaining_quantity >= $1
+        RETURNING remaining_quantity
+        `,
+        [quantity, item.listing_id]
+      );
+
+      if (!stockUpdate.rows.length) {
+        const error = new Error("Not enough quantity");
+        error.statusCode = 409;
+        throw error;
       }
-    }
-
-    let payment = null;
-
-    /*
-    ONE PAYMENT FOR ALL PAID ITEMS
-    */
-    if (paidReservations.length > 0) {
-      payment = await createPayment({
-        client,
-        user: req.user,
-        reservations: paidReservations,
-        totalAmount,
-      });
     }
 
     await client.query("COMMIT");
 
     res.json({
       reservations: created,
-      payment,
+      payment: null,
     });
 
   } catch (err) {
@@ -598,6 +594,12 @@ exports.acceptNGORequest = async (req, res) => {
       throw error;
     }
 
+    if (!listing.is_free) {
+      const error = new Error("NGOs can reserve only free listings");
+      error.statusCode = 403;
+      throw error;
+    }
+
     // ⏱ Time check
     const endTime = new Date(listing.pickup_end_time).getTime();
     if (endTime - Date.now() < 30 * 60 * 1000) {
@@ -635,8 +637,8 @@ exports.acceptNGORequest = async (req, res) => {
     await client.query(
       `
       INSERT INTO reservations
-      (listing_id, user_id, quantity_reserved, pickup_type, task_status, pickup_code, receive_code)
-      VALUES ($1,$2,$3,'ngo','pending',$4,$5)
+      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
+      VALUES ($1,$2,$3,'ngo','pending','reserved','paid',$4,$5)
       `,
       [listingId, req.user.id, listing.remaining_quantity, pickupCode, receiveCode]
     );

@@ -1,5 +1,6 @@
 const cashfree = require("../config/cashfree");
 const paymentQueue = require("../../queues/payment.queue");
+const crypto = require("crypto");
 
 async function createPayment({
   client,
@@ -8,7 +9,15 @@ async function createPayment({
   totalAmount,
 }) {
 
-  const orderId = `order_${Date.now()}`;
+  const orderId = `order_${crypto.randomUUID()}`;
+  const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:3000")
+    .replace(/\/+$/, "");
+  const returnUrl = new URL("/payment-success", frontendUrl);
+  returnUrl.searchParams.set("order_id", orderId);
+
+  if (reservations.length === 1 && reservations[0]?.id) {
+    returnUrl.searchParams.set("reservation_id", String(reservations[0].id));
+  }
 
   /*
   1️⃣ Create Cashfree Order
@@ -24,7 +33,7 @@ async function createPayment({
           customer_phone: user.phone || "9999999999",
         },
         order_meta: {
-          return_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${orderId}`,
+          return_url: returnUrl.toString(),
         },
       });
 
@@ -91,13 +100,13 @@ async function cancelPayment(client, reservationId) {
   /*
   🛑 If already success → don't cancel, refund instead
   */
-  if (payment.status === "success") return;
+  if (["paid", "refunded"].includes(payment.status)) return;
 
   /*
   ❌ Mark as cancelled
   */
   await client.query(
-    `UPDATE payments SET status='cancelled' WHERE id=$1`,
+    `UPDATE payments SET status='failed', updated_at=NOW() WHERE id=$1`,
     [payment.id]
   );
 

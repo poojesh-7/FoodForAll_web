@@ -2,6 +2,8 @@ import api from "@/lib/axios";
 import { getErrorMessage } from "@/services/auth";
 import type {
   CancelReservationResponse,
+  CreateReservationRequest,
+  CreateReservationResponse,
   DbId,
   GetMyReservationsResponse,
   GetProviderReservationsResponse,
@@ -11,9 +13,14 @@ import type {
   ProviderReservationRow,
   ReservationDetails,
   ReservationHistoryRow,
+  ReservationWithPaymentData,
 } from "@backend/contracts/api-contracts";
 
 type MessageResponse = { message?: string };
+
+function encodeId(id: DbId) {
+  return encodeURIComponent(String(id));
+}
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -38,11 +45,21 @@ export async function getMyReservations(): Promise<ReservationHistoryRow[]> {
   return getArrayData<ReservationHistoryRow>(data);
 }
 
+export async function createReservation(
+  payload: CreateReservationRequest
+): Promise<ReservationWithPaymentData> {
+  const { data } = await api.post<
+    CreateReservationResponse | ReservationWithPaymentData
+  >("/reservations", payload);
+
+  return getEnvelopeData<ReservationWithPaymentData>(data);
+}
+
 export async function getReservationById(
   id: DbId
 ): Promise<ReservationDetails> {
   const { data } = await api.get<GetReservationByIdResponse | ReservationDetails>(
-    `/reservations/${String(id)}`
+    `/reservations/${encodeId(id)}`
   );
 
   return getEnvelopeData<ReservationDetails>(data);
@@ -58,7 +75,7 @@ export async function getProviderReservations(): Promise<ProviderReservationRow[
 
 export async function cancelReservation(id: DbId): Promise<void> {
   await api.put<CancelReservationResponse | MessageResponse>(
-    `/reservations/${String(id)}/cancel`
+    `/reservations/${encodeId(id)}/cancel`
   );
 }
 
@@ -67,12 +84,13 @@ export async function confirmPickup(
   payload: MarkAsPickedUpRequest
 ): Promise<void> {
   await api.put<MarkAsPickedUpResponse | MessageResponse>(
-    `/reservations/${String(id)}/pickup`,
+    `/reservations/${encodeId(id)}/pickup`,
     payload
   );
 }
 
 export const reservationService = {
+  createReservation,
   getMyReservations,
   getReservationById,
   getProviderReservations,

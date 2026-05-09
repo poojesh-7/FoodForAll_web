@@ -18,12 +18,20 @@ const protectedRoutes = [
   "/ngo",
   "/volunteer",
   "/reservations",
+  "/payment-success",
+  "/payment-failed",
 ];
 
 const guestOnlyRoutes = ["/login"];
+const paymentReturnRoutes = ["/payment-success", "/payment-failed"];
+const PAYMENT_RETURN_AUTH_DELAY_MS = 300;
 
 function matchesRoute(pathname: string, routes: string[]) {
   return routes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+function isReservationDetailRoute(pathname: string) {
+  return /^\/reservations\/[^/]+$/.test(pathname);
 }
 
 export default function AuthProvider({
@@ -43,6 +51,9 @@ export default function AuthProvider({
 
   const isProtectedRoute = matchesRoute(pathname, protectedRoutes);
   const isGuestOnlyRoute = matchesRoute(pathname, guestOnlyRoutes);
+  const isPaymentReturnRoute = matchesRoute(pathname, paymentReturnRoutes);
+  const isRecoveryFriendlyRoute =
+    isPaymentReturnRoute || isReservationDetailRoute(pathname);
 
   useEffect(() => {
     clearMessages();
@@ -52,26 +63,36 @@ export default function AuthProvider({
     if (!isProtectedRoute) return;
 
     let active = true;
+    let timer: number | undefined;
 
-    fetchMe().then((authUser) => {
-      if (!active) return;
+    const hydrate = () => {
+      fetchMe().then((authUser) => {
+        if (!active) return;
 
-      if (!authUser) {
-        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
-        return;
-      }
+        if (!authUser) {
+          router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+          return;
+        }
 
-      const redirectPath = getRouteAccessRedirect(authUser, pathname);
+        const redirectPath = getRouteAccessRedirect(authUser, pathname);
 
-      if (redirectPath) {
-        router.replace(redirectPath);
-      }
-    });
+        if (redirectPath) {
+          router.replace(redirectPath);
+        }
+      });
+    };
+
+    if (isPaymentReturnRoute) {
+      timer = window.setTimeout(hydrate, PAYMENT_RETURN_AUTH_DELAY_MS);
+    } else {
+      hydrate();
+    }
 
     return () => {
       active = false;
+      if (timer) window.clearTimeout(timer);
     };
-  }, [fetchMe, isProtectedRoute, pathname, router]);
+  }, [fetchMe, isPaymentReturnRoute, isProtectedRoute, pathname, router]);
 
   useEffect(() => {
     if (isGuestOnlyRoute && isAuthenticated) {
@@ -79,7 +100,12 @@ export default function AuthProvider({
     }
   }, [isAuthenticated, isGuestOnlyRoute, router, user?.role]);
 
-  if (isProtectedRoute && (!initialized || loading) && !user) {
+  if (
+    isProtectedRoute &&
+    !isRecoveryFriendlyRoute &&
+    (!initialized || loading) &&
+    !user
+  ) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 text-sm text-zinc-600">
         Loading...

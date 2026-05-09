@@ -122,6 +122,14 @@ export function getRouteAccessRedirect(
     return getPostAuthRedirect(user);
   }
 
+  if (
+    (pathname.startsWith("/payment-success") ||
+      pathname.startsWith("/payment-failed")) &&
+    user?.role !== "user"
+  ) {
+    return getPostAuthRedirect(user);
+  }
+
   if (pathname.startsWith("/ngo/register") && user?.role !== "ngo") {
     return getPostAuthRedirect(user);
   }

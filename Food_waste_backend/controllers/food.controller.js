@@ -100,7 +100,14 @@ exports.registerRestaurant = async (req, res) => {
       });
     }
 
-    const fssaiImagePath = req.file.path;
+    const { uploadBuffer } = require("../shared/services/cloudinary.service");
+    const uploadedImage = await uploadBuffer(req.file.buffer, {
+      folder: "food-waste/fssai",
+      public_id: `${normalizedFssai}_${userId}`,
+    });
+
+    const fssaiImagePath = uploadedImage.secure_url;
+
 
     // 🔹 Insert
     const result = await pool.query(

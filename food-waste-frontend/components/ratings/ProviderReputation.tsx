@@ -21,7 +21,7 @@ export default function ProviderReputation({ summary }: ProviderReputationProps)
       <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
         <p className="text-sm font-medium text-zinc-600">Total Reviews</p>
         <p className="mt-2 text-2xl font-semibold text-zinc-950">{total}</p>
-        <p className="mt-1 text-sm text-zinc-500">Self-pickup review count</p>
+        <p className="mt-1 text-sm text-zinc-500">Reservation review count</p>
       </article>
     </section>
   );

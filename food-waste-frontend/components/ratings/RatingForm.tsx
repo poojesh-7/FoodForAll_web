@@ -6,20 +6,37 @@ import { useState } from "react";
 type RatingFormProps = {
   onSubmit: (rating: number, review: string) => Promise<void>;
   disabled?: boolean;
+  title?: string;
+  description?: string;
+  framed?: boolean;
 };
 
-export default function RatingForm({ onSubmit, disabled }: RatingFormProps) {
-  const [rating, setRating] = useState(5);
+export default function RatingForm({
+  onSubmit,
+  disabled,
+  title = "Rate Pickup",
+  description = "Share feedback for this completed reservation.",
+  framed = true,
+}: RatingFormProps) {
+  const [rating, setRating] = useState<number | null>(null);
   const [review, setReview] = useState("");
+  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const submitRating = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (rating === null) {
+      setError("Choose a rating from 1 to 5.");
+      return;
+    }
+
     try {
       setSubmitting(true);
+      setError("");
       await onSubmit(rating, review.trim());
       setReview("");
+      setRating(null);
     } finally {
       setSubmitting(false);
     }
@@ -28,13 +45,15 @@ export default function RatingForm({ onSubmit, disabled }: RatingFormProps) {
   return (
     <form
       onSubmit={submitRating}
-      className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
+      className={
+        framed
+          ? "space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
+          : "space-y-3"
+      }
     >
       <div>
-        <h2 className="text-base font-semibold text-zinc-950">Rate Pickup</h2>
-        <p className="mt-1 text-sm text-zinc-600">
-          Share feedback for this completed self pickup.
-        </p>
+        <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
+        <p className="mt-1 text-sm text-zinc-600">{description}</p>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -44,17 +63,19 @@ export default function RatingForm({ onSubmit, disabled }: RatingFormProps) {
             type="button"
             onClick={() => setRating(value)}
             disabled={disabled || submitting}
-            className={`h-10 w-10 rounded-md border text-sm font-semibold disabled:opacity-50 ${
-              rating >= value
+            className={`h-10 w-10 rounded-md border text-lg font-semibold leading-none disabled:opacity-50 ${
+              rating !== null && rating >= value
                 ? "border-amber-300 bg-amber-50 text-amber-700"
                 : "border-zinc-300 bg-white text-zinc-500"
             }`}
             aria-label={`${value} star rating`}
+            aria-pressed={rating === value}
           >
-            {value}
+            ★
           </button>
         ))}
       </div>
+      {error && <p className="text-sm text-red-700">{error}</p>}
 
       <textarea
         value={review}
@@ -68,10 +89,10 @@ export default function RatingForm({ onSubmit, disabled }: RatingFormProps) {
 
       <button
         type="submit"
-        disabled={disabled || submitting}
+        disabled={disabled || submitting || rating === null}
         className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting ? "Submitting..." : "Submit Rating"}
+        {submitting ? "Submitting..." : "Submit Review"}
       </button>
     </form>
   );

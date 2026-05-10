@@ -199,6 +199,9 @@ export interface ReservationDetails extends ReservationRow {
   requester_phone?: string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
+  review_id?: DbId | null;
+  review_rating?: number | string | null;
+  review_text?: string | null;
 }
 
 export interface ReservationHistoryRow extends ReservationRow {
@@ -316,6 +319,9 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   provider_id: DbId;
   provider_name: string | null;
   provider_phone: string | null;
+  review_id?: DbId | null;
+  review_rating?: number | string | null;
+  review_text?: string | null;
 }
 
 export interface ProviderReservationRow extends ReservationDetails {
@@ -328,6 +334,7 @@ export interface ProviderReservationRow extends ReservationDetails {
 
 export interface RatingRow extends DbRow {
   id?: DbId;
+  reservation_id?: DbId;
   listing_id?: DbId;
   reviewer_id?: DbId;
   rating?: number | string;
@@ -335,6 +342,7 @@ export interface RatingRow extends DbRow {
 }
 
 export interface ListingRating {
+  id?: DbId;
   rating: number | string;
   review: string | null;
   created_at: ISODateString;
@@ -600,7 +608,7 @@ export type MarkAsPickedUpResponse = ApiResponse<EmptyData>;
 
 // Rating requests/responses
 export interface CreateRatingRequest {
-  listing_id: DbId;
+  reservation_id: DbId;
   rating: number | string;
   review?: string | null;
 }

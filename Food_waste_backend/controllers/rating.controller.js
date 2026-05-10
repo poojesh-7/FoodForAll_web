@@ -1,112 +1,139 @@
 const pool = require("../shared/config/db");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
 
+const REVIEW_MAX_LENGTH = 500;
+const REVIEWER_ROLES = new Set(["user", "ngo"]);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const withStatus = (message, statusCode) => {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
 };
 
-/*
-========================
-Create Rating
-========================
-*/
-exports.createRating = async (req, res) => {
-  const { listing_id, rating, review } = req.body;
-  const user_id = req.user.id;
-  const ratingValue = toNumber(rating);
+function parseRating(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return toNumber(value.trim());
+  }
+  return NaN;
+}
 
-  if (!isValidId(listing_id) || !isProvided(rating)) {
+function isUuid(value) {
+  return UUID_PATTERN.test(String(value));
+}
+
+function sanitizeReview(value) {
+  if (!isProvided(value)) return null;
+
+  const normalized = String(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim();
+
+  if (!normalized) return null;
+  return normalized.slice(0, REVIEW_MAX_LENGTH);
+}
+
+function isReservationReviewEligible(reservation) {
+  if (reservation.pickup_type === "self_pickup") {
+    return reservation.status === "picked_up" || Boolean(reservation.completed_at);
+  }
+
+  if (reservation.pickup_type === "ngo") {
+    return reservation.task_status === "delivered" || Boolean(reservation.completed_at);
+  }
+
+  return false;
+}
+
+exports.createRating = async (req, res) => {
+  const { reservation_id, rating, review } = req.body;
+  const userId = req.user.id;
+  const ratingValue = parseRating(rating);
+
+  if (!REVIEWER_ROLES.has(req.user.role)) {
+    return res.status(403).json({ error: "Only reservation owners can review providers" });
+  }
+
+  if (
+    !isValidId(reservation_id) ||
+    !isUuid(reservation_id) ||
+    !isProvided(rating)
+  ) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  if (!Number.isFinite(ratingValue) || ratingValue < 1 || ratingValue > 5) {
-    return res.status(400).json({ error: "Rating must be between 1 and 5" });
+  if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+    return res.status(400).json({ error: "Rating must be an integer between 1 and 5" });
   }
 
+  const sanitizedReview = sanitizeReview(review);
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    /*
-    1️⃣ Validate eligibility
-    */
     const reservationResult = await client.query(
       `
-      SELECT r.*, f.provider_id
+      SELECT r.*, f.provider_id, f.is_free
       FROM reservations r
       JOIN food_listings f ON f.id = r.listing_id
-      WHERE r.listing_id=$1
-      AND r.user_id=$2
-      AND r.status='picked_up'
-      AND r.pickup_type='self_pickup'
-      LIMIT 1
+      WHERE r.id=$1
+      FOR UPDATE
       `,
-      [listing_id, user_id]
+      [reservation_id]
     );
 
     if (!reservationResult.rows.length) {
-      throw withStatus("Not eligible to rate", 403);
+      throw withStatus("Reservation not found", 404);
     }
 
     const reservation = reservationResult.rows[0];
 
-    /*
-    2️⃣ Rating time window (48 hours)
-    */
-    if (reservation.completed_at) {
-      const completedAt = new Date(reservation.completed_at).getTime();
-      const now = Date.now();
-
-      if (now - completedAt > 48 * 60 * 60 * 1000) {
-        throw withStatus("Rating window expired", 400);
-      }
+    if (String(reservation.user_id) !== String(userId)) {
+      throw withStatus("Only the reservation owner can review", 403);
     }
 
-    /*
-    3️⃣ Insert rating (unique constraint handles duplicates)
-    */
+    if (String(reservation.provider_id) === String(userId)) {
+      throw withStatus("Providers cannot review their own listings", 403);
+    }
+
+    if (!isReservationReviewEligible(reservation)) {
+      throw withStatus("Reservation is not eligible for review yet", 403);
+    }
+
+    if (
+      reservation.payment_status !== "not_required" &&
+      reservation.payment_status !== "paid"
+    ) {
+      throw withStatus("Paid reservations must be paid before review", 403);
+    }
+
     const result = await client.query(
       `
-      INSERT INTO ratings (listing_id, reviewer_id, rating, review)
-      VALUES ($1,$2,$3,$4)
+      INSERT INTO ratings (reservation_id, listing_id, reviewer_id, rating, review)
+      VALUES ($1,$2,$3,$4,$5)
       RETURNING *
       `,
-      [listing_id, user_id, ratingValue, review || null]
-    );
-
-    /*
-    4️⃣ OPTIONAL: Update provider stats (denormalized)
-    */
-    await client.query(
-      `
-      UPDATE users u
-      SET 
-        total_reviews = COALESCE(u.total_reviews, 0) + 1,
-        avg_rating = (
-          (
-            COALESCE(u.avg_rating, 0) * COALESCE(u.total_reviews, 0)
-            + $1
-          ) / (COALESCE(u.total_reviews, 0) + 1)
-        )
-      FROM food_listings f
-      WHERE f.id = $2
-      AND u.id = f.provider_id
-      `,
-      [ratingValue, listing_id]
+      [
+        reservation.id,
+        reservation.listing_id,
+        userId,
+        ratingValue,
+        sanitizedReview,
+      ]
     );
 
     await client.query("COMMIT");
 
     res.status(201).json(result.rows[0]);
-
   } catch (err) {
     await client.query("ROLLBACK");
 
     if (err.code === "23505") {
-      return res.status(409).json({ error: "Already rated this listing" });
+      return res.status(409).json({ error: "Already reviewed this reservation" });
     }
 
     res.status(err.statusCode || 400).json({
@@ -117,13 +144,6 @@ exports.createRating = async (req, res) => {
   }
 };
 
-
-
-/*
-========================
-Get Listing Ratings
-========================
-*/
 exports.getListingRatings = async (req, res) => {
   const { listingId } = req.params;
 
@@ -134,7 +154,8 @@ exports.getListingRatings = async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT 
+      SELECT
+        r.id,
         r.rating,
         r.review,
         r.created_at,
@@ -148,20 +169,12 @@ exports.getListingRatings = async (req, res) => {
     );
 
     res.json(result.rows);
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch ratings" });
   }
 };
 
-
-
-/*
-========================
-Get Provider Ratings
-========================
-*/
 exports.getProviderRatings = async (req, res) => {
   const { providerId } = req.params;
 
@@ -172,7 +185,7 @@ exports.getProviderRatings = async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT 
+      SELECT
         COALESCE(AVG(r.rating), 0) AS average_rating,
         COUNT(r.id) AS total_reviews
       FROM ratings r
@@ -183,7 +196,6 @@ exports.getProviderRatings = async (req, res) => {
     );
 
     res.json(result.rows[0]);
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch provider ratings" });

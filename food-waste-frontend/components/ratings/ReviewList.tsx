@@ -27,7 +27,7 @@ export default function ReviewList({
     <div className="grid gap-3">
       {ratings.map((rating, index) => (
         <article
-          key={`${String(rating.name ?? "review")}-${rating.created_at}-${index}`}
+          key={String(rating.id ?? `${String(rating.name ?? "review")}-${rating.created_at}-${index}`)}
           className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -75,9 +75,18 @@ function getCancellationMessage(reservation: ReservationDetails) {
 }
 
 function canRate(reservation: ReservationDetails) {
+  const isCompleted =
+    reservation.pickup_type === "self_pickup"
+      ? reservation.status === "picked_up" || Boolean(reservation.completed_at)
+      : reservation.pickup_type === "ngo" &&
+        (reservation.task_status === "delivered" || Boolean(reservation.completed_at));
+  const paymentAllowsReview =
+    reservation.payment_status === "paid" ||
+    reservation.payment_status === "not_required";
+
   return (
-    reservation.status === "picked_up" &&
-    reservation.pickup_type === "self_pickup" &&
+    isCompleted &&
+    paymentAllowsReview &&
     Boolean(reservation.listing_id)
   );
 }
@@ -121,6 +130,7 @@ export default function ReservationDetailPage() {
         if (!active) return;
         setReservation(result);
         setRatings(listingRatings);
+        setRatingSubmitted(Boolean(result.review_id));
 
         if (getReservationPaymentState(result) === "payment_pending") {
           setSuccess("Payment is pending. Continue checkout or wait for confirmation.");
@@ -146,6 +156,7 @@ export default function ReservationDetailPage() {
       const { result, listingRatings } = await fetchReservationData(params.id);
       setReservation(result);
       setRatings(listingRatings);
+      setRatingSubmitted(Boolean(result.review_id));
       return result;
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
@@ -178,17 +189,27 @@ export default function ReservationDetailPage() {
   };
 
   const submitRating = async (rating: number, review: string) => {
-    if (!reservation?.listing_id) return;
+    if (!reservation?.id || !reservation.listing_id) return;
 
     try {
       setError("");
       setSuccess("");
       const created = await ratingService.createRating({
-        listing_id: reservation.listing_id,
+        reservation_id: reservation.id,
         rating,
         review: review || null,
       });
       setRatingSubmitted(true);
+      setReservation((current) =>
+        current
+          ? {
+              ...current,
+              review_id: created.id,
+              review_rating: created.rating ?? rating,
+              review_text: created.review ?? (review || null),
+            }
+          : current
+      );
       setSuccess("Rating submitted successfully.");
       setRatings((current) => [
         {
@@ -351,9 +372,18 @@ export default function ReservationDetailPage() {
               }
             />
             {canRate(reservation) && !ratingSubmitted && !isRatingWindowExpired(reservation) && (
-              <RatingForm onSubmit={submitRating} />
+              <RatingForm
+                onSubmit={submitRating}
+                title="Review Provider"
+                description="Rate the provider for this completed pickup."
+              />
             )}
-            {canRate(reservation) && isRatingWindowExpired(reservation) && (
+            {canRate(reservation) && ratingSubmitted && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700 shadow-sm">
+                You have already reviewed this reservation.
+              </div>
+            )}
+            {canRate(reservation) && !ratingSubmitted && isRatingWindowExpired(reservation) && (
               <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
                 Rating window expired for this pickup.
               </div>

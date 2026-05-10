@@ -4,18 +4,36 @@ import { useEffect, useState } from "react";
 import NGOReservationCard from "@/components/ngo/NGOReservationCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import RatingForm from "@/components/ratings/RatingForm";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
   ngoService,
   type NGOReservationHistoryRow,
 } from "@/services/ngo.service";
+import { ratingService } from "@/services/rating.service";
 import { useRouter } from "next/navigation";
+
+function canReviewReservation(reservation: NGOReservationHistoryRow) {
+  const completed =
+    reservation.task_status === "delivered" || Boolean(reservation.completed_at);
+  const paymentAllowsReview =
+    reservation.payment_status === "paid" ||
+    reservation.payment_status === "not_required";
+
+  return (
+    reservation.pickup_type === "ngo" &&
+    completed &&
+    paymentAllowsReview &&
+    !reservation.review_id
+  );
+}
 
 export default function NGOReservationsPage() {
   const router = useRouter();
   const [reservations, setReservations] = useState<NGOReservationHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -43,12 +61,45 @@ export default function NGOReservationsPage() {
     };
   }, [router]);
 
+  const submitReview = async (
+    reservation: NGOReservationHistoryRow,
+    rating: number,
+    review: string
+  ) => {
+    try {
+      setError("");
+      setSuccess("");
+      const created = await ratingService.createRating({
+        reservation_id: reservation.id,
+        rating,
+        review: review || null,
+      });
+
+      setReservations((current) =>
+        current.map((item) =>
+          String(item.id) === String(reservation.id)
+            ? {
+                ...item,
+                review_id: created.id,
+                review_rating: created.rating ?? rating,
+                review_text: created.review ?? (review || null),
+              }
+            : item
+        )
+      );
+      setSuccess("Review submitted successfully.");
+    } catch (err) {
+      setError(ratingService.getErrorMessage(err));
+    }
+  };
+
   return (
     <NGOShell
       title="Reservation History"
       description="Review NGO reservations, provider details, and pickup workflow codes."
     >
       {error && <NGOStateBlock title={error} tone="error" />}
+      {success && <NGOStateBlock title={success} tone="success" />}
 
       {loading ? (
         <NGOStateBlock title="Loading reservations..." />
@@ -63,6 +114,22 @@ export default function NGOReservationsPage() {
             <NGOReservationCard
               key={String(reservation.id)}
               reservation={reservation}
+              actions={
+                reservation.review_id ? (
+                  <p className="text-sm text-emerald-700">
+                    You have already reviewed this reservation.
+                  </p>
+                ) : canReviewReservation(reservation) ? (
+                  <RatingForm
+                    framed={false}
+                    title="Review Provider"
+                    description="Rate the provider after successful delivery."
+                    onSubmit={(rating, review) =>
+                      submitReview(reservation, rating, review)
+                    }
+                  />
+                ) : null
+              }
             />
           ))}
         </div>

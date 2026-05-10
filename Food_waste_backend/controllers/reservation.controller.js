@@ -206,12 +206,16 @@ exports.getReservationById = async (req, res) => {
             requester.name AS requester_name,
             requester.phone AS requester_phone,
             volunteer.name AS assigned_volunteer_name,
-            volunteer.phone AS assigned_volunteer_phone
+            volunteer.phone AS assigned_volunteer_phone,
+            rating.id AS review_id,
+            rating.rating AS review_rating,
+            rating.review AS review_text
     FROM reservations r
     JOIN food_listings f ON r.listing_id = f.id
     JOIN users provider ON provider.id = f.provider_id
     JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+    LEFT JOIN ratings rating ON rating.reservation_id = r.id
     WHERE r.id=$1
     FOR UPDATE OF r`,
     [id],

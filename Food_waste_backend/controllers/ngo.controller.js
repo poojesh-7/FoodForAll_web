@@ -416,8 +416,12 @@ exports.getMyReservations = async (req, res) => {
         r.quantity_reserved,
         r.pickup_type,
         r.task_status,
+        r.status,
+        r.payment_status,
         r.pickup_code,
         r.receive_code,
+        r.completed_at,
+        r.reserved_at,
 
         f.id AS listing_id,
         f.title,
@@ -429,13 +433,19 @@ exports.getMyReservations = async (req, res) => {
 
         u.id AS provider_id,
         u.name AS provider_name,
-        u.phone AS provider_phone
+        u.phone AS provider_phone,
+
+        rating.id AS review_id,
+        rating.rating AS review_rating,
+        rating.review AS review_text
 
       FROM reservations r
       JOIN food_listings f
         ON f.id = r.listing_id
       JOIN users u
         ON u.id = f.provider_id
+      LEFT JOIN ratings rating
+        ON rating.reservation_id = r.id
 
       WHERE r.user_id = $1
       ORDER BY r.reserved_at DESC;

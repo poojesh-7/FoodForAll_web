@@ -1,8 +1,10 @@
 import { formatFoodDate } from "@/lib/food";
+import type { ReactNode } from "react";
 import type { NGOReservationHistoryRow } from "@/services/ngo.service";
 
 type NGOReservationCardProps = {
   reservation: NGOReservationHistoryRow;
+  actions?: ReactNode;
 };
 
 function displayValue(value: unknown) {
@@ -18,6 +20,7 @@ function getReservationPrice(reservation: NGOReservationHistoryRow) {
 
 export default function NGOReservationCard({
   reservation,
+  actions,
 }: NGOReservationCardProps) {
   const price = getReservationPrice(reservation);
 
@@ -85,6 +88,8 @@ export default function NGOReservationCard({
         <p>{displayValue(reservation.provider_name)}</p>
         <p>{displayValue(reservation.provider_phone)}</p>
       </div>
+
+      {actions && <div className="border-t border-zinc-200 pt-4">{actions}</div>}
     </article>
   );
 }

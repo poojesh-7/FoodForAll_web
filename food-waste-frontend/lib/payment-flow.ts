@@ -1,11 +1,14 @@
 import type { DbId, ReservationDetails, ReservationRow } from "@backend/contracts/api-contracts";
 
 export type ReservationPaymentState =
+  | "not_required"
   | "payment_pending"
   | "paid"
   | "failed"
   | "expired"
+  | "refund_pending"
   | "refunded"
+  | "refund_failed"
   | "unknown";
 
 export type StoredPaymentSession = {
@@ -85,10 +88,13 @@ export function getReservationPaymentState(
   const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
   const reservationStatus = String(reservation.status ?? "").toLowerCase();
 
+  if (paymentStatus === "not_required") return "not_required";
   if (paymentStatus === "paid") return "paid";
   if (paymentStatus === "failed") return "failed";
   if (paymentStatus === "expired") return "expired";
+  if (paymentStatus === "refund_pending") return "refund_pending";
   if (paymentStatus === "refunded") return "refunded";
+  if (paymentStatus === "refund_failed") return "refund_failed";
   if (paymentStatus === "pending" || reservationStatus === "payment_pending") {
     return "payment_pending";
   }
@@ -98,11 +104,14 @@ export function getReservationPaymentState(
 
 export function getPaymentStateLabel(state: ReservationPaymentState) {
   const labels: Record<ReservationPaymentState, string> = {
+    not_required: "No payment required",
     payment_pending: "Payment pending",
     paid: "Paid",
     failed: "Payment failed",
     expired: "Payment expired",
+    refund_pending: "Refund pending",
     refunded: "Refunded",
+    refund_failed: "Refund failed",
     unknown: "Payment unknown",
   };
 
@@ -111,8 +120,11 @@ export function getPaymentStateLabel(state: ReservationPaymentState) {
 
 export function getPaymentStateTone(state: ReservationPaymentState) {
   if (state === "paid") return "success";
-  if (state === "failed" || state === "expired") return "error";
-  if (state === "payment_pending") return "warning";
+  if (state === "refunded") return "success";
+  if (state === "failed" || state === "expired" || state === "refund_failed") {
+    return "error";
+  }
+  if (state === "payment_pending" || state === "refund_pending") return "warning";
   return "neutral";
 }
 

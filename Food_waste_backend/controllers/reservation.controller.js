@@ -4,6 +4,7 @@ const notificationQueue = require("../queues/notification.queue");
 const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
 const refundQueue = require("../queues/refund.queue");
+const paymentQueue = require("../queues/payment.queue");
 
 const { createPayment, cancelPayment } = require("../shared/services/payment.service");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
@@ -13,6 +14,62 @@ const withStatus = (message, statusCode) => {
   error.statusCode = statusCode;
   return error;
 };
+
+const RESERVATION_EXISTS_MESSAGE = "You have already interacted with this listing.";
+
+async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
+  const existingReservation = await client.query(
+    `
+    SELECT id
+    FROM reservations
+    WHERE user_id=$1
+    AND listing_id=$2
+    LIMIT 1
+    `,
+    [userId, listingId]
+  );
+
+  if (existingReservation.rows.length) {
+    throw withStatus(RESERVATION_EXISTS_MESSAGE, 409);
+  }
+}
+
+function getCancellationCutoff(pickupEndTime) {
+  const cutoff = new Date(pickupEndTime);
+  cutoff.setMinutes(cutoff.getMinutes() - 20);
+  return cutoff;
+}
+
+function isBeforeCancellationCutoff(pickupEndTime) {
+  return new Date() <= getCancellationCutoff(pickupEndTime);
+}
+
+async function cleanupCancellationQueues(reservationId, orderId) {
+  try {
+    await pickupQueue.remove(`pickup-${reservationId}`);
+    await deliveryQueue.remove(`delivery-${reservationId}`);
+
+    if (orderId) {
+      await paymentQueue.remove(`payment-batch-${orderId}`);
+    }
+  } catch (err) {
+    console.warn("Queue cleanup failed:", err.message);
+  }
+}
+
+async function notifyReservationCancelled(req, reservation) {
+  await notificationQueue.add("notify-user", {
+    userId: reservation.provider_id,
+    type: "reservation_cancelled",
+    title: "Reservation Cancelled",
+    message: "A user cancelled their reservation.",
+  });
+
+  const io = req.app.get("io");
+  io.to(`user:${reservation.provider_id}`).emit("reservation:cancelled", {
+    reservation_id: reservation.id,
+  });
+}
 
 exports.createReservation = async (req, res) => {
   if (req.user.role !== "user")
@@ -51,6 +108,12 @@ exports.createReservation = async (req, res) => {
     if (food.is_free) {
       throw withStatus("Free listings are only available for NGOs", 403);
     }
+
+    await ensureListingNotPreviouslyReserved(
+      client,
+      req.user.id,
+      listing_id
+    );
 
     if (food.remaining_quantity < quantityValue)
       throw withStatus("Not enough quantity", 409);
@@ -104,6 +167,15 @@ exports.createReservation = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+
+    if (
+      err.code === "23505" ||
+      err.constraint === "unique_active_reservation"
+    ) {
+      return res.status(409).json({
+        error: RESERVATION_EXISTS_MESSAGE,
+      });
+    }
 
     res.status(err.statusCode || 400).json({
       error: err.message || "Reservation failed",
@@ -174,10 +246,7 @@ exports.getMyReservations = async (req, res) => {
     JOIN food_listings f ON f.id = r.listing_id
     LEFT JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
-    JOIN restaurants restaurant
-      ON restaurant.id = f.provider_id
-
-    WHERE restaurant.user_id = $1
+    WHERE r.user_id = $1
     ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
     `,
     [req.user.id],
@@ -231,7 +300,7 @@ exports.getProviderReservations = async (req, res) => {
 };
 
 
-exports.cancelReservation = async (req, res) => {
+const legacyCancelReservation = async (req, res) => {
   const { id } = req.params;
 
   if (!isValidId(id)) {
@@ -416,6 +485,201 @@ exports.cancelReservation = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+
+    res.status(err.statusCode || 400).json({
+      error: err.message || "Cancellation failed",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.cancelReservation = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Reservation id is required" });
+  }
+
+  const client = await pool.connect();
+  let refundReservationId = null;
+  let paymentTimeoutOrderId = null;
+  let cancelledReservation = null;
+  let committed = false;
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `
+      SELECT r.*, f.provider_id, f.pickup_end_time, f.is_free
+      FROM reservations r
+      JOIN food_listings f ON r.listing_id = f.id
+      WHERE r.id=$1
+      FOR UPDATE
+      `,
+      [id]
+    );
+
+    if (!result.rows.length) throw withStatus("Reservation not found", 404);
+
+    const reservation = result.rows[0];
+
+    if (reservation.user_id !== req.user.id) {
+      throw withStatus("Unauthorized", 403);
+    }
+
+    if (reservation.status === "cancelled") {
+      throw withStatus("Already cancelled", 409);
+    }
+
+    if (!["reserved", "payment_pending"].includes(reservation.status)) {
+      throw withStatus("Cannot cancel this reservation", 400);
+    }
+
+    if (reservation.pickup_type === "ngo") {
+      if (reservation.task_status !== "pending") {
+        throw withStatus("Cannot cancel after volunteer started", 400);
+      }
+
+      await client.query(
+        `
+        UPDATE food_listings
+        SET remaining_quantity = remaining_quantity + $1
+        WHERE id=$2
+        `,
+        [reservation.quantity_reserved, reservation.listing_id]
+      );
+
+      await client.query(
+        `
+        UPDATE reservations
+        SET status='cancelled'
+        WHERE id=$1
+        `,
+        [reservation.id]
+      );
+    } else {
+      if (reservation.pickup_type !== "self_pickup") {
+        throw withStatus("Unsupported reservation type", 400);
+      }
+
+      if (!isBeforeCancellationCutoff(reservation.pickup_end_time)) {
+        throw withStatus(
+          "Cancellation window closed. This reservation is no longer refundable.",
+          400
+        );
+      }
+
+      const paymentResult = await client.query(
+        `
+        SELECT *
+        FROM payments
+        WHERE reservation_id=$1
+        FOR UPDATE
+        `,
+        [reservation.id]
+      );
+      const payment = paymentResult.rows[0];
+      paymentTimeoutOrderId = payment?.order_id || null;
+
+      if (reservation.payment_status === "paid") {
+        if (!payment) {
+          throw withStatus("Payment record not found for refund", 409);
+        }
+
+        await client.query(
+          `
+          UPDATE payments
+          SET status='refund_pending',
+              refund_status='refund_pending',
+              updated_at=NOW()
+          WHERE id=$1
+          AND status IN ('paid', 'success', 'refund_pending')
+          `,
+          [payment.id]
+        );
+
+        await client.query(
+          `
+          UPDATE reservations
+          SET status='cancelled',
+              payment_status='refund_pending'
+          WHERE id=$1
+          `,
+          [reservation.id]
+        );
+
+        refundReservationId = reservation.id;
+      } else if (reservation.payment_status === "pending") {
+        await cancelPayment(client, reservation.id);
+
+        await client.query(
+          `
+          UPDATE reservations
+          SET status='cancelled',
+              payment_status='failed'
+          WHERE id=$1
+          `,
+          [reservation.id]
+        );
+      } else if (
+        ["refund_pending", "refunded", "refund_failed"].includes(
+          reservation.payment_status
+        )
+      ) {
+        throw withStatus("Reservation refund is already in progress", 409);
+      } else {
+        throw withStatus("Reservation payment is not refundable", 400);
+      }
+
+      await client.query(
+        `
+        UPDATE food_listings
+        SET remaining_quantity = remaining_quantity + $1
+        WHERE id=$2
+        `,
+        [reservation.quantity_reserved, reservation.listing_id]
+      );
+    }
+
+    cancelledReservation = reservation;
+    await client.query("COMMIT");
+    committed = true;
+
+    await cleanupCancellationQueues(reservation.id, paymentTimeoutOrderId);
+
+    if (refundReservationId) {
+      try {
+        await refundQueue.add(
+          "refund-payment",
+          { reservationId: refundReservationId },
+          {
+            jobId: `refund-${refundReservationId}`,
+            attempts: 5,
+            backoff: { type: "exponential", delay: 3000 },
+          }
+        );
+      } catch (err) {
+        console.error("Failed to enqueue refund:", err.message);
+      }
+    }
+
+    try {
+      await notifyReservationCancelled(req, cancelledReservation);
+    } catch (err) {
+      console.warn("Cancellation notification failed:", err.message);
+    }
+
+    res.json({
+      message: refundReservationId
+        ? "Cancelled successfully. Refund is being processed."
+        : "Cancelled successfully",
+    });
+  } catch (err) {
+    if (!committed) {
+      await client.query("ROLLBACK");
+    }
 
     res.status(err.statusCode || 400).json({
       error: err.message || "Cancellation failed",

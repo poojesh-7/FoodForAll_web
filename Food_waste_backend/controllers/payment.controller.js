@@ -1,9 +1,12 @@
 const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
 const refundQueue = require("../queues/refund.queue");
+const redis = require("../shared/config/redis");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
+const refundedPaymentStates = new Set(["refund_pending", "refunded"]);
+const WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 function toRawBody(body) {
   return Buffer.isBuffer(body) ? body.toString("utf8") : JSON.stringify(body || {});
@@ -18,6 +21,29 @@ function serializePaymentMethod(paymentMethod) {
   return typeof paymentMethod === "string"
     ? paymentMethod
     : JSON.stringify(paymentMethod);
+}
+
+function getWebhookIdempotencyKey(req) {
+  const key =
+    req.headers["x-idempotency-key"] ||
+    req.headers["x-idempotency-header"];
+
+  return Array.isArray(key) ? key[0] : key;
+}
+
+async function wasWebhookProcessed(idempotencyKey) {
+  if (!idempotencyKey) return false;
+  return Boolean(await redis.get(`cashfree:webhook:${idempotencyKey}`));
+}
+
+async function markWebhookProcessed(idempotencyKey) {
+  if (!idempotencyKey) return;
+
+  await redis.setEx(
+    `cashfree:webhook:${idempotencyKey}`,
+    WEBHOOK_IDEMPOTENCY_TTL_SECONDS,
+    "1"
+  );
 }
 
 async function restorePendingReservation(client, reservationId, paymentStatus) {
@@ -66,6 +92,7 @@ exports.cashfreeWebhook = async (req, res) => {
   const rawBody = toRawBody(req.body);
   const signature = req.headers["x-webhook-signature"];
   const timestamp = req.headers["x-webhook-timestamp"];
+  const idempotencyKey = getWebhookIdempotencyKey(req);
 
   if (signature && timestamp && process.env.CASHFREE_SECRET_KEY) {
     try {
@@ -87,6 +114,14 @@ exports.cashfreeWebhook = async (req, res) => {
   } catch (err) {
     console.error("Invalid Cashfree webhook JSON");
     return res.sendStatus(200);
+  }
+
+  try {
+    if (await wasWebhookProcessed(idempotencyKey)) {
+      return res.sendStatus(200);
+    }
+  } catch (err) {
+    console.warn("Cashfree webhook idempotency lookup failed:", err.message);
   }
 
   const data = body.data || {};
@@ -122,7 +157,59 @@ exports.cashfreeWebhook = async (req, res) => {
 
       if (paidStatuses.has(orderStatus)) {
         for (const payment of paymentResult.rows) {
-          if (["paid", "refunded"].includes(payment.status)) continue;
+          if (payment.status === "refunded") continue;
+
+          const reservationResult = await client.query(
+            `
+            SELECT *
+            FROM reservations
+            WHERE id=$1
+            FOR UPDATE
+            `,
+            [payment.reservation_id]
+          );
+          const reservation = reservationResult.rows[0];
+
+          if (!reservation) continue;
+
+          if (reservation.payment_status === "refunded") continue;
+
+          if (
+            reservation.status === "cancelled" ||
+            refundedPaymentStates.has(payment.status) ||
+            refundedPaymentStates.has(reservation.payment_status)
+          ) {
+            if (payment.status !== "refund_pending") {
+              await client.query(
+                `
+                UPDATE payments
+                SET status='refund_pending',
+                    refund_status='refund_pending',
+                    updated_at=NOW()
+                WHERE id=$1
+                AND status <> 'refunded'
+                `,
+                [payment.id]
+              );
+            }
+
+            await client.query(
+              `
+              UPDATE reservations
+              SET payment_status='refund_pending'
+              WHERE id=$1
+              AND payment_status NOT IN ('refunded', 'refund_failed')
+              `,
+              [payment.reservation_id]
+            );
+
+            refundReservationIds.push(payment.reservation_id);
+            continue;
+          }
+
+          if (payment.status === "paid" && reservation.payment_status === "paid") {
+            continue;
+          }
 
           await client.query(
             `
@@ -140,7 +227,7 @@ exports.cashfreeWebhook = async (req, res) => {
             ]
           );
 
-          const activatedReservation = await client.query(
+          await client.query(
             `
             UPDATE reservations
             SET payment_status='paid',
@@ -151,32 +238,6 @@ exports.cashfreeWebhook = async (req, res) => {
             `,
             [payment.reservation_id]
           );
-
-          if (!activatedReservation.rows.length) {
-            const reservationResult = await client.query(
-              `
-              SELECT *
-              FROM reservations
-              WHERE id=$1
-              FOR UPDATE
-              `,
-              [payment.reservation_id]
-            );
-
-            const reservation = reservationResult.rows[0];
-
-            if (reservation?.status === "cancelled") {
-              await client.query(
-                `
-                UPDATE reservations
-                SET payment_status='paid'
-                WHERE id=$1
-                `,
-                [payment.reservation_id]
-              );
-              refundReservationIds.push(payment.reservation_id);
-            }
-          }
         }
       }
 
@@ -184,7 +245,11 @@ exports.cashfreeWebhook = async (req, res) => {
         const paymentStatus = normalizeFailedStatus(orderStatus);
 
         for (const payment of paymentResult.rows) {
-          if (["paid", "success", "refunded"].includes(payment.status)) continue;
+          if (
+            ["paid", "success", "refunded", "refund_pending"].includes(
+              payment.status
+            )
+          ) continue;
 
           await client.query(
             `
@@ -221,7 +286,10 @@ exports.cashfreeWebhook = async (req, res) => {
 
       const payment = paymentResult.rows[0];
 
-      if (payment.refund_status === "refunded") {
+      if (
+        payment.refund_status === "refunded" ||
+        payment.status === "refunded"
+      ) {
         await client.query("ROLLBACK");
         return res.sendStatus(200);
       }
@@ -248,16 +316,60 @@ exports.cashfreeWebhook = async (req, res) => {
         await client.query(
           `
           UPDATE payments
-          SET refund_status='failed',
+          SET status='refund_failed',
+              refund_status='refund_failed',
               updated_at=NOW()
           WHERE id=$1
           `,
           [payment.id]
         );
+
+        await client.query(
+          `
+          UPDATE reservations
+          SET payment_status='refund_failed'
+          WHERE id=$1
+          AND payment_status <> 'refunded'
+          `,
+          [payment.reservation_id]
+        );
+      }
+
+      if (
+        refund_status !== "SUCCESS" &&
+        refund_status !== "FAILED" &&
+        !refundedPaymentStates.has(payment.status)
+      ) {
+        await client.query(
+          `
+          UPDATE payments
+          SET status='refund_pending',
+              refund_status='refund_pending',
+              updated_at=NOW()
+          WHERE id=$1
+          `,
+          [payment.id]
+        );
+
+        await client.query(
+          `
+          UPDATE reservations
+          SET payment_status='refund_pending'
+          WHERE id=$1
+          AND payment_status NOT IN ('refunded', 'refund_failed')
+          `,
+          [payment.reservation_id]
+        );
       }
     }
 
     await client.query("COMMIT");
+
+    try {
+      await markWebhookProcessed(idempotencyKey);
+    } catch (err) {
+      console.warn("Cashfree webhook idempotency mark failed:", err.message);
+    }
 
     try {
       for (const reservationId of refundReservationIds) {

@@ -6,20 +6,38 @@ const cashfree = require("../shared/config/cashfree");
 
 console.log("Refund Worker Started");
 
+const FINAL_REFUND_STATES = new Set(["refunded"]);
+const REFUNDABLE_PAYMENT_STATES = new Set([
+  "paid",
+  "success",
+  "refund_pending",
+  "refund_failed",
+]);
+
 function normalizeRefundStatus(status) {
-  if (status === "SUCCESS") return "refunded";
-  if (status === "FAILED" || status === "CANCELLED") return "failed";
-  return "processing";
+  const normalized = String(status || "").toUpperCase();
+
+  if (normalized === "SUCCESS") return "refunded";
+  if (normalized === "FAILED" || normalized === "CANCELLED") {
+    return "refund_failed";
+  }
+
+  return "refund_pending";
 }
 
-async function persistRefundStatus(reservationId, refundStatus) {
+async function markRefundFailed(reservationId) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
     const paymentResult = await client.query(
-      `SELECT * FROM payments WHERE reservation_id=$1 FOR UPDATE`,
+      `
+      SELECT *
+      FROM payments
+      WHERE reservation_id=$1
+      FOR UPDATE
+      `,
       [reservationId]
     );
 
@@ -30,7 +48,65 @@ async function persistRefundStatus(reservationId, refundStatus) {
 
     const payment = paymentResult.rows[0];
 
-    if (payment.refund_status === "refunded") {
+    if (FINAL_REFUND_STATES.has(payment.status)) {
+      await client.query("ROLLBACK");
+      return;
+    }
+
+    await client.query(
+      `
+      UPDATE payments
+      SET status='refund_failed',
+          refund_status='refund_failed',
+          updated_at=NOW()
+      WHERE id=$1
+      `,
+      [payment.id]
+    );
+
+    await client.query(
+      `
+      UPDATE reservations
+      SET payment_status='refund_failed'
+      WHERE id=$1
+      AND payment_status <> 'refunded'
+      `,
+      [reservationId]
+    );
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function persistRefundStatus(reservationId, refundStatus) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const paymentResult = await client.query(
+      `
+      SELECT *
+      FROM payments
+      WHERE reservation_id=$1
+      FOR UPDATE
+      `,
+      [reservationId]
+    );
+
+    if (!paymentResult.rows.length) {
+      await client.query("ROLLBACK");
+      return;
+    }
+
+    const payment = paymentResult.rows[0];
+
+    if (FINAL_REFUND_STATES.has(payment.status)) {
       await client.query("ROLLBACK");
       return;
     }
@@ -48,18 +124,54 @@ async function persistRefundStatus(reservationId, refundStatus) {
       );
 
       await client.query(
-        `UPDATE reservations SET payment_status='refunded' WHERE id=$1`,
+        `
+        UPDATE reservations
+        SET payment_status='refunded'
+        WHERE id=$1
+        `,
+        [reservationId]
+      );
+    } else if (refundStatus === "refund_failed") {
+      await client.query(
+        `
+        UPDATE payments
+        SET status='refund_failed',
+            refund_status='refund_failed',
+            updated_at=NOW()
+        WHERE id=$1
+        `,
+        [payment.id]
+      );
+
+      await client.query(
+        `
+        UPDATE reservations
+        SET payment_status='refund_failed'
+        WHERE id=$1
+        AND payment_status <> 'refunded'
+        `,
         [reservationId]
       );
     } else {
       await client.query(
         `
         UPDATE payments
-        SET refund_status=$1,
+        SET status='refund_pending',
+            refund_status='refund_pending',
             updated_at=NOW()
-        WHERE id=$2
+        WHERE id=$1
         `,
-        [refundStatus, payment.id]
+        [payment.id]
+      );
+
+      await client.query(
+        `
+        UPDATE reservations
+        SET payment_status='refund_pending'
+        WHERE id=$1
+        AND payment_status NOT IN ('refunded', 'refund_failed')
+        `,
+        [reservationId]
       );
     }
 
@@ -72,86 +184,121 @@ async function persistRefundStatus(reservationId, refundStatus) {
   }
 }
 
+async function prepareRefund(reservationId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const paymentResult = await client.query(
+      `
+      SELECT
+        p.*,
+        r.status AS reservation_status,
+        r.payment_status AS reservation_payment_status
+      FROM payments p
+      JOIN reservations r ON r.id=p.reservation_id
+      WHERE p.reservation_id=$1
+      FOR UPDATE
+      `,
+      [reservationId]
+    );
+
+    if (!paymentResult.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const payment = paymentResult.rows[0];
+
+    if (
+      payment.status === "refunded" ||
+      payment.refund_status === "refunded" ||
+      payment.reservation_payment_status === "refunded"
+    ) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (
+      payment.reservation_status !== "cancelled" ||
+      !REFUNDABLE_PAYMENT_STATES.has(payment.status)
+    ) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const refundId = payment.refund_id || crypto.randomUUID();
+
+    await client.query(
+      `
+      UPDATE payments
+      SET status='refund_pending',
+          refund_status='refund_pending',
+          refund_id=$1,
+          updated_at=NOW()
+      WHERE id=$2
+      `,
+      [refundId, payment.id]
+    );
+
+    await client.query(
+      `
+      UPDATE reservations
+      SET payment_status='refund_pending'
+      WHERE id=$1
+      AND payment_status NOT IN ('refunded', 'refund_failed')
+      `,
+      [reservationId]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      orderId: payment.order_id,
+      refundId,
+      amount: Number(payment.amount),
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 new Worker(
   "refund-queue",
   async (job) => {
     const { reservationId } = job.data;
-    const client = await pool.connect();
+    const refund = await prepareRefund(reservationId);
 
-    let payment;
-    let refundId;
-
-    try {
-      await client.query("BEGIN");
-
-      const paymentResult = await client.query(
-        `
-        SELECT p.*, r.status AS reservation_status
-        FROM payments p
-        JOIN reservations r ON r.id=p.reservation_id
-        WHERE p.reservation_id=$1
-        FOR UPDATE
-        `,
-        [reservationId]
-      );
-
-      if (!paymentResult.rows.length) {
-        await client.query("ROLLBACK");
-        return;
-      }
-
-      payment = paymentResult.rows[0];
-
-      if (payment.refund_status === "refunded" || payment.status === "refunded") {
-        await client.query("ROLLBACK");
-        return;
-      }
-
-      if (
-        !["paid", "success"].includes(payment.status) ||
-        payment.reservation_status !== "cancelled"
-      ) {
-        await client.query("ROLLBACK");
-        return;
-      }
-
-      refundId = payment.refund_id || crypto.randomUUID();
-
-      await client.query(
-        `
-        UPDATE payments
-        SET refund_status='processing',
-            refund_id=$1,
-            updated_at=NOW()
-        WHERE id=$2
-        `,
-        [refundId, payment.id]
-      );
-
-      await client.query("COMMIT");
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
+    if (!refund) return;
 
     try {
       const response = await cashfree.PGOrderCreateRefund(
-        payment.order_id,
+        refund.orderId,
         {
-          refund_id: refundId,
-          refund_amount: Number(payment.amount),
-          refund_note: "Reservation cancelled",
+          refund_id: refund.refundId,
+          refund_amount: refund.amount,
+          refund_note: "Reservation cancelled before pickup cutoff",
         },
         undefined,
-        refundId
+        refund.refundId
       );
 
       const refundStatus = normalizeRefundStatus(response.data?.refund_status);
       await persistRefundStatus(reservationId, refundStatus);
     } catch (err) {
+      const attempts = job.opts.attempts || 5;
+      const isLastAttempt = job.attemptsMade + 1 >= attempts;
+
       console.error("Refund worker error:", err.response?.data || err.message);
+
+      if (isLastAttempt) {
+        await markRefundFailed(reservationId);
+      }
+
       throw err;
     }
   },

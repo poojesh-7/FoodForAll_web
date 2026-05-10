@@ -22,10 +22,56 @@ import type {
 import { useParams, useRouter } from "next/navigation";
 
 function canCancel(reservation: ReservationDetails) {
+  if (reservation.pickup_type === "ngo") {
+    return reservation.status === "reserved" && reservation.task_status === "pending";
+  }
+
   return (
     (reservation.status === "reserved" || reservation.status === "payment_pending") &&
-    (reservation.task_status === "pending" || reservation.task_status === "self_pickup")
+    reservation.pickup_type === "self_pickup" &&
+    isBeforeCancellationCutoff(reservation)
   );
+}
+
+function isBeforeCancellationCutoff(reservation: ReservationDetails) {
+  if (!reservation.pickup_end_time) return false;
+
+  const pickupEnd = new Date(reservation.pickup_end_time).getTime();
+  if (Number.isNaN(pickupEnd)) return false;
+
+  return Date.now() <= pickupEnd - 20 * 60 * 1000;
+}
+
+function getCancellationMessage(reservation: ReservationDetails) {
+  if (reservation.pickup_type === "ngo") {
+    return "NGO cancellation is available until a volunteer starts pickup.";
+  }
+
+  if (reservation.status === "cancelled") {
+    if (reservation.payment_status === "refund_pending") {
+      return "Refund is being processed asynchronously.";
+    }
+
+    if (reservation.payment_status === "refunded") {
+      return "Refund completed.";
+    }
+
+    if (reservation.payment_status === "refund_failed") {
+      return "Refund failed. Please contact support.";
+    }
+
+    return "Reservation has been cancelled.";
+  }
+
+  if (
+    reservation.pickup_type === "self_pickup" &&
+    reservation.status === "reserved" &&
+    !isBeforeCancellationCutoff(reservation)
+  ) {
+    return "Cancellation is closed. This reservation is non-refundable and must still be collected.";
+  }
+
+  return "Cancellation is unavailable after pickup, expiry, or once a refund is already final.";
 }
 
 function canRate(reservation: ReservationDetails) {
@@ -118,11 +164,12 @@ export default function ReservationDetailPage() {
       setError("");
       setSuccess("");
       await reservationService.cancelReservation(reservation.id);
-      setReservation({
-        ...reservation,
-        status: "cancelled",
-      });
-      setSuccess("Reservation cancelled successfully.");
+      const latest = await loadReservation(false);
+      setSuccess(
+        latest?.payment_status === "refund_pending"
+          ? "Reservation cancelled. Refund is being processed."
+          : "Reservation cancelled successfully."
+      );
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
     } finally {
@@ -213,6 +260,9 @@ export default function ReservationDetailPage() {
     : "unknown";
   const canRetryPayment =
     reservation?.id && isRetryablePaymentState(paymentState);
+  const cancellationMessage = reservation
+    ? getCancellationMessage(reservation)
+    : "";
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
@@ -295,7 +345,7 @@ export default function ReservationDetailPage() {
                   </button>
                 ) : (
                   <p className="text-sm text-zinc-600">
-                    Cancellation is unavailable after the window closes, after volunteer pickup starts, or once completed.
+                    {cancellationMessage}
                   </p>
                 )
               }

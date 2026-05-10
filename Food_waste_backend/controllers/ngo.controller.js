@@ -10,6 +10,31 @@ const {
   toNumber,
 } = require("../utils/validation");
 
+const RESERVATION_EXISTS_MESSAGE = "You have already interacted with this listing.";
+
+function withStatus(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
+  const existingReservation = await client.query(
+    `
+    SELECT id
+    FROM reservations
+    WHERE user_id=$1
+    AND listing_id=$2
+    LIMIT 1
+    `,
+    [userId, listingId]
+  );
+
+  if (existingReservation.rows.length) {
+    throw withStatus(RESERVATION_EXISTS_MESSAGE, 409);
+  }
+}
+
 exports.registerNGO = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -271,6 +296,12 @@ exports.bulkReserve = async (req, res) => {
         throw error;
       }
 
+      await ensureListingNotPreviouslyReserved(
+        client,
+        req.user.id,
+        item.listing_id
+      );
+
       if (food.remaining_quantity < quantity) {
         const error = new Error("Not enough quantity");
         error.statusCode = 409;
@@ -281,7 +312,7 @@ exports.bulkReserve = async (req, res) => {
         `
         INSERT INTO reservations
         (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-        VALUES ($1,$2,$3,'ngo','pending','reserved','paid',$4,$5)
+        VALUES ($1,$2,$3,'ngo','pending','reserved','not_required',$4,$5)
         RETURNING *
         `,
         [
@@ -323,6 +354,13 @@ exports.bulkReserve = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+    if (
+      err.code === "23505" ||
+      err.constraint === "unique_active_reservation"
+    ) {
+      return res.status(409).json({ error: RESERVATION_EXISTS_MESSAGE });
+    }
+
     res.status(err.statusCode || 400).json({ error: err.message });
   } finally {
     client.release();
@@ -601,6 +639,8 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     // ⏱ Time check
+    await ensureListingNotPreviouslyReserved(client, req.user.id, listingId);
+
     const endTime = new Date(listing.pickup_end_time).getTime();
     if (endTime - Date.now() < 30 * 60 * 1000) {
       const error = new Error("Insufficient pickup time remaining");
@@ -638,7 +678,7 @@ exports.acceptNGORequest = async (req, res) => {
       `
       INSERT INTO reservations
       (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-      VALUES ($1,$2,$3,'ngo','pending','reserved','paid',$4,$5)
+      VALUES ($1,$2,$3,'ngo','pending','reserved','not_required',$4,$5)
       `,
       [listingId, req.user.id, listing.remaining_quantity, pickupCode, receiveCode]
     );
@@ -668,6 +708,13 @@ exports.acceptNGORequest = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+    if (
+      err.code === "23505" ||
+      err.constraint === "unique_active_reservation"
+    ) {
+      return res.status(409).json({ error: RESERVATION_EXISTS_MESSAGE });
+    }
+
     res.status(err.statusCode || 400).json({ error: err.message });
   } finally {
     client.release();

@@ -1,5 +1,6 @@
 import "./globals.css";
 import AuthProvider from "@/components/providers/authProvider";
+import SocketProvider from "@/components/providers/SocketProvider";
 
 export default function RootLayout({
   children,
@@ -10,7 +11,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <AuthProvider>
-          {children}
+          <SocketProvider>{children}</SocketProvider>
         </AuthProvider>
       </body>
     </html>

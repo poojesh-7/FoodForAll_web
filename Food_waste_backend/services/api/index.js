@@ -18,6 +18,7 @@ const io = new Server(server, {
   },
 });
 const cookieParser = require("cookie-parser");
+const cookie = require("cookie");
 
 app.use(cookieParser());
 // require("../../admin/cleanup");
@@ -25,7 +26,8 @@ const jwt = require("jsonwebtoken");
 
 io.use((socket, next) => {
   try {
-    const token = socket.handshake.auth?.token;
+    const cookies = cookie.parse(socket.handshake.headers.cookie || "");
+    const token = socket.handshake.auth?.token || cookies.accessToken;
 
     if (!token) {
       return next(new Error("Unauthorized"));
@@ -67,6 +69,10 @@ io.on("connection", (socket) => {
   console.log("🔌 Connected:", socket.id);
 
   socket.on("join", (userId) => {
+    if (String(userId) !== String(socket.user?.id)) {
+      return;
+    }
+
     socket.join(`user:${userId}`);
   });
 
@@ -90,7 +96,11 @@ async function startSocketBridge() {
     try {
       const payload = JSON.parse(message);
 
-      io.to(payload.room).emit(payload.event, payload.data);
+      if (payload.room) {
+        io.to(payload.room).emit(payload.event, payload.data);
+      } else {
+        io.emit(payload.event, payload.data);
+      }
     } catch (err) {
       console.error("Socket event error:", err);
     }

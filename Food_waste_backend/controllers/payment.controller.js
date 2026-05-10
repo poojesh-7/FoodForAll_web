@@ -2,6 +2,12 @@ const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
 const refundQueue = require("../queues/refund.queue");
 const redis = require("../shared/config/redis");
+const {
+  getReservationSnapshot,
+  publishListingUpdated,
+  publishPaymentUpdated,
+  publishReservationUpdated,
+} = require("../shared/services/realtime.service");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
@@ -127,6 +133,7 @@ exports.cashfreeWebhook = async (req, res) => {
   const data = body.data || {};
   const client = await pool.connect();
   const refundReservationIds = [];
+  const changedReservationIds = new Set();
 
   try {
     await client.query("BEGIN");
@@ -204,6 +211,7 @@ exports.cashfreeWebhook = async (req, res) => {
             );
 
             refundReservationIds.push(payment.reservation_id);
+            changedReservationIds.add(payment.reservation_id);
             continue;
           }
 
@@ -238,6 +246,7 @@ exports.cashfreeWebhook = async (req, res) => {
             `,
             [payment.reservation_id]
           );
+          changedReservationIds.add(payment.reservation_id);
         }
       }
 
@@ -267,6 +276,7 @@ exports.cashfreeWebhook = async (req, res) => {
             payment.reservation_id,
             paymentStatus
           );
+          changedReservationIds.add(payment.reservation_id);
         }
       }
     }
@@ -310,6 +320,7 @@ exports.cashfreeWebhook = async (req, res) => {
           `UPDATE reservations SET payment_status='refunded' WHERE id=$1`,
           [payment.reservation_id]
         );
+        changedReservationIds.add(payment.reservation_id);
       }
 
       if (refund_status === "FAILED") {
@@ -333,6 +344,7 @@ exports.cashfreeWebhook = async (req, res) => {
           `,
           [payment.reservation_id]
         );
+        changedReservationIds.add(payment.reservation_id);
       }
 
       if (
@@ -360,10 +372,32 @@ exports.cashfreeWebhook = async (req, res) => {
           `,
           [payment.reservation_id]
         );
+        changedReservationIds.add(payment.reservation_id);
       }
     }
 
     await client.query("COMMIT");
+
+    await Promise.all(
+      [...changedReservationIds].map(async (reservationId) => {
+        const reservation = await getReservationSnapshot(reservationId);
+        await Promise.all([
+          publishReservationUpdated(reservationId, {
+            action: "payment_changed",
+            reservation,
+          }),
+          publishPaymentUpdated(reservationId, {
+            action: "payment_changed",
+            reservation,
+          }),
+          reservation?.listing_id
+            ? publishListingUpdated(reservation.listing_id, {
+                action: "quantity_updated",
+              })
+            : Promise.resolve(),
+        ]);
+      })
+    );
 
     try {
       await markWebhookProcessed(idempotencyKey);

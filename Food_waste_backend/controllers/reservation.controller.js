@@ -7,6 +7,12 @@ const refundQueue = require("../queues/refund.queue");
 const paymentQueue = require("../queues/payment.queue");
 
 const { createPayment, cancelPayment } = require("../shared/services/payment.service");
+const {
+  publishListingUpdated,
+  publishPaymentUpdated,
+  publishReservationUpdated,
+  publishVolunteerUpdated,
+} = require("../shared/services/realtime.service");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
 
 const withStatus = (message, statusCode) => {
@@ -159,6 +165,12 @@ exports.createReservation = async (req, res) => {
     });
 
     await client.query("COMMIT");
+
+    await Promise.all([
+      publishReservationUpdated(reservation.id, { action: "created" }),
+      publishPaymentUpdated(reservation.id, { action: "created" }),
+      publishListingUpdated(listing_id, { action: "quantity_updated" }),
+    ]);
 
     res.status(201).json({
       reservation,
@@ -675,6 +687,14 @@ exports.cancelReservation = async (req, res) => {
       console.warn("Cancellation notification failed:", err.message);
     }
 
+    await Promise.all([
+      publishReservationUpdated(reservation.id, { action: "cancelled" }),
+      publishPaymentUpdated(reservation.id, {
+        action: refundReservationId ? "refund_pending" : "cancelled",
+      }),
+      publishListingUpdated(reservation.listing_id, { action: "quantity_updated" }),
+    ]);
+
     res.json({
       message: refundReservationId
         ? "Cancelled successfully. Refund is being processed."
@@ -764,6 +784,15 @@ exports.markAsPickedUp = async (req, res) => {
     );
 
     await client.query("COMMIT");
+
+    await Promise.all([
+      publishReservationUpdated(id, {
+        action: isNGOPickup ? "picked_from_provider" : "picked_up",
+      }),
+      publishVolunteerUpdated(id, {
+        action: isNGOPickup ? "pickup_confirmed" : "self_pickup_completed",
+      }),
+    ]);
 
     if (isNGOPickup) {
       // cancel pickup timeout

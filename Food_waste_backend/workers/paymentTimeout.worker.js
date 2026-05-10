@@ -1,6 +1,12 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
+const {
+  getReservationSnapshot,
+  publishListingUpdated,
+  publishPaymentUpdated,
+  publishReservationUpdated,
+} = require("../shared/services/realtime.service");
 
 console.log("Payment Timeout Worker Started");
 
@@ -10,6 +16,7 @@ new Worker(
     const { reservationIds } = job.data;
 
     const client = await pool.connect();
+    const changedReservationIds = new Set();
 
     try {
       await client.query("BEGIN");
@@ -84,10 +91,31 @@ new Worker(
           [reservation.quantity_reserved, reservation.listing_id]
         );
 
+        changedReservationIds.add(reservationId);
         console.log("Payment timeout expired reservation:", reservationId);
       }
 
       await client.query("COMMIT");
+      await Promise.all(
+        [...changedReservationIds].map(async (reservationId) => {
+          const reservation = await getReservationSnapshot(reservationId);
+          await Promise.all([
+            publishReservationUpdated(reservationId, {
+              action: "expired",
+              reservation,
+            }),
+            publishPaymentUpdated(reservationId, {
+              action: "expired",
+              reservation,
+            }),
+            reservation?.listing_id
+              ? publishListingUpdated(reservation.listing_id, {
+                  action: "quantity_updated",
+                })
+              : Promise.resolve(),
+          ]);
+        })
+      );
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;

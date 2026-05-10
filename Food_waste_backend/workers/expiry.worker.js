@@ -3,6 +3,10 @@ const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
 
 const notificationQueue = require("../queues/notification.queue");
+const {
+  publishListingUpdated,
+  publishReservationUpdated,
+} = require("../shared/services/realtime.service");
 
 console.log("🚀 Starting expiry worker...");
 new Worker(
@@ -163,6 +167,12 @@ new Worker(
       );
 
       await client.query("COMMIT");
+      await Promise.all([
+        publishListingUpdated(listingId, { action: "expired" }),
+        ...expired.rows.map((reservation) =>
+          publishReservationUpdated(reservation.id, { action: "expired" })
+        ),
+      ]);
 
       /*
       🔔 Notify provider

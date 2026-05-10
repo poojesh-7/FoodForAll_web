@@ -3,6 +3,11 @@ const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
 const notificationQueue = require("../queues/notification.queue");
 const {
+  publishReservationUpdated,
+  publishToUsers,
+  publishVolunteerUpdated,
+} = require("../shared/services/realtime.service");
+const {
   isProvided,
   isValidId,
   isValidLatitude,
@@ -258,6 +263,13 @@ exports.respondToRequest = async (req, res) => {
         volunteer_id: req.user.id,
         action,
       });
+      await publishToUsers([ngoUserId, req.user.id], "volunteer_updated", {
+        action: `request_${action}`,
+        volunteer: {
+          id: req.user.id,
+          status: action,
+        },
+      });
     }
 
     res.json({ message: `Request ${action}` });
@@ -449,6 +461,15 @@ exports.startTask = async (req, res) => {
 
       console.log("⏱ Pickup timeout scheduled:", updatedReservation.id);
     }
+
+    await Promise.all([
+      publishReservationUpdated(updatedReservation.id, {
+        action: "volunteer_assigned",
+      }),
+      publishVolunteerUpdated(updatedReservation.id, {
+        action: "pickup_started",
+      }),
+    ]);
 
     res.json({
       message: "Task started",
@@ -686,6 +707,11 @@ exports.completeTask = async (req, res) => {
 
     // 🔥 cancel delivery timeout
     await deliveryQueue.remove(`delivery-${reservation.id}`);
+
+    await Promise.all([
+      publishReservationUpdated(reservation.id, { action: "delivered" }),
+      publishVolunteerUpdated(reservation.id, { action: "delivery_completed" }),
+    ]);
 
     res.json({
       message: "Delivery completed successfully",

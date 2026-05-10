@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import VolunteerTaskCard from "@/components/volunteer/VolunteerTaskCard";
+import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import {
   volunteerService,
   type VolunteerCurrentTask,
 } from "@/services/volunteer.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, ReservationRow, VolunteerTask } from "@backend/contracts/api-contracts";
 
 type LocationForm = {
@@ -68,6 +70,8 @@ export default function VolunteerTasksPage() {
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -85,6 +89,23 @@ export default function VolunteerTasksPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+
+    queueMicrotask(() => {
+      setActiveTask((current) => {
+        if (!current) return current;
+        const update = reservationsById[String(current.reservation_id)];
+        return update ? { ...current, ...update } : current;
+      });
+      setTasks((current) =>
+        mergeRealtimeRows<VolunteerTask>(current, reservationsById).filter(
+          (task) => task.task_status === "pending" || task.task_status === "assigned"
+        )
+      );
+    });
+  }, [reservationVersion, reservationsById]);
 
   const availableTasks = useMemo(
     () =>

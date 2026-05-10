@@ -3,6 +3,10 @@ const crypto = require("crypto");
 const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
+const {
+  publishPaymentUpdated,
+  publishReservationUpdated,
+} = require("../shared/services/realtime.service");
 
 console.log("Refund Worker Started");
 
@@ -75,6 +79,10 @@ async function markRefundFailed(reservationId) {
     );
 
     await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: "refund_failed" }),
+      publishPaymentUpdated(reservationId, { action: "refund_failed" }),
+    ]);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -176,6 +184,10 @@ async function persistRefundStatus(reservationId, refundStatus) {
     }
 
     await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: refundStatus }),
+      publishPaymentUpdated(reservationId, { action: refundStatus }),
+    ]);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -253,6 +265,10 @@ async function prepareRefund(reservationId) {
     );
 
     await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: "refund_pending" }),
+      publishPaymentUpdated(reservationId, { action: "refund_pending" }),
+    ]);
 
     return {
       orderId: payment.order_id,

@@ -3,6 +3,10 @@ const generatePickupCode = require("../utils/codeGenerator");
 const { addNGOLocation } = require("../services/geo.service");
 const notificationQueue = require("../queues/notification.queue");
 const {
+  publishListingUpdated,
+  publishReservationUpdated,
+} = require("../shared/services/realtime.service");
+const {
   isProvided,
   isValidId,
   isValidLatitude,
@@ -16,6 +20,16 @@ function withStatus(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function uniqueListingIds(reservations) {
+  return [
+    ...new Set(
+      reservations
+        .map((reservation) => reservation.listing_id)
+        .filter((listingId) => listingId !== undefined && listingId !== null)
+    ),
+  ];
 }
 
 async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
@@ -346,6 +360,15 @@ exports.bulkReserve = async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    await Promise.all([
+      ...created.map((reservation) =>
+        publishReservationUpdated(reservation.id, { action: "created" })
+      ),
+      ...uniqueListingIds(created).map((listingId) =>
+        publishListingUpdated(listingId, { action: "quantity_updated" })
+      ),
+    ]);
 
     res.json({
       reservations: created,
@@ -684,11 +707,12 @@ exports.acceptNGORequest = async (req, res) => {
     const pickupCode = generatePickupCode();
     const receiveCode = generatePickupCode();
 
-    await client.query(
+    const reservationResult = await client.query(
       `
       INSERT INTO reservations
       (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
       VALUES ($1,$2,$3,'ngo','pending','reserved','not_required',$4,$5)
+      RETURNING *
       `,
       [listingId, req.user.id, listing.remaining_quantity, pickupCode, receiveCode]
     );
@@ -707,6 +731,13 @@ exports.acceptNGORequest = async (req, res) => {
     await client.query("COMMIT");
 
     // 🔔 Notification AFTER commit
+    const createdReservation = reservationResult.rows[0];
+
+    await Promise.all([
+      publishReservationUpdated(createdReservation.id, { action: "created" }),
+      publishListingUpdated(listingId, { action: "completed" }),
+    ]);
+
     await notificationQueue.add("notify-user", {
       userId: listing.provider_id,
       type: "ngo_request_accepted",

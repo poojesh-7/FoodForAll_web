@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import FoodCard from "@/components/FoodCard";
+import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { FoodListingRow } from "@backend/contracts/api-contracts";
 import Link from "next/link";
 
@@ -10,6 +12,8 @@ export default function FoodMarketplacePage() {
   const [listings, setListings] = useState<FoodListingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const listingVersion = useRealtimeStore((state) => state.listingVersion);
+  const listingsById = useRealtimeStore((state) => state.listings);
 
   useEffect(() => {
     let active = true;
@@ -30,6 +34,19 @@ export default function FoodMarketplacePage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!listingVersion) return;
+    queueMicrotask(() =>
+      setListings((current) =>
+        mergeListingRows<FoodListingRow>(current, listingsById).filter(
+          (listing) =>
+            listing.status === "active" &&
+            Number(listing.remaining_quantity ?? 0) > 0
+        )
+      )
+    );
+  }, [listingVersion, listingsById]);
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">

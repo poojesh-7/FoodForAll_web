@@ -5,12 +5,14 @@ import NGOReservationCard from "@/components/ngo/NGOReservationCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import RatingForm from "@/components/ratings/RatingForm";
+import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
   ngoService,
   type NGOReservationHistoryRow,
 } from "@/services/ngo.service";
 import { ratingService } from "@/services/rating.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import { useRouter } from "next/navigation";
 
 function canReviewReservation(reservation: NGOReservationHistoryRow) {
@@ -34,6 +36,8 @@ export default function NGOReservationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -60,6 +64,15 @@ export default function NGOReservationsPage() {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+    queueMicrotask(() =>
+      setReservations((current) =>
+        mergeRealtimeRows<NGOReservationHistoryRow>(current, reservationsById)
+      )
+    );
+  }, [reservationVersion, reservationsById]);
 
   const submitReview = async (
     reservation: NGOReservationHistoryRow,

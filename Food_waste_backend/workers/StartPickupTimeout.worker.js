@@ -4,6 +4,11 @@ const connection = require("../shared/config/bullmq");
 const redis = require("../shared/config/redis");
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
+const {
+  publishListingUpdated,
+  publishReservationUpdated,
+  publishVolunteerUpdated,
+} = require("../shared/services/realtime.service");
 
 /*
 Socket publisher
@@ -146,6 +151,11 @@ new Worker(
       );
 
       await client.query("COMMIT");
+      await Promise.all([
+        publishReservationUpdated(reservationId, { action: "expired" }),
+        publishVolunteerUpdated(reservationId, { action: "pickup_timeout" }),
+        publishListingUpdated(r.listing_id, { action: "quantity_updated" }),
+      ]);
 
       /*
       Notifications

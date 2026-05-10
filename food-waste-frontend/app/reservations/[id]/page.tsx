@@ -15,6 +15,7 @@ import {
 } from "@/lib/payment-flow";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ListingRating,
   ReservationDetails,
@@ -118,6 +119,8 @@ export default function ReservationDetailPage() {
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -148,6 +151,18 @@ export default function ReservationDetailPage() {
       active = false;
     };
   }, [params.id]);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+    const update = reservationsById[String(params.id)];
+    if (!update) return;
+
+    queueMicrotask(() =>
+      setReservation((current) =>
+        current ? { ...current, ...update } : (update as ReservationDetails)
+      )
+    );
+  }, [params.id, reservationVersion, reservationsById]);
 
   const loadReservation = async (showLoading = true) => {
     try {

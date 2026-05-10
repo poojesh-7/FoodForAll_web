@@ -1,6 +1,7 @@
 const pool = require("../shared/config/db");
 
 const notificationQueue = require("../queues/notification.queue");
+const { publishListingUpdated } = require("../shared/services/realtime.service");
 const {
   isProvided,
   isValidId,
@@ -351,6 +352,7 @@ exports.createFood = async (req, res) => {
 
     // 🔹 Realtime
     req.app.get("io").emit("food:new", listing);
+    await publishListingUpdated(listing.id, { action: "created", listing });
 
     res.status(201).json({
       message: "Food created successfully",
@@ -408,6 +410,11 @@ exports.updateFood = async (req, res) => {
     [title, description, price, pickup_start_time, pickup_end_time, id],
   );
 
+  await publishListingUpdated(id, {
+    action: "updated",
+    listing: result.rows[0],
+  });
+
   res.json(result.rows[0]);
 };
 
@@ -429,7 +436,13 @@ exports.deleteFood = async (req, res) => {
   if (food.rows[0].provider_id !== req.user.id)
     return res.status(403).json({ error: "Unauthorized" });
 
+  const deleted = food.rows[0];
   await pool.query("DELETE FROM food_listings WHERE id=$1", [id]);
+
+  await publishListingUpdated(id, {
+    action: "deleted",
+    listing: { ...deleted, status: "deleted" },
+  });
 
   res.json({ message: "Deleted successfully" });
 };

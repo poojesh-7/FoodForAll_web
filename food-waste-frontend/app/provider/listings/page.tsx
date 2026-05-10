@@ -5,10 +5,12 @@ import Link from "next/link";
 import FoodCard from "@/components/FoodCard";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import ReviewList from "@/components/ratings/ReviewList";
+import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ratingService } from "@/services/rating.service";
 import { useAuthStore } from "@/store/authStore";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   DbId,
   FoodListingRow,
@@ -34,6 +36,8 @@ export default function ProviderListingsPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const listingVersion = useRealtimeStore((state) => state.listingVersion);
+  const listingsById = useRealtimeStore((state) => state.listings);
 
   const providerListings = useMemo(
     () =>
@@ -83,6 +87,15 @@ export default function ProviderListingsPage() {
       active = false;
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!listingVersion) return;
+    queueMicrotask(() =>
+      setListings((current) =>
+        mergeListingRows<FoodListingRow>(current, listingsById)
+      )
+    );
+  }, [listingVersion, listingsById]);
 
   const deleteListing = async (id: DbId) => {
     if (!confirm("Delete this listing?")) return;

@@ -4,6 +4,10 @@ const connection = require("../shared/config/bullmq");
 const redis = require("../shared/config/redis");
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
+const {
+  publishReservationUpdated,
+  publishVolunteerUpdated,
+} = require("../shared/services/realtime.service");
 
 
 /*
@@ -137,6 +141,10 @@ new Worker(
       );
 
       await client.query("COMMIT");
+      await Promise.all([
+        publishReservationUpdated(reservationId, { action: "expired" }),
+        publishVolunteerUpdated(reservationId, { action: "delivery_timeout" }),
+      ]);
 
       /*
       Notifications

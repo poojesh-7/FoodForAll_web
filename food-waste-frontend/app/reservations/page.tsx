@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReservationCard from "@/components/reservations/ReservationCard";
+import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { reservationService } from "@/services/reservation.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { ReservationHistoryRow } from "@backend/contracts/api-contracts";
 
 function isActiveReservation(reservation: ReservationHistoryRow) {
@@ -18,6 +20,8 @@ export default function ReservationsPage() {
   const [reservations, setReservations] = useState<ReservationHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -38,6 +42,15 @@ export default function ReservationsPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+    queueMicrotask(() =>
+      setReservations((current) =>
+        mergeRealtimeRows<ReservationHistoryRow>(current, reservationsById)
+      )
+    );
+  }, [reservationVersion, reservationsById]);
 
   const activeReservations = useMemo(
     () => reservations.filter(isActiveReservation),

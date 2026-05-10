@@ -7,6 +7,7 @@ import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import VolunteerSummaryCard from "@/components/volunteer/VolunteerSummaryCard";
 import VolunteerTaskCard from "@/components/volunteer/VolunteerTaskCard";
 import { volunteerService } from "@/services/volunteer.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { VolunteerDashboardData } from "@backend/contracts/api-contracts";
 
 function toCount(value: unknown) {
@@ -24,6 +25,8 @@ export default function VolunteerDashboardPage() {
   const [dashboard, setDashboard] = useState<VolunteerDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -44,6 +47,22 @@ export default function VolunteerDashboardPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+    queueMicrotask(() =>
+      setDashboard((current) => {
+        if (!current?.current_task) return current;
+        const update = reservationsById[String(current.current_task.reservation_id)];
+        return update
+          ? {
+              ...current,
+              current_task: { ...current.current_task, ...update },
+            }
+          : current;
+      })
+    );
+  }, [reservationVersion, reservationsById]);
 
   return (
     <VolunteerShell

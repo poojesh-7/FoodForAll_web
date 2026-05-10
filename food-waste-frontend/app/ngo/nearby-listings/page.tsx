@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import FoodCard from "@/components/FoodCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import { mergeListingRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, NearbyFoodListing } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
@@ -40,6 +42,25 @@ export default function NGONearbyListingsPage() {
   const [reserving, setReserving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const listingVersion = useRealtimeStore((state) => state.listingVersion);
+  const listingsById = useRealtimeStore((state) => state.listings);
+
+  useEffect(() => {
+    if (!listingVersion) return;
+    queueMicrotask(() =>
+      setListings((current) =>
+        mergeListingRows<NearbyFoodListing>(current, listingsById).filter(
+          (listing) => {
+            const status = (listing as { status?: string }).status;
+            return (
+              (!status || status === "active") &&
+              Number(listing.remaining_quantity ?? 0) > 0
+            );
+          }
+        )
+      )
+    );
+  }, [listingVersion, listingsById]);
 
   const selectedReservations = useMemo(
     () =>

@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
+import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { reservationService } from "@/services/reservation.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, ProviderReservationRow } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
@@ -27,6 +29,8 @@ export default function ProviderReservationsPage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
     let active = true;
@@ -53,6 +57,15 @@ export default function ProviderReservationsPage() {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!reservationVersion) return;
+    queueMicrotask(() =>
+      setReservations((current) =>
+        mergeRealtimeRows<ProviderReservationRow>(current, reservationsById)
+      )
+    );
+  }, [reservationVersion, reservationsById]);
 
   const grouped = useMemo(
     () => ({

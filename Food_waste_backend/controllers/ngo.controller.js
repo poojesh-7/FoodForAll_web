@@ -110,45 +110,85 @@ exports.registerNGO = async (req, res) => {
 
     // 🔹 Check if NGO already registered for this user
     const existingNGO = await pool.query(
-      "SELECT id FROM ngos WHERE user_id=$1",
+      "SELECT id, rejection_reason FROM ngos WHERE user_id=$1",
       [userId]
     );
 
-    if (existingNGO.rows.length) {
+    const existing = existingNGO.rows[0];
+
+    if (existing && !existing.rejection_reason) {
       return res.status(409).json({
         error: "NGO already registered for this user",
       });
     }
 
     // 🔹 Insert NGO
-    const result = await pool.query(
-      `
-      INSERT INTO ngos (
-        user_id,
-        organization_name,
-        registration_number,
-        service_radius_km,
-        latitude,
-        longitude,
-        location,
-        is_verified
-      )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,
-        ST_SetSRID(ST_MakePoint($6,$5),4326)::geography,
-        false
-      )
-      RETURNING id, user_id, organization_name, service_radius_km, is_verified
-      `,
-      [
-        userId,
-        normalizedName,
-        normalizedReg,
-        serviceRadius,
-        latitudeValue,
-        longitudeValue,
-      ]
-    );
+    const result = existing
+      ? await pool.query(
+          `
+          UPDATE ngos
+          SET organization_name=$1,
+              registration_number=$2,
+              service_radius_km=$3,
+              latitude=$4,
+              longitude=$5,
+              location=ST_SetSRID(ST_MakePoint($5,$4),4326)::geography,
+              is_verified=false,
+              rejection_reason=NULL
+          WHERE id=$6
+          RETURNING
+            id,
+            user_id,
+            organization_name,
+            service_radius_km,
+            is_verified,
+            rejection_reason,
+            'pending' AS verification_status
+          `,
+          [
+            normalizedName,
+            normalizedReg,
+            serviceRadius,
+            latitudeValue,
+            longitudeValue,
+            existing.id,
+          ]
+        )
+      : await pool.query(
+          `
+          INSERT INTO ngos (
+            user_id,
+            organization_name,
+            registration_number,
+            service_radius_km,
+            latitude,
+            longitude,
+            location,
+            is_verified
+          )
+          VALUES (
+            $1,$2,$3,$4,$5,$6,
+            ST_SetSRID(ST_MakePoint($6,$5),4326)::geography,
+            false
+          )
+          RETURNING
+            id,
+            user_id,
+            organization_name,
+            service_radius_km,
+            is_verified,
+            rejection_reason,
+            'pending' AS verification_status
+          `,
+          [
+            userId,
+            normalizedName,
+            normalizedReg,
+            serviceRadius,
+            latitudeValue,
+            longitudeValue,
+          ]
+        );
 
     // keep this (good)
     await pool.query(
@@ -173,8 +213,10 @@ exports.registerNGO = async (req, res) => {
       // Don't fail main request
     }
 
-    res.status(201).json({
-      message: "NGO registered successfully",
+    res.status(existing ? 200 : 201).json({
+      message: existing
+        ? "NGO verification resubmitted successfully"
+        : "NGO registered successfully",
       ngo,
     });
 

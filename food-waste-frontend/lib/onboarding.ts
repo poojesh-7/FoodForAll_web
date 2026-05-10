@@ -6,6 +6,7 @@ import type {
 
 type OnboardingUser = Partial<AuthMeUser & AuthUser>;
 type VerificationRole = Extract<UserRole, "ngo" | "provider">;
+type VerificationStatus = AuthMeUser["verification_status"];
 
 export const pendingVerificationRoute = "/pending-verification";
 
@@ -40,11 +41,36 @@ export function getRoleRegistrationRoute(role: UserRole | null | undefined) {
   return "/complete-profile";
 }
 
+function isVerificationRole(role: UserRole | null | undefined): role is VerificationRole {
+  return role === "provider" || role === "ngo";
+}
+
+function getVerificationStatus(user: OnboardingUser | null | undefined): VerificationStatus {
+  if (!isVerificationRole(user?.role)) return "approved";
+  if (user?.verification_status) return user.verification_status;
+  return user?.is_verified ? "approved" : "pending";
+}
+
 export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {
   if (!user?.role) return "/select-role";
-  if (user.role === "provider" || user.role === "ngo") {
-    return getRoleRegistrationRoute(user.role);
+
+  if (isVerificationRole(user.role)) {
+    const verificationStatus = getVerificationStatus(user);
+
+    if (verificationStatus === "approved" || user.is_verified) {
+      return getRoleDashboard(user.role);
+    }
+
+    if (
+      verificationStatus === "rejected" ||
+      verificationStatus === "unregistered"
+    ) {
+      return getRoleRegistrationRoute(user.role);
+    }
+
+    return pendingVerificationRoute;
   }
+
   if (!isProfileComplete(user)) return getRoleRegistrationRoute(user.role);
   return getRoleDashboard(user.role);
 }
@@ -65,7 +91,7 @@ export function getOnboardingRedirect(
   if (pathname === target) return null;
   if (
     pathname === pendingVerificationRoute &&
-    (user?.role === "provider" || user?.role === "ngo")
+    isVerificationRole(user?.role)
   ) {
     return null;
   }
@@ -114,6 +140,28 @@ export function getRouteAccessRedirect(
     return getPostAuthRedirect(user);
   }
 
+  if (user.role === "provider") {
+    const verificationStatus = getVerificationStatus(user);
+
+    if (
+      pathname.startsWith("/provider") &&
+      verificationStatus !== "approved" &&
+      !user.is_verified
+    ) {
+      return verificationStatus === "rejected" ||
+        verificationStatus === "unregistered"
+        ? "/restaurant/register"
+        : pendingVerificationRoute;
+    }
+
+    if (
+      pathname.startsWith("/restaurant/register") &&
+      (verificationStatus === "approved" || user.is_verified)
+    ) {
+      return getRoleDashboard(user.role);
+    }
+  }
+
   if (pathname.startsWith("/volunteer") && user?.role !== "volunteer") {
     return getPostAuthRedirect(user);
   }
@@ -140,6 +188,29 @@ export function getRouteAccessRedirect(
     user?.role !== "ngo"
   ) {
     return getPostAuthRedirect(user);
+  }
+
+  if (user.role === "ngo") {
+    const verificationStatus = getVerificationStatus(user);
+
+    if (
+      pathname.startsWith("/ngo") &&
+      !pathname.startsWith("/ngo/register") &&
+      verificationStatus !== "approved" &&
+      !user.is_verified
+    ) {
+      return verificationStatus === "rejected" ||
+        verificationStatus === "unregistered"
+        ? "/ngo/register"
+        : pendingVerificationRoute;
+    }
+
+    if (
+      pathname.startsWith("/ngo/register") &&
+      (verificationStatus === "approved" || user.is_verified)
+    ) {
+      return getRoleDashboard(user.role);
+    }
   }
 
   if (

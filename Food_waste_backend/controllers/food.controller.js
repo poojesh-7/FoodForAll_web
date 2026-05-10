@@ -90,11 +90,13 @@ exports.registerRestaurant = async (req, res) => {
 
     // 🔹 Check if restaurant already exists for this user
     const existingRestaurant = await pool.query(
-      "SELECT id FROM restaurants WHERE user_id=$1",
+      "SELECT id, rejection_reason FROM restaurants WHERE user_id=$1",
       [userId]
     );
 
-    if (existingRestaurant.rows.length) {
+    const existing = existingRestaurant.rows[0];
+
+    if (existing && !existing.rejection_reason) {
       return res.status(409).json({
         error: "Restaurant already registered for this user",
       });
@@ -103,43 +105,85 @@ exports.registerRestaurant = async (req, res) => {
     const { uploadBuffer } = require("../shared/services/cloudinary.service");
     const uploadedImage = await uploadBuffer(req.file.buffer, {
       folder: "food-waste/fssai",
-      public_id: `${normalizedFssai}_${userId}`,
+      public_id: `provider_${userId}_fssai`,
+      overwrite: true,
+      invalidate: true,
     });
 
     const fssaiImagePath = uploadedImage.secure_url;
 
 
     // 🔹 Insert
-    const result = await pool.query(
-      `
-      INSERT INTO restaurants (
-        user_id,
-        restaurant_name,
-        fssai_number,
-        fssai_certificate_url,
-        service_radius_km,
-        latitude,
-        longitude,
-        location,
-        is_verified
-      )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,$7,
-        ST_SetSRID(ST_MakePoint($7,$6),4326)::geography,
-        false
-      )
-      RETURNING id, user_id, restaurant_name, fssai_number, is_verified
-      `,
-      [
-        userId,
-        normalizedName,
-        normalizedFssai,
-        fssaiImagePath,
-        serviceRadius,
-        latitudeValue,
-        longitudeValue,
-      ]
-    );
+    const result = existing
+      ? await pool.query(
+          `
+          UPDATE restaurants
+          SET restaurant_name=$1,
+              fssai_number=$2,
+              fssai_certificate_url=$3,
+              service_radius_km=$4,
+              latitude=$5,
+              longitude=$6,
+              location=ST_SetSRID(ST_MakePoint($6,$5),4326)::geography,
+              is_verified=false,
+              rejection_reason=NULL
+          WHERE id=$7
+          RETURNING
+            id,
+            user_id,
+            restaurant_name,
+            fssai_number,
+            is_verified,
+            rejection_reason,
+            'pending' AS verification_status
+          `,
+          [
+            normalizedName,
+            normalizedFssai,
+            fssaiImagePath,
+            serviceRadius,
+            latitudeValue,
+            longitudeValue,
+            existing.id,
+          ]
+        )
+      : await pool.query(
+          `
+          INSERT INTO restaurants (
+            user_id,
+            restaurant_name,
+            fssai_number,
+            fssai_certificate_url,
+            service_radius_km,
+            latitude,
+            longitude,
+            location,
+            is_verified
+          )
+          VALUES (
+            $1,$2,$3,$4,$5,$6,$7,
+            ST_SetSRID(ST_MakePoint($7,$6),4326)::geography,
+            false
+          )
+          RETURNING
+            id,
+            user_id,
+            restaurant_name,
+            fssai_number,
+            is_verified,
+            rejection_reason,
+            'pending' AS verification_status
+          `,
+          [
+            userId,
+            normalizedName,
+            normalizedFssai,
+            fssaiImagePath,
+            serviceRadius,
+            latitudeValue,
+            longitudeValue,
+          ]
+        );
 
     // keep this (good)
     await pool.query(
@@ -154,8 +198,10 @@ exports.registerRestaurant = async (req, res) => {
       [latitudeValue, longitudeValue, userId]
     );
 
-    res.status(201).json({
-      message: "Restaurant registered successfully",
+    res.status(existing ? 200 : 201).json({
+      message: existing
+        ? "Restaurant verification resubmitted successfully"
+        : "Restaurant registered successfully",
       restaurant: result.rows[0],
     });
 

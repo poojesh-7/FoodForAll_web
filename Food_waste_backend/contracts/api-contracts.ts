@@ -90,6 +90,8 @@ export interface UserLocationResult {
 
 export interface AuthMeUser extends UserProfile {
   is_verified: boolean;
+  verification_status?: "unregistered" | "pending" | "approved" | "rejected";
+  rejection_reason?: string | null;
 }
 
 export interface CompleteProfileUser {
@@ -108,6 +110,8 @@ export interface RestaurantRegistration {
   restaurant_name: string;
   fssai_number: string;
   is_verified: boolean;
+  rejection_reason?: string | null;
+  verification_status?: "pending" | "approved" | "rejected";
 }
 
 export interface NGORegistration {
@@ -116,6 +120,8 @@ export interface NGORegistration {
   organization_name: string;
   service_radius_km: number | string;
   is_verified: boolean;
+  rejection_reason?: string | null;
+  verification_status?: "pending" | "approved" | "rejected";
 }
 
 export interface FoodListingRow extends DbRow {

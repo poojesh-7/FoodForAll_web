@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getRegistrationRedirect } from "@/lib/onboarding";
 import { foodService } from "@/services/food.service";
@@ -20,6 +20,7 @@ function getCurrentPosition() {
 export default function RestaurantRegisterPage() {
   const router = useRouter();
 
+  const submittingRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState<RestaurantForm>({
@@ -29,8 +30,10 @@ export default function RestaurantRegisterPage() {
   });
   const [file, setFile] = useState<File | null>(null);
 
-  const submit = async () => {
-    if (loading) return;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (submittingRef.current) return;
 
     if (!form.restaurant_name.trim() || !form.fssai_number.trim()) {
       setError("Restaurant name and FSSAI number are required.");
@@ -43,6 +46,7 @@ export default function RestaurantRegisterPage() {
     }
 
     try {
+      submittingRef.current = true;
       setLoading(true);
       setError("");
 
@@ -58,15 +62,18 @@ export default function RestaurantRegisterPage() {
 
       router.push(getRegistrationRedirect("provider", result.restaurant.is_verified));
     } catch (err) {
-      setError(foodService.getErrorMessage(err));
-    } finally {
+      submittingRef.current = false;
       setLoading(false);
+      setError(foodService.getErrorMessage(err));
     }
   };
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
+      >
         <div>
           <h1 className="text-2xl font-semibold text-zinc-950">Register Restaurant</h1>
           <p className="mt-1 text-sm text-zinc-600">
@@ -83,6 +90,7 @@ export default function RestaurantRegisterPage() {
         <input
           value={form.restaurant_name}
           placeholder="Restaurant name"
+          disabled={loading}
           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
           onChange={(event) =>
             setForm({ ...form, restaurant_name: event.target.value })
@@ -92,6 +100,7 @@ export default function RestaurantRegisterPage() {
         <input
           value={form.fssai_number}
           placeholder="FSSAI number"
+          disabled={loading}
           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
           onChange={(event) =>
             setForm({ ...form, fssai_number: event.target.value })
@@ -102,6 +111,7 @@ export default function RestaurantRegisterPage() {
           value={form.service_radius_km}
           inputMode="decimal"
           placeholder="Service radius (km)"
+          disabled={loading}
           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
           onChange={(event) =>
             setForm({ ...form, service_radius_km: event.target.value })
@@ -111,6 +121,7 @@ export default function RestaurantRegisterPage() {
         <input
           type="file"
           accept="image/*,.pdf"
+          disabled={loading}
           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700"
           onChange={(event) => {
             setFile(event.target.files?.[0] ?? null);
@@ -119,13 +130,13 @@ export default function RestaurantRegisterPage() {
         />
 
         <button
-          onClick={submit}
+          type="submit"
           disabled={loading}
           className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "Submitting..." : "Submit for Verification"}
         </button>
-      </div>
+      </form>
     </main>
   );
 }

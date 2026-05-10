@@ -733,15 +733,80 @@ exports.getMe = async (req, res) => {
     const result = await pool.query(
       `
       SELECT
-        id,
-        name,
-        email,
-        phone,
-        role,
-        is_verified,
-        created_at
-      FROM users
-      WHERE id=$1
+        u.id,
+        u.name,
+        u.email,
+        u.phone,
+        u.role,
+        CASE
+          WHEN u.role = 'ngo' THEN COALESCE((
+            SELECT n.is_verified
+            FROM ngos n
+            WHERE n.user_id = u.id
+            ORDER BY n.id DESC
+            LIMIT 1
+          ), false)
+          WHEN u.role = 'provider' THEN COALESCE((
+            SELECT r.is_verified
+            FROM restaurants r
+            WHERE r.user_id = u.id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ), false)
+          ELSE u.is_verified
+        END AS is_verified,
+        CASE
+          WHEN u.role = 'ngo' THEN (
+            SELECT n.rejection_reason
+            FROM ngos n
+            WHERE n.user_id = u.id
+            ORDER BY n.id DESC
+            LIMIT 1
+          )
+          WHEN u.role = 'provider' THEN (
+            SELECT r.rejection_reason
+            FROM restaurants r
+            WHERE r.user_id = u.id
+            ORDER BY r.id DESC
+            LIMIT 1
+          )
+          ELSE NULL
+        END AS rejection_reason,
+        CASE
+          WHEN u.role = 'ngo' AND NOT EXISTS (
+            SELECT 1 FROM ngos n WHERE n.user_id = u.id
+          ) THEN 'unregistered'
+          WHEN u.role = 'provider' AND NOT EXISTS (
+            SELECT 1 FROM restaurants r WHERE r.user_id = u.id
+          ) THEN 'unregistered'
+          WHEN u.role = 'ngo' AND EXISTS (
+            SELECT 1 FROM ngos n
+            WHERE n.user_id = u.id
+              AND n.is_verified = true
+          ) THEN 'approved'
+          WHEN u.role = 'provider' AND EXISTS (
+            SELECT 1 FROM restaurants r
+            WHERE r.user_id = u.id
+              AND r.is_verified = true
+          ) THEN 'approved'
+          WHEN u.role = 'ngo' AND EXISTS (
+            SELECT 1 FROM ngos n
+            WHERE n.user_id = u.id
+              AND n.is_verified = false
+              AND n.rejection_reason IS NOT NULL
+          ) THEN 'rejected'
+          WHEN u.role = 'provider' AND EXISTS (
+            SELECT 1 FROM restaurants r
+            WHERE r.user_id = u.id
+              AND r.is_verified = false
+              AND r.rejection_reason IS NOT NULL
+          ) THEN 'rejected'
+          WHEN u.role IN ('ngo', 'provider') THEN 'pending'
+          ELSE 'approved'
+        END AS verification_status,
+        u.created_at
+      FROM users u
+      WHERE u.id=$1
       `,
       [req.user.id]
     );

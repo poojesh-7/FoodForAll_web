@@ -1,17 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import NGOSummaryCard from "@/components/ngo/NGOSummaryCard";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService, type MyNGOProfile } from "@/services/ngo.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ImpactSummary,
   NGOAssignedVolunteer,
   NGOIncomingRequest,
-  NGOUnassignedVolunteer,
+  NGOVolunteerJoinRequest,
 } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
@@ -25,23 +26,29 @@ export default function NGODashboardPage() {
   const [ngo, setNgo] = useState<MyNGOProfile | null>(null);
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
   const [incomingRequests, setIncomingRequests] = useState<NGOIncomingRequest[]>([]);
-  const [assignedVolunteers, setAssignedVolunteers] = useState<NGOAssignedVolunteer[]>([]);
-  const [unassignedVolunteers, setUnassignedVolunteers] = useState<
-    NGOUnassignedVolunteer[]
+  const [volunteerJoinRequests, setVolunteerJoinRequests] = useState<
+    NGOVolunteerJoinRequest[]
   >([]);
+  const [assignedVolunteers, setAssignedVolunteers] = useState<NGOAssignedVolunteer[]>([]);
   const [loading, setLoading] = useState(true);
   const [urgentSaving, setUrgentSaving] = useState(false);
   const [error, setError] = useState("");
+  const volunteerVersion = useRealtimeStore((state) => state.volunteerVersion);
 
-  useEffect(() => {
+  const loadDashboard = useCallback(() => {
     let active = true;
 
-    async function loadDashboard() {
+    async function fetchDashboard() {
       try {
         setLoading(true);
         setError("");
         const profile = await ngoService.getMyNGO();
-        const [impactResult, requests, assigned, unassigned] = await Promise.all([
+        const [
+          impactResult,
+          requests,
+          volunteerRequests,
+          assigned,
+        ] = await Promise.all([
           profile.id
             ? ngoService.getNGOImpact(profile.id)
             : Promise.resolve<ImpactSummary>({
@@ -50,16 +57,16 @@ export default function NGODashboardPage() {
                 estimated_co2_saved: 0,
               }),
           ngoService.getIncomingRequests(),
+          ngoService.getVolunteerJoinRequests(),
           ngoService.getAssignedVolunteers(),
-          ngoService.getUnassignedVolunteers(),
         ]);
 
         if (!active) return;
         setNgo(profile);
         setImpact(impactResult);
         setIncomingRequests(requests);
+        setVolunteerJoinRequests(volunteerRequests);
         setAssignedVolunteers(assigned);
-        setUnassignedVolunteers(unassigned);
       } catch (err) {
         if (!active) return;
         const message = ngoService.getErrorMessage(err);
@@ -73,12 +80,21 @@ export default function NGODashboardPage() {
       }
     }
 
-    loadDashboard();
+    fetchDashboard();
 
     return () => {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    return loadDashboard();
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!volunteerVersion) return;
+    return loadDashboard();
+  }, [loadDashboard, volunteerVersion]);
 
   const rescueStats = useMemo(
     () => ({
@@ -139,7 +155,7 @@ export default function NGODashboardPage() {
             <NGOSummaryCard
               label="Active Volunteers"
               value={assignedVolunteers.length}
-              detail={`${unassignedVolunteers.length} unassigned nearby`}
+              detail={`${volunteerJoinRequests.length} join requests pending`}
             />
             <NGOSummaryCard
               label="CO2 Saved"
@@ -210,7 +226,7 @@ export default function NGODashboardPage() {
                 href="/ngo/volunteers"
                 className="rounded-lg border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-950 shadow-sm transition hover:border-zinc-400"
               >
-                Manage volunteers
+                Manage volunteers ({volunteerJoinRequests.length})
               </Link>
             </div>
           </section>

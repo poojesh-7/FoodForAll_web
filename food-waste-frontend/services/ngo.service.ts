@@ -9,10 +9,13 @@ import type {
   DbId,
   ImpactSummary,
   ImpactSummaryResponse,
+  ApproveVolunteerJoinRequestResponse,
   NGOAssignedVolunteer,
   NGOAssignedVolunteersResponse,
   NGOIncomingRequest,
   NGOIncomingRequestsResponse,
+  NGOVolunteerJoinRequest,
+  NGOVolunteerJoinRequestsResponse,
   NGORegistration,
   NGOReservationHistoryRow,
   NGOReservationsResponse,
@@ -24,6 +27,7 @@ import type {
   RegisterNGORequest,
   RegisterNGOResponse,
   RejectNGORequestResponse,
+  RejectVolunteerJoinRequestResponse,
   RequestVolunteerRequest,
   RequestVolunteerResponse,
   SetUrgentRequest,
@@ -127,6 +131,26 @@ export async function requestVolunteer(
   );
 }
 
+export async function getVolunteerJoinRequests(): Promise<NGOVolunteerJoinRequest[]> {
+  const { data } = await api.get<
+    NGOVolunteerJoinRequestsResponse | NGOVolunteerJoinRequest[]
+  >("/ngos/volunteer-join-requests");
+
+  return getEnvelopeData<NGOVolunteerJoinRequest[]>(data);
+}
+
+export async function approveVolunteerJoinRequest(requestId: DbId): Promise<void> {
+  await api.put<ApproveVolunteerJoinRequestResponse | MessageResponse>(
+    `/ngos/volunteer-join-requests/${String(requestId)}/approve`
+  );
+}
+
+export async function rejectVolunteerJoinRequest(requestId: DbId): Promise<void> {
+  await api.put<RejectVolunteerJoinRequestResponse | MessageResponse>(
+    `/ngos/volunteer-join-requests/${String(requestId)}/reject`
+  );
+}
+
 export async function setUrgent(payload: SetUrgentRequest): Promise<void> {
   await api.put<SetUrgentResponse | MessageResponse>("/ngos/urgent", payload);
 }
@@ -177,6 +201,9 @@ export const ngoService = {
   getAssignedVolunteers,
   getUnassignedVolunteers,
   requestVolunteer,
+  getVolunteerJoinRequests,
+  approveVolunteerJoinRequest,
+  rejectVolunteerJoinRequest,
   setUrgent,
   getIncomingRequests,
   getReservations,

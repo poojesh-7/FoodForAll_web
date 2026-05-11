@@ -310,6 +310,18 @@ export interface NGOUnassignedVolunteer {
   is_available: boolean | null;
 }
 
+export interface NGOVolunteerJoinRequest {
+  request_id: DbId;
+  ngo_id: DbId;
+  volunteer_id: DbId;
+  status: "pending" | "approved" | "rejected" | string;
+  requested_at?: ISODateString | null;
+  volunteer_name: string | null;
+  volunteer_phone?: string | null;
+  volunteer_email?: string | null;
+  is_available?: boolean | null;
+}
+
 export interface NGOIncomingRequest {
   request_id: DbId;
   listing_id: DbId;
@@ -564,6 +576,7 @@ export interface BulkReserveRequest {
 export type BulkReserveResponse = ApiResponse<BulkReserveData>;
 export type NGOAssignedVolunteersResponse = ApiResponse<NGOAssignedVolunteer[]>;
 export type NGOUnassignedVolunteersResponse = ApiResponse<NGOUnassignedVolunteer[]>;
+export type NGOVolunteerJoinRequestsResponse = ApiResponse<NGOVolunteerJoinRequest[]>;
 
 export interface RequestVolunteerRequest {
   volunteer_id: DbId;
@@ -575,6 +588,8 @@ export interface SetUrgentRequest {
 }
 export type SetUrgentResponse = ApiResponse<EmptyData>;
 export type NGOIncomingRequestsResponse = ApiResponse<NGOIncomingRequest[]>;
+export type ApproveVolunteerJoinRequestResponse = ApiResponse<EmptyData>;
+export type RejectVolunteerJoinRequestResponse = ApiResponse<EmptyData>;
 export type AcceptNGORequestResponse = ApiResponse<EmptyData>;
 export type RejectNGORequestResponse = ApiResponse<EmptyData>;
 export type NGOReservationsResponse = ApiResponse<NGOReservationHistoryRow[]>;
@@ -592,7 +607,7 @@ export type RespondToVolunteerRequestResponse = ApiResponse<EmptyData>;
 export interface JoinNGORequest {
   ngo_id: DbId;
 }
-export type JoinNGOResponse = ApiResponse<VolunteerMembershipRow>;
+export type JoinNGOResponse = ApiResponse<VolunteerRequestRow>;
 
 export interface LeaveNGORequest {
   ngo_id: DbId;

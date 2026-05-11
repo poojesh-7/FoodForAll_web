@@ -17,7 +17,6 @@ import type {
   VolunteerCurrentTask,
   VolunteerDashboardData,
   VolunteerDashboardResponse,
-  VolunteerMembershipRow,
   VolunteerRequestRow,
   VolunteerRequestsResponse,
   VolunteerTask,
@@ -55,13 +54,13 @@ export async function getAvailableNGOs(): Promise<VolunteerAvailableNGO[]> {
   return getEnvelopeData<VolunteerAvailableNGO[]>(data);
 }
 
-export async function joinNGO(payload: JoinNGORequest): Promise<VolunteerMembershipRow> {
-  const { data } = await api.post<JoinNGOResponse | VolunteerMembershipRow>(
+export async function joinNGO(payload: JoinNGORequest): Promise<VolunteerRequestRow> {
+  const { data } = await api.post<JoinNGOResponse | VolunteerRequestRow>(
     "/volunteers/join",
     payload
   );
 
-  return getEnvelopeData<VolunteerMembershipRow>(data);
+  return getEnvelopeData<VolunteerRequestRow>(data);
 }
 
 export async function leaveNGO(payload: LeaveNGORequest): Promise<void> {

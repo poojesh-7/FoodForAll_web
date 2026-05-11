@@ -8,6 +8,9 @@ const {
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const {
+  ensureVolunteerRequestSchema,
+} = require("../shared/services/volunteerRequestSchema.service");
+const {
   isProvided,
   isValidId,
   isValidLatitude,
@@ -26,18 +29,36 @@ exports.viewAvailableNGOs = async (req, res) => {
   if (req.user.role !== "volunteer")
     return res.status(403).json({ error: "Access denied" });
 
+  await ensureVolunteerRequestSchema();
+
   const result = await pool.query(
     `
     SELECT n.id,
            n.organization_name,
            n.urgent_flag,
-           COUNT(f.id) FILTER (WHERE f.status='active') AS active_listings,
-           COUNT(v.user_id) FILTER (WHERE v.status='active') AS total_volunteers,
-           MAX(vself.status) AS volunteer_status
+           COUNT(DISTINCT f.id) FILTER (WHERE f.status='active') AS active_listings,
+           COUNT(DISTINCT v.user_id) FILTER (WHERE v.status='active') AS total_volunteers,
+           COALESCE(MAX(vself.status), MAX(vrself.status)) AS volunteer_status
     FROM ngos n
     LEFT JOIN food_listings f ON f.ngo_id=n.id
     LEFT JOIN volunteers v ON v.ngo_id=n.id
-    LEFT JOIN volunteers vself ON vself.ngo_id=n.id AND vself.user_id=$1
+    LEFT JOIN volunteers vself
+      ON vself.ngo_id=n.id
+      AND vself.user_id=$1
+      AND vself.status='active'
+    LEFT JOIN volunteer_requests vrself
+      ON vrself.ngo_id=n.id
+      AND vrself.volunteer_id=$1
+      AND vrself.request_type='volunteer_join'
+      AND vrself.id = (
+        SELECT latest_vr.id
+        FROM volunteer_requests latest_vr
+        WHERE latest_vr.ngo_id=n.id
+        AND latest_vr.volunteer_id=$1
+        AND latest_vr.request_type='volunteer_join'
+        ORDER BY latest_vr.requested_at DESC NULLS LAST, latest_vr.id DESC
+        LIMIT 1
+      )
     GROUP BY n.id
     ORDER BY n.urgent_flag DESC, active_listings DESC
   `,
@@ -52,6 +73,8 @@ exports.getDashboard = async (req, res) => {
     return res.status(403).json({ error: "Only volunteers allowed" });
 
   try {
+    await ensureVolunteerRequestSchema();
+
     const [activeNGO, currentTask, stats, pendingRequests] = await Promise.all([
       pool.query(
         `
@@ -59,8 +82,8 @@ exports.getDashboard = async (req, res) => {
                n.organization_name,
                n.urgent_flag,
                v.status AS volunteer_status,
-               COUNT(f.id) FILTER (WHERE f.status='active') AS active_listings,
-               COUNT(active_v.user_id) FILTER (WHERE active_v.status='active') AS total_volunteers
+               COUNT(DISTINCT f.id) FILTER (WHERE f.status='active') AS active_listings,
+               COUNT(DISTINCT active_v.user_id) FILTER (WHERE active_v.status='active') AS total_volunteers
         FROM volunteers v
         JOIN ngos n ON n.id=v.ngo_id
         LEFT JOIN food_listings f ON f.ngo_id=n.id
@@ -126,6 +149,7 @@ exports.getDashboard = async (req, res) => {
         JOIN ngos n ON vr.ngo_id=n.id
         WHERE vr.volunteer_id=$1
         AND vr.status='pending'
+        AND vr.request_type='ngo_invite'
         ORDER BY vr.requested_at DESC NULLS LAST, vr.id DESC
         `,
         [req.user.id],
@@ -149,6 +173,8 @@ exports.getDashboard = async (req, res) => {
 
 // 📬 View NGO requests
 exports.viewRequests = async (req, res) => {
+  await ensureVolunteerRequestSchema();
+
   const result = await pool.query(
     `
     SELECT vr.*, n.organization_name
@@ -156,6 +182,7 @@ exports.viewRequests = async (req, res) => {
     JOIN ngos n ON vr.ngo_id=n.id
     WHERE vr.volunteer_id=$1
     AND vr.status='pending'
+    AND vr.request_type='ngo_invite'
     `,
     [req.user.id],
   );
@@ -182,6 +209,7 @@ exports.respondToRequest = async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    await ensureVolunteerRequestSchema(client);
 
     // 1️⃣ Fetch request safely
     const request = await client.query(
@@ -190,6 +218,7 @@ exports.respondToRequest = async (req, res) => {
       WHERE id=$1
       AND volunteer_id=$2
       AND status='pending'
+      AND request_type='ngo_invite'
       FOR UPDATE
       `,
       [requestId, req.user.id],
@@ -208,7 +237,7 @@ exports.respondToRequest = async (req, res) => {
           responded_at=NOW()
       WHERE id=$2
       `,
-      [action, requestId],
+      [action === "accepted" ? "approved" : "rejected", requestId],
     );
 
     // 3️⃣ If accepted → activate volunteer membership
@@ -344,6 +373,98 @@ exports.joinNGO = async (req, res) => {
 };
 
 // 🚪 Leave NGO
+exports.joinNGO = async (req, res) => {
+  if (req.user.role !== "volunteer")
+    return res.status(403).json({ error: "Only volunteers allowed" });
+
+  const { ngo_id } = req.body;
+
+  if (!isValidId(ngo_id)) {
+    return res.status(400).json({ error: "NGO id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await ensureVolunteerRequestSchema(client);
+
+    const ngo = await client.query(
+      `SELECT id, user_id, organization_name FROM ngos WHERE id=$1`,
+      [ngo_id],
+    );
+
+    if (!ngo.rows.length) throw withStatus("NGO not found", 404);
+
+    const existing = await client.query(
+      `
+      SELECT id
+      FROM volunteers
+      WHERE user_id=$1 AND ngo_id=$2
+      AND status='active'
+      LIMIT 1
+      `,
+      [req.user.id, ngo_id],
+    );
+
+    if (existing.rows.length) throw withStatus("Already joined NGO", 409);
+
+    const pending = await client.query(
+      `
+      SELECT id
+      FROM volunteer_requests
+      WHERE ngo_id=$1
+      AND volunteer_id=$2
+      AND request_type='volunteer_join'
+      AND status='pending'
+      LIMIT 1
+      `,
+      [ngo_id, req.user.id],
+    );
+
+    if (pending.rows.length)
+      throw withStatus("Join request already pending", 409);
+
+    const result = await client.query(
+      `
+      INSERT INTO volunteer_requests (ngo_id, volunteer_id, status, request_type)
+      VALUES ($1,$2,'pending','volunteer_join')
+      RETURNING *
+      `,
+      [ngo_id, req.user.id],
+    );
+
+    await client.query("COMMIT");
+
+    await notificationQueue.add("notify-user", {
+      userId: ngo.rows[0].user_id,
+      type: "volunteer_join_requested",
+      title: "Volunteer Join Request",
+      message: "A volunteer requested to join your NGO",
+    });
+
+    await publishToUsers([ngo.rows[0].user_id, req.user.id], "volunteer_updated", {
+      action: "join_request_pending",
+      volunteer: {
+        id: req.user.id,
+        ngo_id,
+        status: "pending",
+        request_id: result.rows[0].id,
+      },
+    });
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : "Failed to request NGO join",
+    });
+  } finally {
+    client.release();
+  }
+};
+
 exports.leaveNGO = async (req, res) => {
   if (req.user.role !== "volunteer")
     return res.status(403).json({ error: "Only volunteers allowed" });

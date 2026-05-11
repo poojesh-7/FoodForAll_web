@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import { volunteerService } from "@/services/volunteer.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, VolunteerAvailableNGO } from "@backend/contracts/api-contracts";
 
 export default function VolunteerNGOsPage() {
@@ -12,8 +13,9 @@ export default function VolunteerNGOsPage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const volunteerVersion = useRealtimeStore((state) => state.volunteerVersion);
 
-  useEffect(() => {
+  const loadNGOs = useCallback(() => {
     let active = true;
 
     volunteerService
@@ -33,6 +35,15 @@ export default function VolunteerNGOsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    return loadNGOs();
+  }, [loadNGOs]);
+
+  useEffect(() => {
+    if (!volunteerVersion) return;
+    return loadNGOs();
+  }, [loadNGOs, volunteerVersion]);
+
   const updateNGOStatus = (ngoId: DbId, status: string | null) => {
     setNgos((current) =>
       current.map((ngo) =>
@@ -48,8 +59,8 @@ export default function VolunteerNGOsPage() {
 
     try {
       await volunteerService.joinNGO({ ngo_id: ngo.id });
-      updateNGOStatus(ngo.id, "active");
-      setSuccess(`Joined ${ngo.organization_name}.`);
+      updateNGOStatus(ngo.id, "pending");
+      setSuccess(`Request sent to ${ngo.organization_name}.`);
     } catch (err) {
       setError(volunteerService.getErrorMessage(err));
     } finally {
@@ -89,7 +100,10 @@ export default function VolunteerNGOsPage() {
         <div className="grid gap-3 lg:grid-cols-2">
           {ngos.map((ngo) => {
             const joined = ngo.volunteer_status === "active";
+            const pending = ngo.volunteer_status === "pending";
+            const rejected = ngo.volunteer_status === "rejected";
             const processing = processingId === String(ngo.id);
+            const statusLabel = joined ? "approved" : ngo.volunteer_status;
 
             return (
               <article
@@ -104,6 +118,11 @@ export default function VolunteerNGOsPage() {
                     <p className="mt-1 text-sm text-zinc-600">
                       {ngo.active_listings} active listings, {ngo.total_volunteers} volunteers
                     </p>
+                    {statusLabel && (
+                      <p className="mt-1 text-sm font-medium text-zinc-700">
+                        Status: {statusLabel}
+                      </p>
+                    )}
                   </div>
                   {ngo.urgent_flag && (
                     <span className="rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
@@ -114,14 +133,22 @@ export default function VolunteerNGOsPage() {
 
                 <button
                   onClick={() => (joined ? leaveNGO(ngo) : joinNGO(ngo))}
-                  disabled={processing}
+                  disabled={processing || pending}
                   className={`rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 ${
                     joined
                       ? "border border-zinc-300 text-zinc-950"
                       : "bg-zinc-950 text-white"
                   }`}
                 >
-                  {processing ? "Updating..." : joined ? "Leave NGO" : "Join NGO"}
+                  {processing
+                    ? "Updating..."
+                    : joined
+                      ? "Leave NGO"
+                      : pending
+                        ? "Pending Approval"
+                        : rejected
+                          ? "Request Again"
+                          : "Request to Join"}
                 </button>
               </article>
             );

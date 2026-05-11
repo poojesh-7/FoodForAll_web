@@ -40,6 +40,24 @@ router.post(
   requireVerified,
   ngoCtrl.requestVolunteer,
 );
+router.get(
+  "/volunteer-join-requests",
+  authMiddleware,
+  requireVerified,
+  ngoCtrl.viewVolunteerJoinRequests,
+);
+router.put(
+  "/volunteer-join-requests/:requestID/approve",
+  authMiddleware,
+  requireVerified,
+  ngoCtrl.approveVolunteerJoinRequest,
+);
+router.put(
+  "/volunteer-join-requests/:requestID/reject",
+  authMiddleware,
+  requireVerified,
+  ngoCtrl.rejectVolunteerJoinRequest,
+);
 router.put("/urgent", authMiddleware, requireVerified, ngoCtrl.setUrgent);
 router.get(
   "/requests",

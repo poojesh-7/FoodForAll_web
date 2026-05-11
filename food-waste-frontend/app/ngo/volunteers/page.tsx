@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   NGOAssignedVolunteer,
+  NGOVolunteerJoinRequest,
   NGOUnassignedVolunteer,
 } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
@@ -14,23 +16,27 @@ import { useRouter } from "next/navigation";
 export default function NGOVolunteersPage() {
   const router = useRouter();
   const [assigned, setAssigned] = useState<NGOAssignedVolunteer[]>([]);
+  const [joinRequests, setJoinRequests] = useState<NGOVolunteerJoinRequest[]>([]);
   const [unassigned, setUnassigned] = useState<NGOUnassignedVolunteer[]>([]);
   const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [requestingIds, setRequestingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const volunteerVersion = useRealtimeStore((state) => state.volunteerVersion);
 
-  useEffect(() => {
+  const loadVolunteers = useCallback(() => {
     let active = true;
 
     Promise.all([
       ngoService.getAssignedVolunteers(),
+      ngoService.getVolunteerJoinRequests(),
       ngoService.getUnassignedVolunteers(),
     ])
-      .then(([assignedResult, unassignedResult]) => {
+      .then(([assignedResult, joinRequestResult, unassignedResult]) => {
         if (!active) return;
         setAssigned(assignedResult);
+        setJoinRequests(joinRequestResult);
         setUnassigned(unassignedResult);
       })
       .catch((err) => {
@@ -50,6 +56,15 @@ export default function NGOVolunteersPage() {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    return loadVolunteers();
+  }, [loadVolunteers]);
+
+  useEffect(() => {
+    if (!volunteerVersion) return;
+    return loadVolunteers();
+  }, [loadVolunteers, volunteerVersion]);
 
   const sendRequest = async (volunteer: NGOUnassignedVolunteer) => {
     const volunteerId = String(volunteer.id);
@@ -72,6 +87,52 @@ export default function NGOVolunteersPage() {
     }
   };
 
+  const handleJoinRequest = async (
+    request: NGOVolunteerJoinRequest,
+    action: "approve" | "reject"
+  ) => {
+    const requestId = String(request.request_id);
+    const previousRequests = joinRequests;
+
+    setRequestingIds((current) => new Set(current).add(requestId));
+    setJoinRequests((current) =>
+      current.filter((item) => String(item.request_id) !== requestId)
+    );
+    setError("");
+    setSuccess("");
+
+    try {
+      if (action === "approve") {
+        await ngoService.approveVolunteerJoinRequest(request.request_id);
+        setAssigned((current) => [
+          {
+            id: request.volunteer_id,
+            name: request.volunteer_name,
+            status: "active",
+          },
+          ...current,
+        ]);
+      } else {
+        await ngoService.rejectVolunteerJoinRequest(request.request_id);
+      }
+
+      setSuccess(
+        action === "approve"
+          ? "Volunteer request approved."
+          : "Volunteer request rejected."
+      );
+    } catch (err) {
+      setJoinRequests(previousRequests);
+      setError(ngoService.getErrorMessage(err));
+    } finally {
+      setRequestingIds((current) => {
+        const next = new Set(current);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  };
+
   return (
     <NGOShell
       title="Volunteer Management"
@@ -83,7 +144,71 @@ export default function NGOVolunteersPage() {
       {loading ? (
         <NGOStateBlock title="Loading volunteers..." />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-5">
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-base font-semibold text-zinc-950">
+                Incoming Volunteer Requests
+              </h2>
+              <p className="text-sm text-zinc-600">
+                Review volunteer requests before they become active.
+              </p>
+            </div>
+
+            {joinRequests.length === 0 ? (
+              <NGOStateBlock title="No pending volunteer requests." />
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-2">
+                {joinRequests.map((request) => {
+                  const requestId = String(request.request_id);
+                  const processing = requestingIds.has(requestId);
+
+                  return (
+                    <article
+                      key={requestId}
+                      className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
+                    >
+                      <div>
+                        <h3 className="text-sm font-semibold text-zinc-950">
+                          {request.volunteer_name ?? "Unnamed volunteer"}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-600">
+                          {request.is_available ? "Available" : "Availability unknown"}
+                        </p>
+                        {request.volunteer_phone && (
+                          <p className="text-sm text-zinc-600">
+                            Phone: {request.volunteer_phone}
+                          </p>
+                        )}
+                        <p className="text-sm font-medium text-zinc-700">
+                          Status: {request.status}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleJoinRequest(request, "approve")}
+                          disabled={processing}
+                          className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleJoinRequest(request, "reject")}
+                          disabled={processing}
+                          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <div className="grid gap-5 lg:grid-cols-2">
           <section className="space-y-3">
             <div>
               <h2 className="text-base font-semibold text-zinc-950">
@@ -169,6 +294,7 @@ export default function NGOVolunteersPage() {
               </div>
             )}
           </section>
+          </div>
         </div>
       )}
     </NGOShell>

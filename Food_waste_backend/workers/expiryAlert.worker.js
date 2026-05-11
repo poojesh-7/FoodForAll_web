@@ -12,7 +12,7 @@ new Worker(
     const { listingId } = job.data;
 
     const listing = await pool.query(
-      `SELECT id,title,latitude,longitude
+      `SELECT id,title,latitude,longitude,is_free
        FROM food_listings
        WHERE id=$1 AND status='active'`,
       [listingId]
@@ -21,6 +21,12 @@ new Worker(
     if (!listing.rows.length) return;
 
     const food = listing.rows[0];
+
+    // No send alerts for paid food listings
+    if (!food.is_free) {
+      console.log("⏭️ Skipping expiry alert for paid listing:", listingId);
+      return;
+    }
 
     const ngoIds = await findNearbyNGOs(
       food.longitude,

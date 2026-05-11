@@ -14,7 +14,7 @@ const {
   publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
-const { isProvided, isValidId, toNumber } = require("../utils/validation");
+const { isIntegerInRange, isProvided, isValidId, toNumber } = require("../utils/validation");
 
 const withStatus = (message, statusCode) => {
   const error = new Error(message);
@@ -89,8 +89,8 @@ exports.createReservation = async (req, res) => {
     return res.status(400).json({ error: "Listing id is required" });
   }
 
-  if (!isProvided(quantity) || !Number.isFinite(quantityValue) || quantityValue <= 0) {
-    return res.status(400).json({ error: "Valid quantity is required" });
+  if (!isProvided(quantity) || !isIntegerInRange(quantityValue, 1, 2)) {
+    return res.status(400).json({ error: "Quantity must be 1 or 2" });
   }
 
   const client = await pool.connect();

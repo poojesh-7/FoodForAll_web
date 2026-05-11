@@ -2,6 +2,7 @@ const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
 const refundQueue = require("../queues/refund.queue");
 const redis = require("../shared/config/redis");
+const crypto = require("crypto");
 const {
   getReservationSnapshot,
   publishListingUpdated,
@@ -13,6 +14,8 @@ const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
 const refundedPaymentStates = new Set(["refund_pending", "refunded"]);
 const WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
+const WEBHOOK_PROCESSING_LOCK_TTL_SECONDS = 5 * 60;
+const WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 
 function toRawBody(body) {
   return Buffer.isBuffer(body) ? body.toString("utf8") : JSON.stringify(body || {});
@@ -29,7 +32,12 @@ function serializePaymentMethod(paymentMethod) {
     : JSON.stringify(paymentMethod);
 }
 
-function getWebhookIdempotencyKey(req) {
+function getHeaderValue(req, headerName) {
+  const value = req.headers[headerName];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function getWebhookIdempotencyHeader(req) {
   const key =
     req.headers["x-idempotency-key"] ||
     req.headers["x-idempotency-header"];
@@ -37,9 +45,72 @@ function getWebhookIdempotencyKey(req) {
   return Array.isArray(key) ? key[0] : key;
 }
 
+function getBodyEventId(body) {
+  const data = body?.data || {};
+  const orderId = data.order_id || data.order?.order_id || data.payment?.order_id;
+  const orderStatus =
+    data.order_status ||
+    data.payment_status ||
+    data.payment?.payment_status;
+  const refundId = data.refund?.refund_id;
+  const refundStatus = data.refund?.refund_status;
+
+  return (
+    body?.event_id ||
+    body?.cf_event_id ||
+    data.event_id ||
+    data.cf_event_id ||
+    data.payment?.cf_payment_id ||
+    (refundId && `${refundId}:${refundStatus || "unknown"}`) ||
+    (orderId && `${orderId}:${orderStatus || "unknown"}`)
+  );
+}
+
+function getWebhookIdempotencyKey(req, rawBody, body) {
+  const explicitKey = getWebhookIdempotencyHeader(req);
+  const eventId = getBodyEventId(body);
+
+  if (explicitKey) return String(explicitKey);
+  if (eventId) return String(eventId);
+
+  return crypto.createHash("sha256").update(rawBody).digest("hex");
+}
+
+function isFreshWebhookTimestamp(timestamp) {
+  if (!timestamp) return false;
+
+  const rawTimestamp = String(timestamp).trim();
+  const numericTimestamp = Number(rawTimestamp);
+  const timestampMs = Number.isFinite(numericTimestamp)
+    ? numericTimestamp > 9999999999
+      ? numericTimestamp
+      : numericTimestamp * 1000
+    : Date.parse(rawTimestamp);
+
+  if (!Number.isFinite(timestampMs)) return false;
+
+  const ageSeconds = Math.abs(Date.now() - timestampMs) / 1000;
+  return ageSeconds <= WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS;
+}
+
 async function wasWebhookProcessed(idempotencyKey) {
   if (!idempotencyKey) return false;
   return Boolean(await redis.get(`cashfree:webhook:${idempotencyKey}`));
+}
+
+async function reserveWebhookProcessing(idempotencyKey) {
+  if (!idempotencyKey) return true;
+
+  const result = await redis.set(
+    `cashfree:webhook-lock:${idempotencyKey}`,
+    "1",
+    {
+      EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS,
+      NX: true,
+    }
+  );
+
+  return result === "OK";
 }
 
 async function markWebhookProcessed(idempotencyKey) {
@@ -50,6 +121,11 @@ async function markWebhookProcessed(idempotencyKey) {
     WEBHOOK_IDEMPOTENCY_TTL_SECONDS,
     "1"
   );
+}
+
+async function releaseWebhookProcessing(idempotencyKey) {
+  if (!idempotencyKey) return;
+  await redis.del(`cashfree:webhook-lock:${idempotencyKey}`);
 }
 
 async function restorePendingReservation(client, reservationId, paymentStatus) {
@@ -96,11 +172,15 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
 
 exports.cashfreeWebhook = async (req, res) => {
   const rawBody = toRawBody(req.body);
-  const signature = req.headers["x-webhook-signature"];
-  const timestamp = req.headers["x-webhook-timestamp"];
-  const idempotencyKey = getWebhookIdempotencyKey(req);
+  const signature = getHeaderValue(req, "x-webhook-signature");
+  const timestamp = getHeaderValue(req, "x-webhook-timestamp");
 
   if (signature && timestamp && process.env.CASHFREE_SECRET_KEY) {
+    if (process.env.NODE_ENV === "production" && !isFreshWebhookTimestamp(timestamp)) {
+      console.error("Stale Cashfree webhook timestamp");
+      return res.sendStatus(200);
+    }
+
     try {
       cashfree.PGVerifyWebhookSignature(signature, rawBody, timestamp);
     } catch (err) {
@@ -122,12 +202,20 @@ exports.cashfreeWebhook = async (req, res) => {
     return res.sendStatus(200);
   }
 
+  const idempotencyKey = getWebhookIdempotencyKey(req, rawBody, body);
+  let processingReserved = false;
+
   try {
     if (await wasWebhookProcessed(idempotencyKey)) {
       return res.sendStatus(200);
     }
+
+    processingReserved = await reserveWebhookProcessing(idempotencyKey);
+    if (!processingReserved) {
+      return res.sendStatus(200);
+    }
   } catch (err) {
-    console.warn("Cashfree webhook idempotency lookup failed:", err.message);
+    console.warn("Cashfree webhook idempotency guard failed:", err.message);
   }
 
   const data = body.data || {};
@@ -401,6 +489,8 @@ exports.cashfreeWebhook = async (req, res) => {
 
     try {
       await markWebhookProcessed(idempotencyKey);
+      await releaseWebhookProcessing(idempotencyKey);
+      processingReserved = false;
     } catch (err) {
       console.warn("Cashfree webhook idempotency mark failed:", err.message);
     }
@@ -426,6 +516,13 @@ exports.cashfreeWebhook = async (req, res) => {
     console.error("Webhook DB error:", err);
     return res.sendStatus(200);
   } finally {
+    if (processingReserved) {
+      try {
+        await releaseWebhookProcessing(idempotencyKey);
+      } catch (err) {
+        console.warn("Cashfree webhook lock cleanup failed:", err.message);
+      }
+    }
     client.release();
   }
 };

@@ -3,10 +3,12 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const foodCtrl = require("../controllers/food.controller");
 const upload = require("../middlewares/upload");
 const { requireVerified } = require("../middlewares/verification");
+const { registrationLimiter } = require("../middlewares/rateLimit.middleware");
 // Provider only
 router.post(
   "/register",
   authMiddleware,
+  registrationLimiter,
   upload.single("fssai_certificate"),
   foodCtrl.registerRestaurant,
 );

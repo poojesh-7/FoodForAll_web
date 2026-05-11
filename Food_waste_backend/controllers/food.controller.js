@@ -3,6 +3,8 @@ const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
 const {
+  isIntegerInRange,
+  isNumberInRange,
   isProvided,
   isValidId,
   isValidLatitude,
@@ -73,9 +75,9 @@ exports.registerRestaurant = async (req, res) => {
       ? toNumber(service_radius_km)
       : 5;
 
-    if (!Number.isFinite(serviceRadius) || serviceRadius <= 0) {
+    if (!Number.isFinite(serviceRadius) || serviceRadius <= 0 || serviceRadius > 100) {
       return res.status(400).json({
-        error: "Service radius must be positive",
+        error: "Service radius must be between 1 and 100 km",
       });
     }
 
@@ -275,8 +277,12 @@ exports.createFood = async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      return res.status(400).json({ error: "Quantity must be > 0" });
+    if (!Number.isFinite(endTime) || (isProvided(pickup_start_time) && !Number.isFinite(startTime))) {
+      return res.status(400).json({ error: "Invalid pickup time" });
+    }
+
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 1000) {
+      return res.status(400).json({ error: "Quantity must be an integer between 1 and 1000" });
     }
 
     if (startTime && startTime < now) {
@@ -306,6 +312,12 @@ exports.createFood = async (req, res) => {
     if (is_free && price > 0) {
       return res.status(400).json({
         error: "Free food cannot have price",
+      });
+    }
+
+    if (!Number.isFinite(price) || price < 0 || price > 100000) {
+      return res.status(400).json({
+        error: "Invalid price",
       });
     }
 
@@ -450,6 +462,25 @@ exports.updateFood = async (req, res) => {
 
   const { title, description, price, pickup_start_time, pickup_end_time } =
     req.body;
+  const priceValue = toNumber(price);
+  const startTime = new Date(pickup_start_time).getTime();
+  const endTime = new Date(pickup_end_time).getTime();
+
+  if (!isProvided(title) || !isProvided(pickup_end_time)) {
+    return res.status(400).json({ error: "Title and pickup end time are required" });
+  }
+
+  if (!Number.isFinite(priceValue) || priceValue < 0 || priceValue > 100000) {
+    return res.status(400).json({ error: "Invalid price" });
+  }
+
+  if (Number.isFinite(startTime) && startTime >= endTime) {
+    return res.status(400).json({ error: "Start time must be before end time" });
+  }
+
+  if (!Number.isFinite(endTime) || endTime <= Date.now()) {
+    return res.status(400).json({ error: "Pickup end time must be in the future" });
+  }
 
   const result = await pool.query(
     `UPDATE food_listings
@@ -460,7 +491,7 @@ exports.updateFood = async (req, res) => {
          pickup_end_time=$5
      WHERE id=$6
      RETURNING *`,
-    [title, description, price, pickup_start_time, pickup_end_time, id],
+    [String(title).trim(), description, priceValue, pickup_start_time, pickup_end_time, id],
   );
 
   await publishListingUpdated(id, {
@@ -503,14 +534,20 @@ exports.deleteFood = async (req, res) => {
 // GET ALL FOOD
 exports.getAllFood = async (req, res) => {
   const { page = 1, limit = 20 } = req.query;
+  const pageValue = toNumber(page);
+  const limitValue = toNumber(limit);
 
-  const offset = (page - 1) * limit;
+  if (!isIntegerInRange(pageValue, 1, 10000) || !isIntegerInRange(limitValue, 1, 100)) {
+    return res.status(400).json({ error: "Invalid pagination" });
+  }
+
+  const offset = (pageValue - 1) * limitValue;
 
   const result = await pool.query(
     `SELECT * FROM food_listings
    ORDER BY created_at DESC
    LIMIT $1 OFFSET $2`,
-    [limit, offset],
+    [limitValue, offset],
   );
 
   res.json(result.rows);
@@ -546,8 +583,8 @@ exports.getActiveFood = async (req, res) => {
 
   const radiusValue = toNumber(radius);
 
-  if (!Number.isFinite(radiusValue) || radiusValue <= 0) {
-    return res.status(400).json({ error: "Invalid radius" });
+  if (!isNumberInRange(radiusValue, 0.1, 100)) {
+    return res.status(400).json({ error: "Radius must be between 0.1 and 100 km" });
   }
 
   // 🔥 GEO QUERY
@@ -607,8 +644,8 @@ exports.getNearbyFood = async (req, res) => {
 
   const radiusValue = toNumber(radius);
 
-  if (!Number.isFinite(radiusValue) || radiusValue <= 0) {
-    return res.status(400).json({ error: "Invalid radius" });
+  if (!isNumberInRange(radiusValue, 0.1, 100)) {
+    return res.status(400).json({ error: "Radius must be between 0.1 and 100 km" });
   }
 
   const result = await pool.query(

@@ -12,10 +12,13 @@ const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
 const {
+  isIntegerInRange,
+  isNumberInRange,
   isProvided,
   isValidId,
   isValidLatitude,
   isValidLongitude,
+  parseBoolean,
   toNumber,
 } = require("../utils/validation");
 
@@ -104,9 +107,9 @@ exports.registerNGO = async (req, res) => {
       ? toNumber(service_radius_km)
       : 10;
 
-    if (!Number.isFinite(serviceRadius) || serviceRadius <= 0) {
+    if (!isNumberInRange(serviceRadius, 1, 100)) {
       return res.status(400).json({
-        error: "Service radius must be positive",
+        error: "Service radius must be between 1 and 100 km",
       });
     }
 
@@ -313,8 +316,8 @@ exports.bulkReserve = async (req, res) => {
 
     const quantity = toNumber(item?.quantity);
 
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      return res.status(400).json({ error: "Valid quantity is required" });
+    if (!isIntegerInRange(quantity, 1, 40)) {
+      return res.status(400).json({ error: "Quantity must be an integer between 1 and 40" });
     }
   }
   
@@ -814,8 +817,9 @@ exports.rejectVolunteerJoinRequest = (req, res) =>
 
 exports.setUrgent = async (req, res) => {
   const { urgent_flag } = req.body;
+  const urgentFlag = parseBoolean(urgent_flag);
 
-  if (urgent_flag === undefined || urgent_flag === null) {
+  if (urgentFlag === null) {
     return res.status(400).json({ error: "urgent_flag is required" });
   }
 
@@ -831,7 +835,7 @@ exports.setUrgent = async (req, res) => {
     SET urgent_flag=$1
     WHERE id=$2
     `,
-    [urgent_flag, ngo.rows[0].id],
+    [urgentFlag, ngo.rows[0].id],
   );
 
   res.json({ message: "Urgency updated" });

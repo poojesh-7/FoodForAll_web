@@ -2,7 +2,12 @@ const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const ngoCtrl = require("../controllers/ngo.controller");
 const { requireVerified } = require("../middlewares/verification");
-router.post("/register", authMiddleware, ngoCtrl.registerNGO);
+const {
+  registrationLimiter,
+  reservationCreateLimiter,
+} = require("../middlewares/rateLimit.middleware");
+
+router.post("/register", authMiddleware, registrationLimiter, ngoCtrl.registerNGO);
 router.get("/me", authMiddleware, requireVerified, ngoCtrl.getMyNGO);
 router.get(
   "/listings/nearby",
@@ -13,6 +18,7 @@ router.get(
 router.post(
   "/bulk-reserve",
   authMiddleware,
+  reservationCreateLimiter,
   requireVerified,
   ngoCtrl.bulkReserve,
 );

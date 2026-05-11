@@ -13,6 +13,7 @@ const {
 } = require("../shared/services/volunteerRequestSchema.service");
 const {
   isProvided,
+  isNumberInRange,
   isValidId,
   isValidLatitude,
   isValidLongitude,
@@ -635,8 +636,8 @@ exports.getTasks = async (req, res) => {
 
   const radiusMeters = toNumber(radius);
 
-  if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) {
-    return res.status(400).json({ error: "Invalid radius" });
+  if (!isNumberInRange(radiusMeters, 0.1, 100)) {
+    return res.status(400).json({ error: "Radius must be between 0.1 and 100 km" });
   }
 
   const client = await pool.connect();

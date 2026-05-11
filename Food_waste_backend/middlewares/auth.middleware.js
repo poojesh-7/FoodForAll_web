@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { isValidId } = require("../utils/validation");
 
 function unauthorized(res, message) {
   return res.status(401).json({
@@ -20,6 +21,10 @@ module.exports = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!decoded?.id || !isValidId(decoded.id)) {
+      return unauthorized(res, "Authentication token is invalid");
+    }
+
     req.user = decoded;
     next();
   } catch (err) {

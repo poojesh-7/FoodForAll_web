@@ -215,6 +215,9 @@ exports.getReservationById = async (req, res) => {
             f.price,
             provider.name AS provider_name,
             provider.phone AS provider_phone,
+            provider.address AS provider_address,
+            f.latitude AS provider_latitude,
+            f.longitude AS provider_longitude,
             requester.name AS requester_name,
             requester.phone AS requester_phone,
             volunteer.name AS assigned_volunteer_name,
@@ -249,6 +252,11 @@ exports.getMyReservations = async (req, res) => {
           f.pickup_end_time,
           f.is_free,
           f.price,
+          provider.name AS provider_name,
+          provider.phone AS provider_phone,
+          provider.address AS provider_address,
+          f.latitude AS provider_latitude,
+          f.longitude AS provider_longitude,
           requester.id AS requester_id,
           requester.name AS requester_name,
           requester.phone AS requester_phone,
@@ -260,6 +268,7 @@ exports.getMyReservations = async (req, res) => {
           END AS reservation_kind
     FROM reservations r
     JOIN food_listings f ON f.id = r.listing_id
+    JOIN users provider ON provider.id = f.provider_id
     LEFT JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     WHERE r.user_id = $1

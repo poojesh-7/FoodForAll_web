@@ -90,14 +90,20 @@ exports.getDashboard = async (req, res) => {
           f.title,
           f.latitude,
           f.longitude,
+          f.latitude AS restaurant_latitude,
+          f.longitude AS restaurant_longitude,
           f.pickup_start_time,
           f.pickup_end_time,
           u.id AS provider_id,
           u.name AS provider_name,
-          u.phone AS provider_phone
+          u.phone AS provider_phone,
+          n.organization_name AS ngo_name,
+          n.latitude AS ngo_latitude,
+          n.longitude AS ngo_longitude
         FROM reservations r
         JOIN food_listings f ON f.id=r.listing_id
         JOIN users u ON u.id=f.provider_id
+        JOIN ngos n ON n.user_id=r.user_id
         WHERE r.assigned_volunteer_id=$1
         AND r.task_status IN ('in_progress','picked_from_provider')
         ORDER BY r.assigned_at DESC
@@ -548,11 +554,16 @@ exports.getTasks = async (req, res) => {
         f.title,
         f.latitude,
         f.longitude,
+        f.latitude AS restaurant_latitude,
+        f.longitude AS restaurant_longitude,
         f.pickup_start_time,
         f.pickup_end_time,
         u.id AS provider_id,
         u.name AS provider_name,
         u.phone AS provider_phone,
+        n.organization_name AS ngo_name,
+        n.latitude AS ngo_latitude,
+        n.longitude AS ngo_longitude,
         ST_Distance(
             f.location,
             ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
@@ -560,6 +571,7 @@ exports.getTasks = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON r.listing_id = f.id
       JOIN users u ON u.id = f.provider_id
+      JOIN ngos n ON n.user_id = r.user_id
       WHERE r.user_id = $3
       AND r.pickup_type = 'ngo'
       AND r.status = 'reserved'

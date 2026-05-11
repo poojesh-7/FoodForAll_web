@@ -201,6 +201,9 @@ export interface ReservationDetails extends ReservationRow {
   price?: number | string | null;
   provider_name?: string | null;
   provider_phone?: string | null;
+  provider_address?: string | null;
+  provider_latitude?: number | string | null;
+  provider_longitude?: number | string | null;
   requester_name?: string | null;
   requester_phone?: string | null;
   assigned_volunteer_name?: string | null;
@@ -220,6 +223,9 @@ export interface ReservationHistoryRow extends ReservationRow {
   provider_id?: DbId;
   provider_name?: string | null;
   provider_phone?: string | null;
+  provider_address?: string | null;
+  provider_latitude?: number | string | null;
+  provider_longitude?: number | string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
 }
@@ -259,6 +265,11 @@ export interface VolunteerTask {
   title: string;
   latitude: number | string;
   longitude: number | string;
+  restaurant_latitude?: number | string | null;
+  restaurant_longitude?: number | string | null;
+  ngo_latitude?: number | string | null;
+  ngo_longitude?: number | string | null;
+  ngo_name?: string | null;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString | null;
   provider_id?: DbId;

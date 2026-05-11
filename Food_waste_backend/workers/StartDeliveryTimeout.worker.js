@@ -4,6 +4,9 @@ const connection = require("../shared/config/bullmq");
 const redis = require("../shared/config/redis");
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 const {
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
@@ -76,12 +79,12 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
 /*
 🔥 BullMQ Worker
 */
-new Worker(
+const deliveryTimeoutWorker = new Worker(
   "delivery-queue",
   async (job) => {
     const { reservationId } = job.data;
 
-    console.log("⏱ Delivery timeout triggered:", reservationId);
+    logger.info("Delivery timeout triggered", { reservationId });
 
     const client = await pool.connect();
 
@@ -165,7 +168,7 @@ new Worker(
         { reservation_id: reservationId }
       );
 
-      console.log("⚠️ Volunteer failed delivery:", reservationId);
+      logger.info("Delivery timeout handled", { reservationId });
     } catch (err) {
       await client.query("ROLLBACK");
       throw err; // 🔥 enables retry
@@ -173,12 +176,15 @@ new Worker(
       client.release();
     }
   },
-  {
-    connection,
+  workerOptions(connection, {
     attempts: 5,
     backoff: {
       type: "exponential",
       delay: 2000,
     },
-  }
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+  })
 );
+
+registerWorkerEvents(deliveryTimeoutWorker, "delivery-queue");

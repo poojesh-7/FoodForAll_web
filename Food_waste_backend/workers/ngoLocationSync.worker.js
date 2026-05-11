@@ -1,5 +1,6 @@
 const pool = require("../shared/config/db");
 const redis = require("../shared/config/redis");
+const logger = require("../shared/utils/logger");
 
 async function syncNGOLocations() {
   try {
@@ -18,12 +19,11 @@ async function syncNGOLocations() {
       member: ngo.id,
     }));
 
-    // 🔥 batch insert (faster)
     await redis.geoAdd("ngo_locations", geoData);
 
-    console.log("✅ NGO locations synced");
+    logger.info("NGO locations synced");
   } catch (err) {
-    console.error("NGO sync failed:", err);
+    logger.error("NGO location sync failed", { err });
   }
 }
 

@@ -1,14 +1,17 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
 const { findNearbyNGOs } = require("../services/geo.service");
 
-new Worker(
+const expiryAlertWorker = new Worker(
   "expiry-alert-queue",
   async (job) => {
-    console.log("🔔 Processing expiry alert for listing:", job.data.listingId);
+    logger.info("Processing expiry alert", { listingId: job.data.listingId });
     const { listingId } = job.data;
 
     const listing = await pool.query(
@@ -24,7 +27,7 @@ new Worker(
 
     // No send alerts for paid food listings
     if (!food.is_free) {
-      console.log("⏭️ Skipping expiry alert for paid listing:", listingId);
+      logger.info("Skipping paid listing expiry alert", { listingId });
       return;
     }
 
@@ -56,14 +59,17 @@ new Worker(
       });
     }
 
-    console.log("🚨 Expiry alert sent:", listingId);
+    logger.info("Expiry alert sent", { listingId });
   },
-  {
-    connection,
+  workerOptions(connection, {
     attempts: 5,
     backoff: {
       type: "exponential",
       delay: 2000,
     },
-  }
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+  })
 );
+
+registerWorkerEvents(expiryAlertWorker, "expiry-alert-queue");

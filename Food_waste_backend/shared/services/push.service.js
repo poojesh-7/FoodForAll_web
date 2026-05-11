@@ -1,5 +1,6 @@
 const admin = require("../config/firebase");
 const pool = require("../config/db");
+const logger = require("../utils/logger");
 
 async function sendPush(userId, type, title, message) {
   try {
@@ -23,8 +24,8 @@ async function sendPush(userId, type, title, message) {
       },
     });
   } catch (err) {
-    console.error("Push Service Error:", err.message);
-    throw err; // 🔥 IMPORTANT for retry
+    logger.error("Push notification failed", { err, userId });
+    throw err;
   }
 }
 

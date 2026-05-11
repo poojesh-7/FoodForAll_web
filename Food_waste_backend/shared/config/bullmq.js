@@ -1,16 +1,16 @@
 const IORedis = require("ioredis");
+const logger = require("../utils/logger");
 
 const connection = new IORedis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null, // 🔥 REQUIRED
+  maxRetriesPerRequest: null,
 });
 
-
 connection.on("connect", () => {
-  console.log("BullMQ Redis connected");
+  logger.info("BullMQ Redis connected");
 });
 
 connection.on("error", (err) => {
-  console.error("BullMQ Redis error:", err.message);
+  logger.error("BullMQ Redis error", { err });
 });
 
 module.exports = connection;

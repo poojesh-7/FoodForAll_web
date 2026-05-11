@@ -5,6 +5,7 @@ const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
 const refundQueue = require("../queues/refund.queue");
 const paymentQueue = require("../queues/payment.queue");
+const logger = require("../shared/utils/logger");
 
 const { createPayment, cancelPayment } = require("../shared/services/payment.service");
 const {
@@ -41,6 +42,27 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
   }
 }
 
+async function ensureUserPaymentSpamLimit(client, userId) {
+  const pendingReservations = await client.query(
+    `
+    SELECT COUNT(*)::int AS pending_count
+    FROM reservations
+    WHERE user_id=$1
+    AND status='payment_pending'
+    AND payment_status='pending'
+    AND reserved_at > NOW() - INTERVAL '30 minutes'
+    `,
+    [userId]
+  );
+
+  if ((pendingReservations.rows[0]?.pending_count || 0) >= 3) {
+    throw withStatus(
+      "Too many pending payments. Please finish or wait for existing payments to expire.",
+      429
+    );
+  }
+}
+
 function getCancellationCutoff(pickupEndTime) {
   const cutoff = new Date(pickupEndTime);
   cutoff.setMinutes(cutoff.getMinutes() - 20);
@@ -60,7 +82,7 @@ async function cleanupCancellationQueues(reservationId, orderId) {
       await paymentQueue.remove(`payment-batch-${orderId}`);
     }
   } catch (err) {
-    console.warn("Queue cleanup failed:", err.message);
+    logger.warn("Queue cleanup failed", { err, reservationId, orderId });
   }
 }
 
@@ -99,6 +121,7 @@ exports.createReservation = async (req, res) => {
     if (quantityValue > 2) throw withStatus("Max 2 items allowed", 400);
 
     await client.query("BEGIN");
+    await ensureUserPaymentSpamLimit(client, req.user.id);
 
     const foodResult = await client.query(
       `SELECT * FROM food_listings WHERE id=$1 FOR UPDATE`,
@@ -189,6 +212,12 @@ exports.createReservation = async (req, res) => {
         error: RESERVATION_EXISTS_MESSAGE,
       });
     }
+
+    logger.warn("Reservation creation failed", {
+      err,
+      userId: req.user?.id,
+      listingId: listing_id,
+    });
 
     res.status(err.statusCode || 400).json({
       error: err.message || "Reservation failed",
@@ -352,7 +381,10 @@ exports.getProviderReservations = async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error("Failed to fetch provider reservations:", err);
+    logger.error("Failed to fetch provider reservations", {
+      err,
+      userId: req.user?.id,
+    });
     res.status(500).json({
       error: "Failed to fetch provider reservations",
       details: process.env.NODE_ENV === "production" ? undefined : err.message,
@@ -501,7 +533,7 @@ const legacyCancelReservation = async (req, res) => {
       await pickupQueue.remove(`pickup-${id}`);
       await deliveryQueue.remove(`delivery-${id}`);
     } catch (err) {
-      console.warn("Queue cleanup failed:", err.message);
+      logger.warn("Queue cleanup failed", { err, reservationId: id });
     }
 
     /*
@@ -722,14 +754,14 @@ exports.cancelReservation = async (req, res) => {
           }
         );
       } catch (err) {
-        console.error("Failed to enqueue refund:", err.message);
+        logger.error("Failed to enqueue refund", { err, reservationId: refundReservationId });
       }
     }
 
     try {
       await notifyReservationCancelled(req, cancelledReservation);
     } catch (err) {
-      console.warn("Cancellation notification failed:", err.message);
+      logger.warn("Cancellation notification failed", { err, reservationId: reservation.id });
     }
 
     await Promise.all([
@@ -876,7 +908,7 @@ exports.markAsPickedUp = async (req, res) => {
         }
       );
 
-      console.log("🚚 Delivery timeout scheduled:", id);
+      logger.info("Delivery timeout scheduled", { reservationId: id });
     }
 
     res.json({

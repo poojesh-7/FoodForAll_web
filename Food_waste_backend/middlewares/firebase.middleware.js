@@ -1,4 +1,5 @@
 const admin = require("../shared/config/firebase");
+const logger = require("../shared/utils/logger");
 
 exports.verifyFirebaseToken = async (req, res, next) => {
   try {
@@ -16,7 +17,7 @@ exports.verifyFirebaseToken = async (req, res, next) => {
 
     next();
   } catch (err) {
-    console.error(err);
+    logger.error("Firebase authentication failed", { err });
     return res.status(401).json({
       error: "Invalid Firebase token",
     });

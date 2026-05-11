@@ -3,6 +3,7 @@ const cashfree = require("../shared/config/cashfree");
 const refundQueue = require("../queues/refund.queue");
 const redis = require("../shared/config/redis");
 const crypto = require("crypto");
+const logger = require("../shared/utils/logger");
 const {
   getReservationSnapshot,
   publishListingUpdated,
@@ -177,28 +178,28 @@ exports.cashfreeWebhook = async (req, res) => {
 
   if (signature && timestamp && process.env.CASHFREE_SECRET_KEY) {
     if (process.env.NODE_ENV === "production" && !isFreshWebhookTimestamp(timestamp)) {
-      console.error("Stale Cashfree webhook timestamp");
+      logger.warn("Stale Cashfree webhook timestamp");
       return res.sendStatus(200);
     }
 
     try {
       cashfree.PGVerifyWebhookSignature(signature, rawBody, timestamp);
     } catch (err) {
-      console.error("Invalid Cashfree webhook signature:", err.message);
+      logger.warn("Invalid Cashfree webhook signature", { err });
       return res.sendStatus(200);
     }
   } else if (process.env.NODE_ENV === "production") {
-    console.error("Missing Cashfree webhook signature headers");
+    logger.warn("Missing Cashfree webhook signature headers");
     return res.sendStatus(200);
   } else {
-    console.warn("DEV MODE: Skipping Cashfree webhook signature verification");
+    logger.warn("DEV MODE: Skipping Cashfree webhook signature verification");
   }
 
   let body;
   try {
     body = JSON.parse(rawBody);
   } catch (err) {
-    console.error("Invalid Cashfree webhook JSON");
+    logger.warn("Invalid Cashfree webhook JSON", { err });
     return res.sendStatus(200);
   }
 
@@ -215,7 +216,7 @@ exports.cashfreeWebhook = async (req, res) => {
       return res.sendStatus(200);
     }
   } catch (err) {
-    console.warn("Cashfree webhook idempotency guard failed:", err.message);
+    logger.warn("Cashfree webhook idempotency guard failed", { err });
   }
 
   const data = body.data || {};
@@ -492,7 +493,7 @@ exports.cashfreeWebhook = async (req, res) => {
       await releaseWebhookProcessing(idempotencyKey);
       processingReserved = false;
     } catch (err) {
-      console.warn("Cashfree webhook idempotency mark failed:", err.message);
+      logger.warn("Cashfree webhook idempotency mark failed", { err });
     }
 
     try {
@@ -503,24 +504,27 @@ exports.cashfreeWebhook = async (req, res) => {
           {
             jobId: `refund-${reservationId}`,
             attempts: 5,
+            backoff: { type: "exponential", delay: 3000 },
+            removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+            removeOnFail: { age: 14 * 24 * 60 * 60, count: 2000 },
           }
         );
       }
     } catch (err) {
-      console.error("Failed to enqueue late-payment refund:", err);
+      logger.error("Failed to enqueue late-payment refund", { err });
     }
 
     return res.sendStatus(200);
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Webhook DB error:", err);
+    logger.error("Cashfree webhook database update failed", { err });
     return res.sendStatus(200);
   } finally {
     if (processingReserved) {
       try {
         await releaseWebhookProcessing(idempotencyKey);
       } catch (err) {
-        console.warn("Cashfree webhook lock cleanup failed:", err.message);
+        logger.warn("Cashfree webhook lock cleanup failed", { err });
       }
     }
     client.release();

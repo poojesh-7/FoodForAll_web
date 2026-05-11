@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 
 function startNotificationCleanupWorker() {
   setInterval(async () => {
@@ -8,9 +9,9 @@ function startNotificationCleanupWorker() {
         WHERE created_at < NOW() - INTERVAL '30 days'
       `);
 
-      console.log("🧹 Old notifications cleaned");
+      logger.info("Old notifications cleaned");
     } catch (err) {
-      console.error("Cleanup error:", err);
+      logger.error("Notification cleanup failed", { err });
     }
   }, 86400000); // once per day
 }

@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 
 exports.requireVerified = async (req, res, next) => {
   try {
@@ -44,7 +45,11 @@ exports.requireVerified = async (req, res, next) => {
     next();
 
   } catch (err) {
-    console.error(err);
+    logger.error("Verification check failed", {
+      err,
+      userId: req.user?.id,
+      role: req.user?.role,
+    });
     res.status(500).json({
       error: "Verification check failed",
     });

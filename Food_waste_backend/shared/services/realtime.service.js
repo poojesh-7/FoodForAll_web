@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const redis = require("../config/redis");
+const logger = require("../utils/logger");
 
 function unique(values) {
   return [...new Set(values.filter((value) => value !== undefined && value !== null))];
@@ -22,6 +23,21 @@ function safeReservationState(reservation) {
     status: reservation.status,
     task_status: reservation.task_status,
     assigned_volunteer_id: reservation.assigned_volunteer_id,
+  };
+}
+
+function sanitizePaymentForUser(payment) {
+  if (!payment) return null;
+
+  return {
+    id: payment.id,
+    reservation_id: payment.reservation_id,
+    order_id: payment.order_id,
+    amount: payment.amount,
+    status: payment.status,
+    refund_status: payment.refund_status,
+    created_at: payment.created_at,
+    updated_at: payment.updated_at,
   };
 }
 
@@ -61,7 +77,7 @@ async function publishSocketEvent(room, event, data) {
       JSON.stringify({ room, event, data })
     );
   } catch (err) {
-    console.warn("Realtime publish failed:", err.message);
+    logger.warn("Realtime publish failed", { err, event, room });
   }
 }
 
@@ -141,7 +157,7 @@ async function publishReservationUpdated(reservationId, options = {}) {
     reservation =
       options.reservation || (await getReservationSnapshot(reservationId, options.client));
   } catch (err) {
-    console.warn("Reservation realtime snapshot failed:", err.message);
+    logger.warn("Reservation realtime snapshot failed", { err, reservationId });
     return null;
   }
 
@@ -176,7 +192,7 @@ async function publishPaymentUpdated(reservationId, options = {}) {
     payment =
       options.payment || (await getPaymentSnapshot(reservationId, options.client));
   } catch (err) {
-    console.warn("Payment realtime snapshot failed:", err.message);
+    logger.warn("Payment realtime snapshot failed", { err, reservationId });
     return null;
   }
 
@@ -193,7 +209,7 @@ async function publishPaymentUpdated(reservationId, options = {}) {
     userIds.map((userId) =>
       publishSocketEvent(`user:${userId}`, "payment_updated", {
         action: options.action,
-        payment,
+        payment: sanitizePaymentForUser(payment),
         reservation: sanitizeReservationForUser(reservation, userId),
       })
     )
@@ -209,7 +225,7 @@ async function publishVolunteerUpdated(reservationId, options = {}) {
     reservation =
       options.reservation || (await getReservationSnapshot(reservationId, options.client));
   } catch (err) {
-    console.warn("Volunteer realtime snapshot failed:", err.message);
+    logger.warn("Volunteer realtime snapshot failed", { err, reservationId });
     return null;
   }
 
@@ -248,7 +264,7 @@ async function publishTaskAvailabilityUpdated(reservationId, options = {}) {
     reservation =
       options.reservation || (await getReservationSnapshot(reservationId, options.client));
   } catch (err) {
-    console.warn("Task availability realtime snapshot failed:", err.message);
+    logger.warn("Task availability realtime snapshot failed", { err, reservationId });
     return null;
   }
 
@@ -268,7 +284,7 @@ async function publishTaskAvailabilityUpdated(reservationId, options = {}) {
     );
     volunteers = result.rows.map((row) => row.user_id);
   } catch (err) {
-    console.warn("Task availability volunteer lookup failed:", err.message);
+    logger.warn("Task availability volunteer lookup failed", { err, reservationId });
     return reservation;
   }
 
@@ -301,7 +317,7 @@ async function publishListingUpdated(listingId, options = {}) {
     listing =
       options.listing || (await getListingSnapshot(listingId, options.client));
   } catch (err) {
-    console.warn("Listing realtime snapshot failed:", err.message);
+    logger.warn("Listing realtime snapshot failed", { err, listingId });
     return null;
   }
 

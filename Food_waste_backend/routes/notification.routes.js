@@ -2,6 +2,7 @@ const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const notificationCtrl = require("../controllers/notification.controller");
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 const { isProvided } = require("../utils/validation");
 
 router.get("/", authMiddleware, notificationCtrl.getNotifications);
@@ -24,7 +25,10 @@ router.post("/save-token", authMiddleware, async (req, res) => {
 
     res.json({ message: "Token saved" });
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to save notification token", {
+      err,
+      userId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to save token" });
   }
 });

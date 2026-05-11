@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 const { isValidId } = require("../utils/validation");
 
 const CO2_PER_MEAL_KG = 0.5;
@@ -26,7 +27,7 @@ exports.getSummary = async (req, res) => {
 
     sendQueryResult(res, result);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch impact summary", { err });
     res.status(500).json({ error: "Failed to fetch impact summary" });
   }
 };
@@ -58,7 +59,7 @@ exports.getUserImpact = async (req, res) => {
 
     sendQueryResult(res, result);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch user impact", { err, userId: id });
     res.status(500).json({ error: "Failed to fetch user impact" });
   }
 };
@@ -86,7 +87,7 @@ exports.getListingImpact = async (req, res) => {
 
     sendQueryResult(res, result);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch listing impact", { err, listingId: id });
     res.status(500).json({ error: "Failed to fetch listing impact" });
   }
 };
@@ -118,7 +119,7 @@ exports.getNGOImpact = async (req, res) => {
 
     sendQueryResult(res, result);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch NGO impact", { err, ngoId: id });
     res.status(500).json({ error: "Failed to fetch NGO impact" });
   }
 };

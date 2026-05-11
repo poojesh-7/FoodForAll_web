@@ -1,4 +1,5 @@
 const { createClient } = require("redis");
+const logger = require("../utils/logger");
 
 if (!process.env.REDIS_URL) {
   throw new Error("REDIS_URL is required");
@@ -9,15 +10,15 @@ const redisClient = createClient({
 });
 
 redisClient.on("connect", () => {
-  console.log("Redis connected");
+  logger.info("Redis connected");
 });
 
 redisClient.on("reconnecting", () => {
-  console.log("Redis reconnecting...");
+  logger.warn("Redis reconnecting");
 });
 
 redisClient.on("error", (err) => {
-  console.error("Redis error:", err.message);
+  logger.error("Redis error", { err });
 });
 
 let connecting;
@@ -27,7 +28,7 @@ const connectRedis = async () => {
 
   if (!connecting) {
     connecting = redisClient.connect().catch((err) => {
-      console.error("Initial Redis connection failed:", err.message);
+      logger.error("Initial Redis connection failed", { err });
       connecting = null;
       setTimeout(connectRedis, 5000); // retry
     });

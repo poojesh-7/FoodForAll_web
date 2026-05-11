@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 const { isValidId } = require("../utils/validation");
 const expiryQueue = require("../queues/expiry.queue");
 const expiryAlertQueue = require("../queues/expiryAlert.queue");
@@ -33,7 +34,7 @@ exports.getPendingNGOs = async (req, res) => {
     res.json(result.rows);
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch pending NGOs", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch NGOs" });
   }
 };
@@ -50,18 +51,22 @@ exports.approveNGO = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE ngos SET is_verified=true, rejection_reason=NULL WHERE id=$1`,
+      `
+      UPDATE ngos
+      SET is_verified=true, rejection_reason=NULL
+      WHERE id=$1 AND is_verified=false
+      `,
       [id]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: "NGO not found" });
+      return res.status(409).json({ error: "NGO not found or already approved" });
     }
 
     res.json({ message: "NGO approved" });
 
   } catch (err) {
-    console.error(err);
+    logger.error("NGO approval failed", { err, adminId: req.user?.id, ngoId: req.params.id });
     res.status(500).json({ error: "Approval failed" });
   }
 };
@@ -78,9 +83,10 @@ exports.rejectNGO = async (req, res) => {
       return res.status(400).json({ error: "NGO id is required" });
     }
 
+    const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
     const result = await pool.query(
       `UPDATE ngos SET is_verified=false, rejection_reason=$1 WHERE id=$2`,
-      [reason || "Rejected by admin", id]
+      [rejectionReason || "Rejected by admin", id]
     );
 
     if (result.rowCount === 0) {
@@ -90,7 +96,7 @@ exports.rejectNGO = async (req, res) => {
     res.json({ message: "NGO rejected" });
 
   } catch (err) {
-    console.error(err);
+    logger.error("NGO rejection failed", { err, adminId: req.user?.id, ngoId: req.params.id });
     res.status(500).json({ error: "Rejection failed" });
   }
 };
@@ -110,7 +116,7 @@ exports.getPendingRestaurants = async (req, res) => {
     res.json(result.rows);
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch pending restaurants", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch restaurants" });
   }
 };
@@ -127,18 +133,26 @@ exports.approveRestaurant = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE restaurants SET is_verified=true, rejection_reason=NULL WHERE id=$1`,
+      `
+      UPDATE restaurants
+      SET is_verified=true, rejection_reason=NULL
+      WHERE id=$1 AND is_verified=false
+      `,
       [id]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Restaurant not found" });
+      return res.status(409).json({ error: "Restaurant not found or already approved" });
     }
 
     res.json({ message: "Restaurant approved" });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Restaurant approval failed", {
+      err,
+      adminId: req.user?.id,
+      restaurantId: req.params.id,
+    });
     res.status(500).json({ error: "Approval failed" });
   }
 };
@@ -155,9 +169,10 @@ exports.rejectRestaurant = async (req, res) => {
       return res.status(400).json({ error: "Restaurant id is required" });
     }
 
+    const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
     const result = await pool.query(
       `UPDATE restaurants SET is_verified=false, rejection_reason=$1 WHERE id=$2`,
-      [reason || "Rejected by admin", id]
+      [rejectionReason || "Rejected by admin", id]
     );
 
     if (result.rowCount === 0) {
@@ -167,7 +182,11 @@ exports.rejectRestaurant = async (req, res) => {
     res.json({ message: "Restaurant rejected" });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Restaurant rejection failed", {
+      err,
+      adminId: req.user?.id,
+      restaurantId: req.params.id,
+    });
     res.status(500).json({ error: "Rejection failed" });
   }
 };
@@ -200,7 +219,7 @@ exports.getOperationalSummary = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch operational summary", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch operational summary" });
   }
 };
@@ -234,7 +253,12 @@ exports.getQueueHealth = async (req, res) => {
 
     res.json({ queues });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch queue health" });
+    logger.error("Failed to fetch queue health", { err, adminId: req.user?.id });
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch queue health",
+      error: "Failed to fetch queue health",
+      data: null,
+    });
   }
 };

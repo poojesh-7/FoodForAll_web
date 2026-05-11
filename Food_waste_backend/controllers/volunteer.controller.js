@@ -11,6 +11,7 @@ const {
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
+const logger = require("../shared/utils/logger");
 const {
   isProvided,
   isNumberInRange,
@@ -167,7 +168,10 @@ exports.getDashboard = async (req, res) => {
       pending_requests: pendingRequests.rows,
     });
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch volunteer dashboard", {
+      err,
+      userId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch volunteer dashboard" });
   }
 };
@@ -368,7 +372,11 @@ exports.joinNGO = async (req, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    logger.error("Direct volunteer join failed", {
+      err,
+      userId: req.user?.id,
+      ngoId: ngo_id,
+    });
     res.status(500).json({ error: "Failed to join NGO" });
   }
 };
@@ -426,6 +434,25 @@ exports.joinNGO = async (req, res) => {
     if (pending.rows.length)
       throw withStatus("Join request already pending", 409);
 
+    const recentHandledRequest = await client.query(
+      `
+      SELECT id, status
+      FROM volunteer_requests
+      WHERE ngo_id=$1
+      AND volunteer_id=$2
+      AND request_type='volunteer_join'
+      AND status IN ('approved', 'rejected')
+      AND COALESCE(responded_at, requested_at) > NOW() - INTERVAL '1 hour'
+      ORDER BY COALESCE(responded_at, requested_at) DESC
+      LIMIT 1
+      `,
+      [ngo_id, req.user.id],
+    );
+
+    if (recentHandledRequest.rows.length) {
+      throw withStatus("Please wait before sending another join request", 429);
+    }
+
     const result = await client.query(
       `
       INSERT INTO volunteer_requests (ngo_id, volunteer_id, status, request_type)
@@ -457,7 +484,7 @@ exports.joinNGO = async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error(err);
+    logger.error("Volunteer join request failed", { err, userId: req.user?.id, ngoId: ngo_id });
     res.status(err.statusCode || 500).json({
       error: err.statusCode ? err.message : "Failed to request NGO join",
     });
@@ -587,7 +614,7 @@ exports.startTask = async (req, res) => {
         }
       );
 
-      console.log("⏱ Pickup timeout scheduled:", updatedReservation.id);
+      logger.info("Pickup timeout scheduled", { reservationId: updatedReservation.id });
     }
 
     await Promise.all([
@@ -712,11 +739,9 @@ exports.getTasks = async (req, res) => {
       `,
       [toNumber(lng), toNumber(lat), ngo.user_id, radiusMeters],
     );
-    console.log(tasks.rows);
-
     res.json(tasks.rows);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch volunteer tasks", { err, userId: req.user?.id });
     res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : "Failed to fetch tasks" });
   }
 };

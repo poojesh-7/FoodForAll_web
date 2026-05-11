@@ -1,6 +1,9 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 
 const notificationQueue = require("../queues/notification.queue");
 const {
@@ -9,13 +12,13 @@ const {
   publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
 
-console.log("🚀 Starting expiry worker...");
-new Worker(
+logger.info("Expiry worker started");
+const expiryWorker = new Worker(
   "expiry-queue",
   async (job) => {
     const { listingId } = job.data;
 
-    console.log("⏰ Processing expiry for listing:", listingId);
+    logger.info("Processing listing expiry", { listingId });
 
     const client = await pool.connect();
 
@@ -190,11 +193,18 @@ new Worker(
 
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Expiry worker error:", err);
+      logger.error("Expiry worker error", { err, listingId });
       throw err;
     } finally {
       client.release();
     }
   },
-  { connection }
+  workerOptions(connection, {
+    attempts: 5,
+    backoff: { type: "exponential", delay: 3000 },
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+  })
 );
+
+registerWorkerEvents(expiryWorker, "expiry-queue");

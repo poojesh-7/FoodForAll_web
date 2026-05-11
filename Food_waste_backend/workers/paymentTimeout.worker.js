@@ -1,6 +1,9 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 const {
   getReservationSnapshot,
   publishListingUpdated,
@@ -8,9 +11,9 @@ const {
   publishReservationUpdated,
 } = require("../shared/services/realtime.service");
 
-console.log("Payment Timeout Worker Started");
+logger.info("Payment timeout worker started");
 
-new Worker(
+const paymentTimeoutWorker = new Worker(
   "payment-queue",
   async (job) => {
     const { reservationIds } = job.data;
@@ -92,7 +95,7 @@ new Worker(
         );
 
         changedReservationIds.add(reservationId);
-        console.log("Payment timeout expired reservation:", reservationId);
+        logger.info("Payment timeout expired reservation", { reservationId });
       }
 
       await client.query("COMMIT");
@@ -123,5 +126,12 @@ new Worker(
       client.release();
     }
   },
-  { connection }
+  workerOptions(connection, {
+    attempts: 5,
+    backoff: { type: "exponential", delay: 3000 },
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+  })
 );
+
+registerWorkerEvents(paymentTimeoutWorker, "payment-queue");

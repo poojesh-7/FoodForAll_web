@@ -4,6 +4,9 @@ const connection = require("../shared/config/bullmq");
 const redis = require("../shared/config/redis");
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 const {
   publishListingUpdated,
   publishReservationUpdated,
@@ -76,12 +79,12 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
 /*
 🔥 BullMQ Worker
 */
-new Worker(
+const pickupTimeoutWorker = new Worker(
   "pickup-queue",
   async (job) => {
     const { reservationId } = job.data;
 
-    console.log("⏱ Pickup timeout triggered:", reservationId);
+    logger.info("Pickup timeout triggered", { reservationId });
 
     const client = await pool.connect();
 
@@ -176,7 +179,7 @@ new Worker(
         { reservation_id: reservationId }
       );
 
-      console.log("⚠️ Pickup timeout handled:", reservationId);
+      logger.info("Pickup timeout handled", { reservationId });
     } catch (err) {
       await client.query("ROLLBACK");
       throw err; // 🔥 retry enabled
@@ -184,12 +187,15 @@ new Worker(
       client.release();
     }
   },
-  {
-    connection,
+  workerOptions(connection, {
     attempts: 5,
     backoff: {
       type: "exponential",
       delay: 2000,
     },
-  }
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+  })
 );
+
+registerWorkerEvents(pickupTimeoutWorker, "pickup-queue");

@@ -1,3 +1,5 @@
+const { validateEnvironment } = require("../../shared/config/env");
+validateEnvironment();
 require("../../shared/config/db");
 const redis = require("../../shared/config/redis");
 const bullBoardServer = require("../../admin/bullBoard");
@@ -10,7 +12,12 @@ const {
   buildHelmetMiddleware,
   buildSocketCorsOptions,
 } = require("../../middlewares/security.middleware");
+const {
+  errorHandler,
+  notFoundHandler,
+} = require("../../middlewares/error.middleware");
 const { isValidId } = require("../../utils/validation");
+const logger = require("../../shared/utils/logger");
 
 const app = express();
 const server = http.createServer(app);
@@ -41,12 +48,22 @@ io.use((socket, next) => {
     const token = socket.handshake.auth?.token || cookies.accessToken;
 
     if (!token) {
+      logger.warn("Socket authentication failed", {
+        reason: "missing_token",
+        socketId: socket.id,
+        ip: socket.handshake.address,
+      });
       return next(new Error("Unauthorized"));
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     if (!decoded?.id || !isValidId(decoded.id)) {
+      logger.warn("Socket authentication failed", {
+        reason: "invalid_user_id",
+        socketId: socket.id,
+        ip: socket.handshake.address,
+      });
       return next(new Error("Invalid token"));
     }
 
@@ -54,7 +71,13 @@ io.use((socket, next) => {
     socket.data.user = decoded;
 
     next();
-  } catch {
+  } catch (err) {
+    logger.warn("Socket authentication failed", {
+      reason: "invalid_token",
+      socketId: socket.id,
+      ip: socket.handshake.address,
+      err,
+    });
     next(new Error("Invalid token"));
   }
 });
@@ -73,7 +96,7 @@ Socket Connections
 io.on("connection", (socket) => {
   const userId = socket.user?.id;
 
-  console.log("Socket connected:", socket.id);
+  logger.info("Socket connected", { socketId: socket.id, userId });
 
   if (!userId) {
     socket.disconnect(true);
@@ -84,6 +107,11 @@ io.on("connection", (socket) => {
 
   socket.on("join", (requestedUserId, ack) => {
     if (String(requestedUserId) !== String(userId)) {
+      logger.warn("Unauthorized socket room join blocked", {
+        socketId: socket.id,
+        userId,
+        requestedUserId,
+      });
       if (typeof ack === "function") {
         ack({ success: false, message: "Unauthorized room" });
       }
@@ -99,7 +127,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     socket.removeAllListeners();
-    console.log("Socket disconnected:", socket.id);
+    logger.info("Socket disconnected", { socketId: socket.id, userId });
   });
 });
 
@@ -124,14 +152,16 @@ async function startSocketBridge() {
         io.emit(payload.event, payload.data);
       }
     } catch (err) {
-      console.error("Socket event error:", err);
+      logger.error("Socket event bridge payload failed", { err });
     }
   });
 
-  console.log("Socket event bridge running");
+  logger.info("Socket event bridge running");
 }
 
-startSocketBridge();
+startSocketBridge().catch((err) => {
+  logger.error("Socket event bridge failed to start", { err });
+});
 
 /*
 ========================
@@ -164,28 +194,22 @@ app.use("/api/v1/impact", impactRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/admin/queues", authMiddleware, requireAdmin, bullBoardServer.getRouter());
 
-app.use((err, req, res, next) => {
-  if (err?.message === "Origin not allowed by CORS") {
-    return res.status(403).json({
-      success: false,
-      message: "Origin not allowed by CORS",
-      data: null,
-    });
-  }
-
-  if (err instanceof SyntaxError && "body" in err) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid JSON body",
-      data: null,
-    });
-  }
-
-  return next(err);
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught exception", { err });
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled promise rejection", {
+    err: reason instanceof Error ? reason : new Error(String(reason)),
+  });
+});
+
 server.listen(PORT, () => {
-  console.log(`API Server running on ${PORT}`);
+  logger.info("API server running", { port: PORT });
 });

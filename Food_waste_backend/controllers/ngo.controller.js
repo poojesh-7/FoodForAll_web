@@ -11,6 +11,7 @@ const {
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
+const logger = require("../shared/utils/logger");
 const {
   isIntegerInRange,
   isNumberInRange,
@@ -217,7 +218,10 @@ exports.registerNGO = async (req, res) => {
     try {
       await addNGOLocation(ngo.id, longitudeValue, latitudeValue);
     } catch (locErr) {
-      console.error("Location sync failed:", locErr);
+      logger.warn("NGO location sync failed", {
+        err: locErr,
+        userId: req.user?.id,
+      });
       // Don't fail main request
     }
 
@@ -229,7 +233,10 @@ exports.registerNGO = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("NGO registration failed", {
+      err,
+      userId: req.user?.id,
+    });
 
     // 🔹 Duplicate handling
     if (err.code === "23505") {
@@ -543,7 +550,10 @@ exports.getMyReservations = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch NGO reservations", {
+      err,
+      userId: req.user?.id,
+    });
 
     res.status(500).json({
       error: "Failed to fetch NGO reservations",

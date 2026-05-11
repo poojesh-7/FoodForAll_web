@@ -8,6 +8,7 @@ const {
   generateAccessToken,
   generateRefreshToken,
 } = require("../utils/token");
+const logger = require("../shared/utils/logger");
 const {
   isProvided,
   isValidEmail,
@@ -133,7 +134,7 @@ exports.sendOTP = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to send OTP", { err });
 
     res.status(500).json({
       error: "Failed to send OTP",
@@ -309,7 +310,7 @@ exports.verifyOTP = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("OTP verification failed", { err });
 
     res.status(500).json({
       error: "OTP verification failed",
@@ -362,7 +363,7 @@ exports.setRole = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to set role", { err, userId: req.user?.id });
 
     res.status(500).json({
       success: false,
@@ -452,7 +453,7 @@ exports.refreshToken = async (req, res) => {
     try {
       await rememberRotatedRefreshToken(refreshToken, session);
     } catch (err) {
-      console.warn("Unable to store refresh reuse grace entry:", err.message);
+      logger.warn("Unable to store refresh reuse grace entry", { err });
     }
 
     // 🍪 Set cookies (IMPORTANT FIX)
@@ -461,7 +462,7 @@ exports.refreshToken = async (req, res) => {
     return res.json({ success: true });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Token refresh failed", { err });
 
     res.status(500).json({
       error: "Token refresh failed",
@@ -480,8 +481,6 @@ exports.completeProfile = async (req, res) => {
       latitude,
       longitude,
     } = req.body;
-
-    console.log(req.body);
 
     if (!isProvided(phone) || !isProvided(name) || !isProvided(email) || !isProvided(role)) {
       return res.status(400).json({
@@ -634,7 +633,7 @@ exports.completeProfile = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Profile completion failed", { err });
 
     if (err.code === "23505") {
       return res.status(409).json({
@@ -713,7 +712,7 @@ exports.updateLocation = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Location update failed", { err, userId: req.user?.id });
 
     res.status(500).json({
       error:
@@ -824,7 +823,7 @@ exports.getMe = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch current user", { err, userId: req.user?.id });
 
     res.status(500).json({
       error: "Failed to fetch user",
@@ -855,7 +854,7 @@ exports.logout = async (req, res) => {
     return res.json({ success: true });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Logout failed", { err, userId: req.user?.id });
     res.status(500).json({
       error: "Logout failed",
     });

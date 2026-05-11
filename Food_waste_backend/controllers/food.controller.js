@@ -2,6 +2,7 @@ const pool = require("../shared/config/db");
 
 const notificationQueue = require("../queues/notification.queue");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
+const logger = require("../shared/utils/logger");
 const {
   isIntegerInRange,
   isNumberInRange,
@@ -208,7 +209,10 @@ exports.registerRestaurant = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    logger.error("Restaurant registration failed", {
+      err,
+      userId: req.user?.id,
+    });
 
     // 🔹 Duplicate errors
     if (err.code === "23505") {
@@ -426,7 +430,10 @@ exports.createFood = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error(err);
+    logger.error("Food creation failed", {
+      err,
+      userId: req.user?.id,
+    });
 
     if (err.code === "23505") {
       return res.status(409).json({

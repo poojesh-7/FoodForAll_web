@@ -3,12 +3,15 @@ const crypto = require("crypto");
 const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
+const logger = require("../shared/utils/logger");
+const { registerWorkerEvents } = require("../shared/utils/queueEvents");
+const { workerOptions } = require("../shared/utils/queueOptions");
 const {
   publishPaymentUpdated,
   publishReservationUpdated,
 } = require("../shared/services/realtime.service");
 
-console.log("Refund Worker Started");
+logger.info("Refund worker started");
 
 const FINAL_REFUND_STATES = new Set(["refunded"]);
 const REFUNDABLE_PAYMENT_STATES = new Set([
@@ -283,7 +286,7 @@ async function prepareRefund(reservationId) {
   }
 }
 
-new Worker(
+const refundWorker = new Worker(
   "refund-queue",
   async (job) => {
     const { reservationId } = job.data;
@@ -309,7 +312,14 @@ new Worker(
       const attempts = job.opts.attempts || 5;
       const isLastAttempt = job.attemptsMade + 1 >= attempts;
 
-      console.error("Refund worker error:", err.response?.data || err.message);
+      logger.error("Refund execution failed", {
+        err,
+        reservationId,
+        orderId: refund.orderId,
+        refundId: refund.refundId,
+        attemptsMade: job.attemptsMade,
+        attempts,
+      });
 
       if (isLastAttempt) {
         await markRefundFailed(reservationId);
@@ -318,12 +328,15 @@ new Worker(
       throw err;
     }
   },
-  {
-    connection,
+  workerOptions(connection, {
     attempts: 5,
     backoff: {
       type: "exponential",
       delay: 3000,
     },
-  }
+    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+    removeOnFail: { age: 14 * 24 * 60 * 60, count: 2000 },
+  })
 );
+
+registerWorkerEvents(refundWorker, "refund-queue");

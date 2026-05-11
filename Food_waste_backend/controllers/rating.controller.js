@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
 
 const REVIEW_MAX_LENGTH = 500;
@@ -170,7 +171,7 @@ exports.getListingRatings = async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch listing ratings", { err, listingId });
     res.status(500).json({ error: "Failed to fetch ratings" });
   }
 };
@@ -197,7 +198,7 @@ exports.getProviderRatings = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    logger.error("Failed to fetch provider ratings", { err, providerId });
     res.status(500).json({ error: "Failed to fetch provider ratings" });
   }
 };

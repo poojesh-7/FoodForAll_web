@@ -828,18 +828,27 @@ exports.markAsPickedUp = async (req, res) => {
           `,
       [id]
     );
+    const updatedReservation = {
+      ...reservation,
+      ...update.rows[0],
+      provider_id: reservation.provider_id,
+    };
 
     await client.query("COMMIT");
 
     await Promise.all([
-      publishReservationUpdated(id, {
+      publishReservationUpdated(updatedReservation.id, {
         action: isNGOPickup ? "picked_from_provider" : "picked_up",
+        reservation: updatedReservation,
+        extraUserIds: [updatedReservation.user_id],
       }),
-      publishVolunteerUpdated(id, {
+      publishVolunteerUpdated(updatedReservation.id, {
         action: isNGOPickup ? "pickup_confirmed" : "self_pickup_completed",
+        reservation: updatedReservation,
       }),
-      publishTaskAvailabilityUpdated(id, {
+      publishTaskAvailabilityUpdated(updatedReservation.id, {
         action: isNGOPickup ? "pickup_confirmed" : "unavailable",
+        reservation: updatedReservation,
       }),
     ]);
 
@@ -856,10 +865,10 @@ exports.markAsPickedUp = async (req, res) => {
 
       await deliveryQueue.add(
         "delivery-timeout",
-        { reservationId: id },
+        { reservationId: updatedReservation.id },
         {
           delay,
-          jobId: `delivery-${id}`,
+          jobId: `delivery-${updatedReservation.id}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 2000 },
           removeOnComplete: { age: 3600, count: 1000 },

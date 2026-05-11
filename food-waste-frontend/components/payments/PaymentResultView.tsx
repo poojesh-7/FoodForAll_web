@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
@@ -12,6 +12,7 @@ import {
   isRetryablePaymentState,
 } from "@/lib/payment-flow";
 import { reservationService } from "@/services/reservation.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { ReservationDetails } from "@backend/contracts/api-contracts";
 
 type PaymentResultViewProps = {
@@ -57,8 +58,14 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+  const reservationsById = useRealtimeStore((state) => state.reservations);
 
-  const session = getPaymentSessionByOrderId(orderId);
+  const session = useMemo(() => getPaymentSessionByOrderId(orderId), [orderId]);
+  const lookupReservationId = useMemo(
+    () => session?.reservationId ?? reservationIdParam,
+    [reservationIdParam, session]
+  );
   const paymentState = reservation
     ? getReservationPaymentState(reservation)
     : "unknown";
@@ -73,9 +80,6 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         return;
       }
 
-      const storedSession = getPaymentSessionByOrderId(orderId);
-      const lookupReservationId = storedSession?.reservationId ?? reservationIdParam;
-
       if (!lookupReservationId) {
         setError("Payment reservation id was not found in this browser or redirect URL.");
         setLoading(false);
@@ -85,7 +89,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
       try {
         setError("");
         setLoading(true);
-        if (!storedSession) {
+        if (!session) {
           setMessage("Recovering reservation state from the payment redirect...");
         }
 
@@ -119,7 +123,41 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
     return () => {
       active = false;
     };
-  }, [expected, orderId, reservationIdParam]);
+  }, [expected, lookupReservationId, orderId, reservationIdParam, session]);
+
+  useEffect(() => {
+    if (!reservationVersion || !lookupReservationId) return;
+    const update = reservationsById[String(lookupReservationId)];
+    if (!update) return;
+    let active = true;
+
+    queueMicrotask(() => {
+      setReservation((current) =>
+        current ? { ...current, ...update } : (update as ReservationDetails)
+      );
+    });
+
+    reservationService
+      .getReservationById(lookupReservationId)
+      .then((latest) => {
+        if (!active) return;
+        setReservation({ ...latest, ...update });
+
+        const state = getReservationPaymentState(latest);
+        if (state === "paid") {
+          setMessage("Payment confirmed by the backend.");
+        } else if (state === "failed" || state === "expired") {
+          setMessage("Payment did not complete. The backend state is shown below.");
+        }
+      })
+      .catch((err) => {
+        if (active) setError(reservationService.getErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [lookupReservationId, reservationVersion, reservationsById]);
 
   const loadReservation = async (pollPending: boolean) => {
     if (!orderId && !reservationIdParam) {
@@ -127,9 +165,6 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
       setLoading(false);
       return null;
     }
-
-    const storedSession = getPaymentSessionByOrderId(orderId);
-    const lookupReservationId = storedSession?.reservationId ?? reservationIdParam;
 
     if (!lookupReservationId) {
       setError("Payment reservation id was not found in this browser or redirect URL.");

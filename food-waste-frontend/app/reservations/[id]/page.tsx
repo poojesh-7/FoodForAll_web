@@ -156,12 +156,28 @@ export default function ReservationDetailPage() {
     if (!reservationVersion) return;
     const update = reservationsById[String(params.id)];
     if (!update) return;
+    let active = true;
 
-    queueMicrotask(() =>
+    queueMicrotask(() => {
       setReservation((current) =>
         current ? { ...current, ...update } : (update as ReservationDetails)
-      )
-    );
+      );
+    });
+
+    fetchReservationData(params.id)
+      .then(({ result, listingRatings }) => {
+        if (!active) return;
+        setReservation({ ...result, ...update });
+        setRatings(listingRatings);
+        setRatingSubmitted(Boolean(result.review_id));
+      })
+      .catch((err) => {
+        if (active) setError(reservationService.getErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
   }, [params.id, reservationVersion, reservationsById]);
 
   const loadReservation = async (showLoading = true) => {

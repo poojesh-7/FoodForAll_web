@@ -45,11 +45,29 @@ export default function ReservationsPage() {
 
   useEffect(() => {
     if (!reservationVersion) return;
-    queueMicrotask(() =>
+    let active = true;
+
+    queueMicrotask(() => {
       setReservations((current) =>
         mergeRealtimeRows<ReservationHistoryRow>(current, reservationsById)
-      )
-    );
+      );
+    });
+
+    reservationService
+      .getMyReservations()
+      .then((result) => {
+        if (!active) return;
+        setReservations(
+          mergeRealtimeRows<ReservationHistoryRow>(result, reservationsById)
+        );
+      })
+      .catch((err) => {
+        if (active) setError(reservationService.getErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
   }, [reservationVersion, reservationsById]);
 
   const activeReservations = useMemo(

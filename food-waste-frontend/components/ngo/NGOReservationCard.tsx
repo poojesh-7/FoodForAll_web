@@ -70,12 +70,6 @@ export default function NGOReservationCard({
           </span>
         </p>
         <p>
-          Pickup code:{" "}
-          <span className="font-medium text-zinc-950">
-            {displayValue(reservation.pickup_code)}
-          </span>
-        </p>
-        <p>
           Receive code:{" "}
           <span className="font-medium text-zinc-950">
             {displayValue(reservation.receive_code)}

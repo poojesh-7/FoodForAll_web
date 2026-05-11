@@ -6,6 +6,7 @@ const {
   publishListingUpdated,
   publishToUsers,
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
 const {
   ensureVolunteerRequestSchema,
@@ -411,6 +412,9 @@ exports.bulkReserve = async (req, res) => {
       ...created.map((reservation) =>
         publishReservationUpdated(reservation.id, { action: "created" })
       ),
+      ...created.map((reservation) =>
+        publishTaskAvailabilityUpdated(reservation.id, { action: "available" })
+      ),
       ...uniqueListingIds(created).map((listingId) =>
         publishListingUpdated(listingId, { action: "quantity_updated" })
       ),
@@ -494,7 +498,6 @@ exports.getMyReservations = async (req, res) => {
         r.task_status,
         r.status,
         r.payment_status,
-        r.pickup_code,
         r.receive_code,
         r.completed_at,
         r.reserved_at,
@@ -1004,6 +1007,7 @@ exports.acceptNGORequest = async (req, res) => {
 
     await Promise.all([
       publishReservationUpdated(createdReservation.id, { action: "created" }),
+      publishTaskAvailabilityUpdated(createdReservation.id, { action: "available" }),
       publishListingUpdated(listingId, { action: "completed" }),
     ]);
 

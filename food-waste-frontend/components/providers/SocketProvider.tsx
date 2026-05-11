@@ -40,12 +40,14 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     const applyListing = useRealtimeStore.getState().applyListing;
 
     socket.on("reservation_updated", applyReservation);
+    socket.on("task_claimed", applyReservation);
     socket.on("payment_updated", applyPayment);
     socket.on("volunteer_updated", applyVolunteer);
     socket.on("listing_updated", applyListing);
 
     return () => {
       socket.off("reservation_updated", applyReservation);
+      socket.off("task_claimed", applyReservation);
       socket.off("payment_updated", applyPayment);
       socket.off("volunteer_updated", applyVolunteer);
       socket.off("listing_updated", applyListing);

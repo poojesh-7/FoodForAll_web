@@ -95,7 +95,6 @@ export default function ReservationCard({
         <p>Picked up: {formatFoodDate(reservation.picked_up_at)}</p>
         <p>Completed: {formatFoodDate(reservation.completed_at)}</p>
         <p>Pickup code: {displayValue(reservation.pickup_code)}</p>
-        <p>Receive code: {displayValue(reservation.receive_code)}</p>
       </div>
 
       <div className="grid gap-3 text-sm sm:grid-cols-2">

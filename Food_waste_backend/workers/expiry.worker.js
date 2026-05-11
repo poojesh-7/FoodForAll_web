@@ -6,6 +6,7 @@ const notificationQueue = require("../queues/notification.queue");
 const {
   publishListingUpdated,
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
 
 console.log("🚀 Starting expiry worker...");
@@ -171,6 +172,9 @@ new Worker(
         publishListingUpdated(listingId, { action: "expired" }),
         ...expired.rows.map((reservation) =>
           publishReservationUpdated(reservation.id, { action: "expired" })
+        ),
+        ...expired.rows.map((reservation) =>
+          publishTaskAvailabilityUpdated(reservation.id, { action: "unavailable" })
         ),
       ]);
 

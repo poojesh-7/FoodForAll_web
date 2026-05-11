@@ -5,6 +5,51 @@ function unique(values) {
   return [...new Set(values.filter((value) => value !== undefined && value !== null))];
 }
 
+function withoutKeys(row, keys) {
+  if (!row) return row;
+  const copy = { ...row };
+  keys.forEach((key) => {
+    delete copy[key];
+  });
+  return copy;
+}
+
+function safeReservationState(reservation) {
+  if (!reservation) return null;
+  return {
+    id: reservation.id,
+    reservation_id: reservation.id,
+    status: reservation.status,
+    task_status: reservation.task_status,
+    assigned_volunteer_id: reservation.assigned_volunteer_id,
+  };
+}
+
+function sanitizeReservationForUser(reservation, userId) {
+  if (!reservation) return reservation;
+  const baseReservation = withoutKeys(reservation, ["requester_role"]);
+  const isRequester = String(reservation.user_id) === String(userId);
+  const isProvider = String(reservation.provider_id) === String(userId);
+  const isVolunteer =
+    reservation.assigned_volunteer_id !== undefined &&
+    reservation.assigned_volunteer_id !== null &&
+    String(reservation.assigned_volunteer_id) === String(userId);
+
+  if (isProvider || isVolunteer) {
+    return withoutKeys(baseReservation, ["receive_code"]);
+  }
+
+  if (isRequester && reservation.requester_role === "ngo") {
+    return withoutKeys(baseReservation, ["pickup_code"]);
+  }
+
+  if (isRequester) {
+    return withoutKeys(baseReservation, ["receive_code"]);
+  }
+
+  return withoutKeys(baseReservation, ["pickup_code", "receive_code"]);
+}
+
 async function publishSocketEvent(room, event, data) {
   try {
     await redis.publish(
@@ -42,6 +87,7 @@ async function getReservationSnapshot(reservationId, client = pool) {
            requester.id AS requester_id,
            requester.name AS requester_name,
            requester.phone AS requester_phone,
+           requester.role AS requester_role,
            volunteer.name AS assigned_volunteer_name,
            volunteer.phone AS assigned_volunteer_phone,
            CASE
@@ -97,20 +143,20 @@ async function publishReservationUpdated(reservationId, options = {}) {
 
   if (!reservation) return null;
 
-  const payload = {
-    action: options.action,
-    reservation,
-  };
+  const userIds = unique([
+    reservation.user_id,
+    reservation.provider_id,
+    reservation.assigned_volunteer_id,
+    ...(options.extraUserIds || []),
+  ]);
 
-  await publishToUsers(
-    [
-      reservation.user_id,
-      reservation.provider_id,
-      reservation.assigned_volunteer_id,
-      ...(options.extraUserIds || []),
-    ],
-    "reservation_updated",
-    payload
+  await Promise.all(
+    userIds.map((userId) =>
+      publishSocketEvent(`user:${userId}`, "reservation_updated", {
+        action: options.action,
+        reservation: sanitizeReservationForUser(reservation, userId),
+      })
+    )
   );
 
   return reservation;
@@ -132,21 +178,21 @@ async function publishPaymentUpdated(reservationId, options = {}) {
 
   if (!reservation) return null;
 
-  const payload = {
-    action: options.action,
-    payment,
-    reservation,
-  };
+  const userIds = unique([
+    reservation.user_id,
+    reservation.provider_id,
+    reservation.assigned_volunteer_id,
+    ...(options.extraUserIds || []),
+  ]);
 
-  await publishToUsers(
-    [
-      reservation.user_id,
-      reservation.provider_id,
-      reservation.assigned_volunteer_id,
-      ...(options.extraUserIds || []),
-    ],
-    "payment_updated",
-    payload
+  await Promise.all(
+    userIds.map((userId) =>
+      publishSocketEvent(`user:${userId}`, "payment_updated", {
+        action: options.action,
+        payment,
+        reservation: sanitizeReservationForUser(reservation, userId),
+      })
+    )
   );
 
   return payment;
@@ -165,27 +211,80 @@ async function publishVolunteerUpdated(reservationId, options = {}) {
 
   if (!reservation) return null;
 
+  const userIds = unique([
+    reservation.user_id,
+    reservation.provider_id,
+    reservation.assigned_volunteer_id,
+    ...(options.extraUserIds || []),
+  ]);
+
+  await Promise.all(
+    userIds.map((userId) =>
+      publishSocketEvent(`user:${userId}`, "volunteer_updated", {
+        action: options.action,
+        reservation: sanitizeReservationForUser(reservation, userId),
+        volunteer: reservation.assigned_volunteer_id
+          ? {
+              id: reservation.assigned_volunteer_id,
+              name: reservation.assigned_volunteer_name,
+              phone: reservation.assigned_volunteer_phone,
+            }
+          : null,
+      })
+    )
+  );
+
+  return reservation;
+}
+
+async function publishTaskAvailabilityUpdated(reservationId, options = {}) {
+  let reservation;
+
+  try {
+    reservation =
+      options.reservation || (await getReservationSnapshot(reservationId, options.client));
+  } catch (err) {
+    console.warn("Task availability realtime snapshot failed:", err.message);
+    return null;
+  }
+
+  if (!reservation || reservation.pickup_type !== "ngo") return reservation;
+
+  let volunteers = [];
+  try {
+    const result = await (options.client || pool).query(
+      `
+      SELECT v.user_id
+      FROM volunteers v
+      JOIN ngos n ON n.id = v.ngo_id
+      WHERE n.user_id=$1
+      AND v.status='active'
+      `,
+      [reservation.user_id]
+    );
+    volunteers = result.rows.map((row) => row.user_id);
+  } catch (err) {
+    console.warn("Task availability volunteer lookup failed:", err.message);
+    return reservation;
+  }
+
   const payload = {
     action: options.action,
-    reservation,
-    volunteer: reservation.assigned_volunteer_id
-      ? {
-          id: reservation.assigned_volunteer_id,
-          name: reservation.assigned_volunteer_name,
-          phone: reservation.assigned_volunteer_phone,
-        }
-      : null,
+    reservation: safeReservationState(reservation),
   };
 
-  await publishToUsers(
-    [
-      reservation.user_id,
-      reservation.provider_id,
-      reservation.assigned_volunteer_id,
-      ...(options.extraUserIds || []),
-    ],
-    "volunteer_updated",
-    payload
+  await Promise.all(
+    unique(volunteers).flatMap((userId) => {
+      const events = [
+        publishSocketEvent(`user:${userId}`, "reservation_updated", payload),
+      ];
+
+      if (options.action === "task_claimed") {
+        events.push(publishSocketEvent(`user:${userId}`, "task_claimed", payload));
+      }
+
+      return events;
+    })
   );
 
   return reservation;
@@ -226,6 +325,7 @@ module.exports = {
   publishPaymentUpdated,
   publishReservationUpdated,
   publishSocketEvent,
+  publishTaskAvailabilityUpdated,
   publishToUsers,
   publishVolunteerUpdated,
 };

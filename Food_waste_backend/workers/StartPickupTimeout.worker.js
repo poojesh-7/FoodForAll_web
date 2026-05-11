@@ -7,6 +7,7 @@ const notificationQueue = require("../queues/notification.queue");
 const {
   publishListingUpdated,
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 
@@ -154,6 +155,7 @@ new Worker(
       await Promise.all([
         publishReservationUpdated(reservationId, { action: "expired" }),
         publishVolunteerUpdated(reservationId, { action: "pickup_timeout" }),
+        publishTaskAvailabilityUpdated(reservationId, { action: "unavailable" }),
         publishListingUpdated(r.listing_id, { action: "quantity_updated" }),
       ]);
 

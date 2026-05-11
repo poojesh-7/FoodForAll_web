@@ -280,7 +280,6 @@ export interface VolunteerTask {
 
 export interface VolunteerCurrentTask extends Omit<VolunteerTask, "distance"> {
   pickup_code: string;
-  receive_code: string;
   assigned_at: ISODateString | null;
   picked_up_at: ISODateString | null;
   completed_at: ISODateString | null;
@@ -335,7 +334,6 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   quantity_reserved: number | string;
   pickup_type: string;
   task_status: string;
-  pickup_code: string;
   receive_code: string;
   created_at: ISODateString;
   listing_id: DbId;

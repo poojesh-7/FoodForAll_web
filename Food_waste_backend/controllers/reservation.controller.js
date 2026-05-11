@@ -11,6 +11,7 @@ const {
   publishListingUpdated,
   publishPaymentUpdated,
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
@@ -238,7 +239,27 @@ exports.getReservationById = async (req, res) => {
 
   if (!result.rows.length) return res.status(404).json({ error: "Not found" });
 
-  res.json(result.rows[0]);
+  const reservation = result.rows[0];
+  const isRequester = String(reservation.user_id) === String(req.user.id);
+  const isProvider = String(reservation.provider_id) === String(req.user.id);
+  const isVolunteer =
+    reservation.assigned_volunteer_id !== null &&
+    reservation.assigned_volunteer_id !== undefined &&
+    String(reservation.assigned_volunteer_id) === String(req.user.id);
+
+  if (!isRequester && !isProvider && !isVolunteer) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  if (isProvider || isVolunteer) {
+    delete reservation.receive_code;
+  }
+
+  if (isRequester && req.user.role === "ngo") {
+    delete reservation.pickup_code;
+  }
+
+  res.json(reservation);
 };
 
 exports.getMyReservations = async (req, res) => {
@@ -287,7 +308,20 @@ exports.getProviderReservations = async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT r.*,
+      SELECT r.id,
+             r.listing_id,
+             r.user_id,
+             r.assigned_volunteer_id,
+             r.quantity_reserved,
+             r.pickup_type,
+             r.task_status,
+             r.status,
+             r.pickup_code,
+             r.payment_status,
+             r.reserved_at,
+             r.assigned_at,
+             r.picked_up_at,
+             r.completed_at,
              f.id AS listing_id,
              f.title,
              f.description,
@@ -698,6 +732,7 @@ exports.cancelReservation = async (req, res) => {
 
     await Promise.all([
       publishReservationUpdated(reservation.id, { action: "cancelled" }),
+      publishTaskAvailabilityUpdated(reservation.id, { action: "unavailable" }),
       publishPaymentUpdated(reservation.id, {
         action: refundReservationId ? "refund_pending" : "cancelled",
       }),
@@ -800,6 +835,9 @@ exports.markAsPickedUp = async (req, res) => {
       }),
       publishVolunteerUpdated(id, {
         action: isNGOPickup ? "pickup_confirmed" : "self_pickup_completed",
+      }),
+      publishTaskAvailabilityUpdated(id, {
+        action: isNGOPickup ? "pickup_confirmed" : "unavailable",
       }),
     ]);
 

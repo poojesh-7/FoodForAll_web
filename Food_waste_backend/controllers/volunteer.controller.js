@@ -4,6 +4,7 @@ const deliveryQueue = require("../queues/delivery.queue");
 const notificationQueue = require("../queues/notification.queue");
 const {
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
   publishToUsers,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
@@ -105,7 +106,6 @@ exports.getDashboard = async (req, res) => {
           r.status,
           r.task_status,
           r.pickup_code,
-          r.receive_code,
           r.assigned_at,
           r.picked_up_at,
           r.completed_at,
@@ -596,7 +596,12 @@ exports.startTask = async (req, res) => {
       publishVolunteerUpdated(updatedReservation.id, {
         action: "pickup_started",
       }),
+      publishTaskAvailabilityUpdated(updatedReservation.id, {
+        action: "task_claimed",
+      }),
     ]);
+
+    delete updatedReservation.receive_code;
 
     res.json({
       message: "Task started",
@@ -844,6 +849,7 @@ exports.completeTask = async (req, res) => {
     await Promise.all([
       publishReservationUpdated(reservation.id, { action: "delivered" }),
       publishVolunteerUpdated(reservation.id, { action: "delivery_completed" }),
+      publishTaskAvailabilityUpdated(reservation.id, { action: "unavailable" }),
     ]);
 
     res.json({

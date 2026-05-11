@@ -45,7 +45,6 @@ function mergeStartedTask(
     status: reservation.status ?? task.status,
     task_status: String(reservation.task_status ?? "in_progress"),
     pickup_code: String(reservation.pickup_code ?? ""),
-    receive_code: String(reservation.receive_code ?? ""),
     assigned_at:
       typeof reservation.assigned_at === "string" ? reservation.assigned_at : null,
     picked_up_at:
@@ -53,6 +52,16 @@ function mergeStartedTask(
     completed_at:
       typeof reservation.completed_at === "string" ? reservation.completed_at : null,
   };
+}
+
+function isVisibleVolunteerTask(task: VolunteerTask) {
+  return (
+    Boolean(task.title) &&
+    task.listing_id !== undefined &&
+    task.listing_id !== null &&
+    task.status === "reserved" &&
+    (task.task_status === "pending" || task.task_status === "assigned")
+  );
 }
 
 export default function VolunteerTasksPage() {
@@ -101,7 +110,7 @@ export default function VolunteerTasksPage() {
       });
       setTasks((current) =>
         mergeRealtimeRows<VolunteerTask>(current, reservationsById).filter(
-          (task) => task.task_status === "pending" || task.task_status === "assigned"
+          isVisibleVolunteerTask
         )
       );
     });
@@ -133,7 +142,7 @@ export default function VolunteerTasksPage() {
         lng: nextForm.lng,
         radius: nextForm.radius,
       });
-      setTasks(result);
+      setTasks(result.filter(isVisibleVolunteerTask));
     } catch (err) {
       setError(volunteerService.getErrorMessage(err));
     } finally {

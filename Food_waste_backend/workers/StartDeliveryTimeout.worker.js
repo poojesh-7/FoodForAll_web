@@ -6,6 +6,7 @@ const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
 const {
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 
@@ -144,6 +145,7 @@ new Worker(
       await Promise.all([
         publishReservationUpdated(reservationId, { action: "expired" }),
         publishVolunteerUpdated(reservationId, { action: "delivery_timeout" }),
+        publishTaskAvailabilityUpdated(reservationId, { action: "unavailable" }),
       ]);
 
       /*

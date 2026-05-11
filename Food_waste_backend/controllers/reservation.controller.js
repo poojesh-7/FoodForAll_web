@@ -251,7 +251,10 @@ exports.getReservationById = async (req, res) => {
     return res.status(403).json({ error: "Unauthorized" });
   }
 
-  if (isProvider || isVolunteer) {
+  if (isProvider) {
+    delete reservation.pickup_code;
+    delete reservation.receive_code;
+  } else if (isVolunteer) {
     delete reservation.receive_code;
   }
 
@@ -316,7 +319,6 @@ exports.getProviderReservations = async (req, res) => {
              r.pickup_type,
              r.task_status,
              r.status,
-             r.pickup_code,
              r.payment_status,
              r.reserved_at,
              r.assigned_at,

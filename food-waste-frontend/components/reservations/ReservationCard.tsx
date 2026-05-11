@@ -94,7 +94,7 @@ export default function ReservationCard({
         <p>Assigned: {formatFoodDate(reservation.assigned_at)}</p>
         <p>Picked up: {formatFoodDate(reservation.picked_up_at)}</p>
         <p>Completed: {formatFoodDate(reservation.completed_at)}</p>
-        <p>Pickup code: {displayValue(reservation.pickup_code)}</p>
+        {!providerView && <p>Pickup code: {displayValue(reservation.pickup_code)}</p>}
       </div>
 
       <div className="grid gap-3 text-sm sm:grid-cols-2">

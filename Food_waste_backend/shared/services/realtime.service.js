@@ -35,7 +35,11 @@ function sanitizeReservationForUser(reservation, userId) {
     reservation.assigned_volunteer_id !== null &&
     String(reservation.assigned_volunteer_id) === String(userId);
 
-  if (isProvider || isVolunteer) {
+  if (isProvider) {
+    return withoutKeys(baseReservation, ["pickup_code", "receive_code"]);
+  }
+
+  if (isVolunteer) {
     return withoutKeys(baseReservation, ["receive_code"]);
   }
 

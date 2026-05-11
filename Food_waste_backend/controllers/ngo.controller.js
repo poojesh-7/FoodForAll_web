@@ -513,6 +513,9 @@ exports.getMyReservations = async (req, res) => {
         u.id AS provider_id,
         u.name AS provider_name,
         u.phone AS provider_phone,
+        u.address AS provider_address,
+        f.latitude AS provider_latitude,
+        f.longitude AS provider_longitude,
 
         rating.id AS review_id,
         rating.rating AS review_rating,

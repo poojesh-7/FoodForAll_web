@@ -627,6 +627,28 @@ exports.startTask = async (req, res) => {
       publishTaskAvailabilityUpdated(updatedReservation.id, {
         action: "task_claimed",
       }),
+      updatedReservation.pickup_type === "ngo"
+        ? notificationQueue
+            .add("notify-user", {
+              userId: updatedReservation.user_id,
+              type: "volunteer_started",
+              title: "Volunteer Started Pickup",
+              message: "Volunteer has started the pickup task.",
+              data: {
+                reservation_id: updatedReservation.id,
+                listing_id: updatedReservation.listing_id,
+                volunteer_id: volunteerId,
+              },
+            })
+            .catch((err) => {
+              logger.warn("NGO volunteer start notification failed", {
+                err,
+                reservationId: updatedReservation.id,
+                ngoUserId: updatedReservation.user_id,
+                volunteerId,
+              });
+            })
+        : Promise.resolve(),
     ]);
 
     delete updatedReservation.receive_code;
@@ -876,6 +898,28 @@ exports.completeTask = async (req, res) => {
       publishReservationUpdated(reservation.id, { action: "delivered" }),
       publishVolunteerUpdated(reservation.id, { action: "delivery_completed" }),
       publishTaskAvailabilityUpdated(reservation.id, { action: "unavailable" }),
+      reservation.pickup_type === "ngo"
+        ? notificationQueue
+            .add("notify-user", {
+              userId: reservation.user_id,
+              type: "delivery_completed",
+              title: "Delivery Completed",
+              message: "Food has been delivered successfully.",
+              data: {
+                reservation_id: reservation.id,
+                listing_id: reservation.listing_id,
+                volunteer_id: volunteerId,
+              },
+            })
+            .catch((err) => {
+              logger.warn("NGO delivery completion notification failed", {
+                err,
+                reservationId: reservation.id,
+                ngoUserId: reservation.user_id,
+                volunteerId,
+              });
+            })
+        : Promise.resolve(),
     ]);
 
     res.json({

@@ -900,6 +900,27 @@ exports.markAsPickedUp = async (req, res) => {
         action: isNGOPickup ? "pickup_confirmed" : "unavailable",
         reservation: updatedReservation,
       }),
+      isNGOPickup
+        ? notificationQueue
+            .add("notify-user", {
+              userId: updatedReservation.user_id,
+              type: "pickup_completed",
+              title: "Food Picked Up",
+              message: "Volunteer picked up food from provider.",
+              data: {
+                reservation_id: updatedReservation.id,
+                listing_id: updatedReservation.listing_id,
+                volunteer_id: updatedReservation.assigned_volunteer_id,
+              },
+            })
+            .catch((err) => {
+              logger.warn("NGO pickup completion notification failed", {
+                err,
+                reservationId: updatedReservation.id,
+                ngoUserId: updatedReservation.user_id,
+              });
+            })
+        : Promise.resolve(),
     ]);
 
     if (isNGOPickup) {

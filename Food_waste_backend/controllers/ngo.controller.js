@@ -346,6 +346,7 @@ exports.bulkReserve = async (req, res) => {
     await client.query("BEGIN");
 
     const created = [];
+    const providerNotifications = [];
     for (const item of reservations) {
       const quantity = toNumber(item.quantity);
       const foodResult = await client.query(
@@ -397,6 +398,11 @@ exports.bulkReserve = async (req, res) => {
 
       const r = reservation.rows[0];
       created.push(r);
+      providerNotifications.push({
+        providerId: food.provider_id,
+        reservationId: r.id,
+        listingId: r.listing_id,
+      });
 
       const stockUpdate = await client.query(
         `
@@ -427,6 +433,26 @@ exports.bulkReserve = async (req, res) => {
       ),
       ...uniqueListingIds(created).map((listingId) =>
         publishListingUpdated(listingId, { action: "quantity_updated" })
+      ),
+      ...providerNotifications.map((notification) =>
+        notificationQueue
+          .add("notify-user", {
+            userId: notification.providerId,
+            type: "reservation_created",
+            title: "New NGO Reservation",
+            message: "An NGO reserved food for pickup.",
+            data: {
+              reservation_id: notification.reservationId,
+              listing_id: notification.listingId,
+            },
+          })
+          .catch((err) => {
+            logger.warn("Provider NGO reservation notification failed", {
+              err,
+              reservationId: notification.reservationId,
+              providerId: notification.providerId,
+            });
+          })
       ),
     ]);
 

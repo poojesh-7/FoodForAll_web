@@ -194,6 +194,24 @@ exports.createReservation = async (req, res) => {
       publishReservationUpdated(reservation.id, { action: "created" }),
       publishPaymentUpdated(reservation.id, { action: "created" }),
       publishListingUpdated(listing_id, { action: "quantity_updated" }),
+      notificationQueue
+        .add("notify-user", {
+          userId: food.provider_id,
+          type: "reservation_created",
+          title: "New Reservation",
+          message: "A new reservation has been placed.",
+          data: {
+            reservation_id: reservation.id,
+            listing_id,
+          },
+        })
+        .catch((err) => {
+          logger.warn("Provider reservation notification failed", {
+            err,
+            reservationId: reservation.id,
+            providerId: food.provider_id,
+          });
+        }),
     ]);
 
     res.status(201).json({

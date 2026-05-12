@@ -9,9 +9,15 @@ import {
   type ReactNode,
 } from "react";
 import type { Socket } from "socket.io-client";
+import toast from "react-hot-toast";
 import { socket } from "@/lib/socket";
 import { useAuthStore } from "@/store/authStore";
+import {
+  subscribeNotificationSync,
+  useNotificationStore,
+} from "@/store/notificationStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
+import type { NotificationRow } from "@backend/contracts/api-contracts";
 
 type SocketContextValue = {
   socket: Socket;
@@ -38,12 +44,23 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     const applyPayment = useRealtimeStore.getState().applyPayment;
     const applyVolunteer = useRealtimeStore.getState().applyVolunteer;
     const applyListing = useRealtimeStore.getState().applyListing;
+    const receiveNotification =
+      useNotificationStore.getState().receiveNotification;
+    const handleNotification = (notification: NotificationRow) => {
+      receiveNotification(notification);
+      toast(
+        notification.message
+          ? `${notification.title || "New notification"}: ${notification.message}`
+          : notification.title || "New notification"
+      );
+    };
 
     socket.on("reservation_updated", applyReservation);
     socket.on("task_claimed", applyReservation);
     socket.on("payment_updated", applyPayment);
     socket.on("volunteer_updated", applyVolunteer);
     socket.on("listing_updated", applyListing);
+    socket.on("notification", handleNotification);
 
     return () => {
       socket.off("reservation_updated", applyReservation);
@@ -51,8 +68,11 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
       socket.off("payment_updated", applyPayment);
       socket.off("volunteer_updated", applyVolunteer);
       socket.off("listing_updated", applyListing);
+      socket.off("notification", handleNotification);
     };
   }, []);
+
+  useEffect(() => subscribeNotificationSync(), []);
 
   useEffect(() => {
     const handleConnect = () => {
@@ -76,6 +96,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated || !user?.id) {
       if (socket.connected) socket.disconnect();
       useRealtimeStore.getState().resetRealtime();
+      useNotificationStore.getState().resetNotifications();
       return;
     }
 

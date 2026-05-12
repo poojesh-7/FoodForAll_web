@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { socket } from "@/lib/socket";
 import LogoutButton from "@/components/LogoutButton";
 import ImpactMetricGrid from "@/components/analytics/ImpactMetricGrid";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
@@ -31,18 +30,6 @@ export default function DashboardPage() {
       router.replace(dashboard);
     }
   }, [router, user?.role]);
-
-  useEffect(() => {
-    socket.connect();
-
-    socket.on("food:new", (data) => {
-      console.log("New food:", data);
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;

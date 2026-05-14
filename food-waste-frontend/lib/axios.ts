@@ -15,6 +15,11 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
 };
 
 let refreshPromise: Promise<unknown> | null = null;
+let refreshTokenFailed = false;
+
+export function resetAuthRefreshFailure() {
+  refreshTokenFailed = false;
+}
 
 function getApiBaseUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
@@ -47,6 +52,8 @@ function getPathname(url?: string) {
 }
 
 function shouldSkipRefresh(url?: string) {
+  if (refreshTokenFailed) return true;
+
   const pathname = getPathname(url);
   return PUBLIC_AUTH_PATHS.some((path) => pathname.endsWith(path));
 }
@@ -86,8 +93,10 @@ api.interceptors.response.use(
 
     try {
       await refreshAccessToken();
+      resetAuthRefreshFailure();
       return api(originalRequest);
     } catch (refreshError) {
+      refreshTokenFailed = true;
       return Promise.reject(refreshError);
     }
   }

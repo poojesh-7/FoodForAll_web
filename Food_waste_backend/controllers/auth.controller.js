@@ -6,6 +6,11 @@ const {
   generateRefreshToken,
 } = require("../utils/token");
 const logger = require("../shared/utils/logger");
+const {
+  ensureEmailAvailable,
+  getIdentityConflictMessage,
+  isIdentityUniqueViolation,
+} = require("../utils/identity");
 const { getPhoneLookupValues, normalizePhoneNumber } = require("../utils/phone");
 const {
   checkVerification,
@@ -17,6 +22,7 @@ const {
   isValidEmail,
   isValidLatitude,
   isValidLongitude,
+  normalizeEmail,
   toNumber,
 } = require("../utils/validation");
 
@@ -480,8 +486,14 @@ exports.completeProfile = async (req, res) => {
       });
     }
 
-    const normalizedEmail =
-      String(email).toLowerCase().trim();
+    const normalizedEmail = normalizeEmail(email);
+
+    const existingPhoneUser = await findUserByPhone(normalizedPhone);
+    await ensureEmailAvailable(
+      pool,
+      normalizedEmail,
+      existingPhoneUser?.id ?? null
+    );
 
     const normalizedName =
       String(name).trim();
@@ -514,8 +526,6 @@ exports.completeProfile = async (req, res) => {
     const latitudeValue = hasLatitude ? toNumber(latitude) : null;
     const longitudeValue = hasLongitude ? toNumber(longitude) : null;
     const hasLocation = hasLatitude && hasLongitude;
-
-    await findUserByPhone(normalizedPhone);
 
     const result = await pool.query(
       `
@@ -606,9 +616,15 @@ exports.completeProfile = async (req, res) => {
   } catch (err) {
     logger.error("Profile completion failed", { err });
 
-    if (err.code === "23505") {
+    if (err.statusCode === 409) {
       return res.status(409).json({
-        error: "User already exists",
+        error: err.message,
+      });
+    }
+
+    if (isIdentityUniqueViolation(err)) {
+      return res.status(409).json({
+        error: getIdentityConflictMessage(err),
       });
     }
 

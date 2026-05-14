@@ -1,4 +1,11 @@
 const pool = require("../shared/config/db");
+const logger = require("../shared/utils/logger");
+const {
+  ensureEmailAvailable,
+  getIdentityConflictMessage,
+  isIdentityUniqueViolation,
+  normalizeEmail,
+} = require("../utils/identity");
 const { isProvided, isValidEmail, isValidId } = require("../utils/validation");
 
 // GET USER
@@ -37,15 +44,35 @@ exports.updateUser = async (req, res) => {
     return res.status(400).json({ error: "Invalid email" });
   }
 
-  const result = await pool.query(
-    `UPDATE users
-     SET name=$1, email=$2, profile_image=$3
-     WHERE id=$4
-     RETURNING id, name, email, role, profile_image`,
-    [name, email, profile_image, id],
-  );
+  const normalizedEmail = normalizeEmail(email);
 
-  res.json(result.rows[0]);
+  try {
+    await ensureEmailAvailable(pool, normalizedEmail, id);
+
+    const result = await pool.query(
+      `UPDATE users
+       SET name=$1, email=$2, profile_image=$3
+       WHERE id=$4
+       RETURNING id, name, email, role, profile_image`,
+      [name, normalizedEmail, profile_image, id],
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    logger.error("User update failed", { err, userId: req.user?.id });
+
+    if (err.statusCode === 409) {
+      return res.status(409).json({ error: err.message });
+    }
+
+    if (isIdentityUniqueViolation(err)) {
+      return res.status(409).json({
+        error: getIdentityConflictMessage(err),
+      });
+    }
+
+    res.status(500).json({ error: "User update failed" });
+  }
 };
 
 // USER HISTORY

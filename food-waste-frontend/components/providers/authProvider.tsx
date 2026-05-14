@@ -42,7 +42,7 @@ export default function AuthProvider({
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const initialized = useAuthStore((state) => state.initialized);
   const loading = useAuthStore((state) => state.loading);
-  const fetchMe = useAuthStore((state) => state.fetchMe);
+  const bootstrapAuth = useAuthStore((state) => state.bootstrapAuth);
   const clearMessages = useAuthStore((state) => state.clearMessages);
 
   const authResolved = initialized && !isInitializing;
@@ -58,10 +58,11 @@ export default function AuthProvider({
   }, [clearMessages, pathname]);
 
   useEffect(() => {
+    if (!isProtectedRoute) return;
     if (initialized || isInitializing) return;
 
-    void fetchMe();
-  }, [fetchMe, initialized, isInitializing]);
+    void bootstrapAuth();
+  }, [bootstrapAuth, initialized, isInitializing, isProtectedRoute]);
 
   useEffect(() => {
     if (!isProtectedRoute || !authResolved) return;
@@ -89,7 +90,7 @@ export default function AuthProvider({
     }
   }, [guestRedirect, isGuestOnlyRoute, router]);
 
-  if (isGuestOnlyRoute && (!authResolved || guestRedirect)) {
+  if (isGuestOnlyRoute && (isInitializing || guestRedirect)) {
     return <FullscreenLoading />;
   }
 

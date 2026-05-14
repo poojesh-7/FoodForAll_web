@@ -1,4 +1,5 @@
 const validator = require("validator");
+const { normalizeEmail } = require("./identity");
 const { normalizePhoneNumber } = require("./phone");
 
 const isProvided = (value) =>
@@ -8,7 +9,7 @@ const isValidId = (value) =>
   isProvided(value) && validator.isUUID(String(value).trim());
 
 const isValidEmail = (value) =>
-  isProvided(value) && validator.isEmail(String(value).trim());
+  isProvided(value) && validator.isEmail(normalizeEmail(value) || "");
 
 const isValidPhone = (value) =>
   Boolean(normalizePhoneNumber(value));
@@ -55,5 +56,6 @@ module.exports = {
   isValidLatitude,
   isValidLongitude,
   parseBoolean,
+  normalizeEmail,
   toNumber,
 };

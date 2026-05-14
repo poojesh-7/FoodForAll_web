@@ -18,6 +18,9 @@ const {
 } = require("../../middlewares/error.middleware");
 const { isValidId } = require("../../utils/validation");
 const logger = require("../../shared/utils/logger");
+const {
+  ensureUserIdentityConstraints,
+} = require("../../shared/services/userIdentityConstraints.service");
 
 const app = express();
 const server = http.createServer(app);
@@ -210,6 +213,15 @@ process.on("unhandledRejection", (reason) => {
   });
 });
 
-server.listen(PORT, () => {
-  logger.info("API server running", { port: PORT });
+async function startServer() {
+  await ensureUserIdentityConstraints();
+
+  server.listen(PORT, () => {
+    logger.info("API server running", { port: PORT });
+  });
+}
+
+startServer().catch((err) => {
+  logger.error("API server failed to start", { err });
+  process.exit(1);
 });

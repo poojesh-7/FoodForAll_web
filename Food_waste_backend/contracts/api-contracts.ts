@@ -447,6 +447,7 @@ export type SendOTPResponse = ApiResponse<EmptyData>;
 
 export interface VerifyOTPRequest {
   phone: string;
+  otp: string;
 }
 export interface VerifyOTPData {
   user: AuthUser;

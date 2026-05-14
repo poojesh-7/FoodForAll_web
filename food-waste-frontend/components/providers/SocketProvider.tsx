@@ -37,6 +37,9 @@ export function useSocket() {
 export default function SocketProvider({ children }: { children: ReactNode }) {
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const initialized = useAuthStore((state) => state.initialized);
+  const isInitializing = useAuthStore((state) => state.isInitializing);
+  const isOnboarded = useAuthStore((state) => state.isOnboarded);
   const [connected, setConnected] = useState(socket.connected);
 
   useEffect(() => {
@@ -93,7 +96,13 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id) {
+    if (
+      !initialized ||
+      isInitializing ||
+      !isAuthenticated ||
+      !isOnboarded ||
+      !user?.id
+    ) {
       if (socket.connected) socket.disconnect();
       useRealtimeStore.getState().resetRealtime();
       useNotificationStore.getState().resetNotifications();
@@ -107,7 +116,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     } else {
       socket.emit("join", user.id);
     }
-  }, [isAuthenticated, user?.id]);
+  }, [initialized, isAuthenticated, isInitializing, isOnboarded, user?.id]);
 
   const value = useMemo(() => ({ socket, connected }), [connected]);
 

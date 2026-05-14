@@ -11,14 +11,26 @@ type LoginFormValues = {
   otp: string;
 };
 
-const phonePattern = /^\d{10}$/;
+const phonePattern = /^(?:[6-9]\d{9}|\+[1-9]\d{7,14}|91[6-9]\d{9})$/;
 const otpPattern = /^\d{4,6}$/;
+const resendCooldownSeconds = 30;
+
+function sanitizePhoneInput(value: string) {
+  const compact = value.replace(/[^\d+]/g, "");
+  const withoutExtraPlus = compact.startsWith("+")
+    ? `+${compact.slice(1).replace(/\+/g, "")}`
+    : compact.replace(/\+/g, "");
+
+  return withoutExtraPlus.startsWith("+")
+    ? withoutExtraPlus.slice(0, 16)
+    : withoutExtraPlus.slice(0, 15);
+}
 
 function getSafeNextPath() {
   if (typeof window === "undefined") return null;
 
   const nextPath = new URLSearchParams(window.location.search).get("next");
-  return nextPath?.startsWith("/") ? nextPath : null;
+  return nextPath?.startsWith("/") && !nextPath.startsWith("//") ? nextPath : null;
 }
 
 export default function LoginPage() {
@@ -27,6 +39,9 @@ export default function LoginPage() {
   const [redirecting, setRedirecting] = useState(false);
   const [phoneValue, setPhoneValue] = useState("");
   const [otpValue, setOtpValue] = useState("");
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
@@ -64,19 +79,30 @@ export default function LoginPage() {
     );
   }, [router, user]);
 
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      setResendSeconds((seconds) => Math.max(seconds - 1, 0));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [resendSeconds]);
+
   const phoneInput = register("phone", {
     required: "Phone number is required.",
     pattern: {
       value: phonePattern,
-      message: "Enter a valid 10-digit phone number.",
+      message: "Enter a valid Indian or E.164 phone number.",
     },
     onChange: (event) => {
-      const value = event.target.value.replace(/\D/g, "").slice(0, 10);
+      const value = sanitizePhoneInput(event.target.value);
       setValue("phone", value, { shouldDirty: true, shouldValidate: true });
       setValue("otp", "", { shouldDirty: true, shouldValidate: false });
       setPhoneValue(value);
       setOtpValue("");
       setOtpSent(false);
+      setResendSeconds(0);
       clearMessages();
     },
   });
@@ -96,15 +122,21 @@ export default function LoginPage() {
   });
 
   const handleSendOtp = async () => {
+    if (resendSeconds > 0) return;
+
     clearMessages();
     const isValid = await trigger("phone");
 
     if (!isValid) return;
 
-    const sent = await sendOtp(getValues("phone"));
+    setSendingOtp(true);
+    const sent = await sendOtp(getValues("phone")).finally(() => {
+      setSendingOtp(false);
+    });
 
     if (sent) {
       setOtpSent(true);
+      setResendSeconds(resendCooldownSeconds);
       setValue("otp", "", { shouldDirty: false, shouldValidate: false });
       setOtpValue("");
     }
@@ -112,19 +144,32 @@ export default function LoginPage() {
 
   const handleVerifyOtp = async (values: LoginFormValues) => {
     clearMessages();
-    const result = await verifyOtp(values);
+    setVerifyingOtp(true);
+    const result = await verifyOtp(values).finally(() => {
+      setVerifyingOtp(false);
+    });
 
     if (!result) return;
 
     setRedirecting(true);
 
     const redirectPath = getPostAuthRedirect(result.user);
-    router.push(
+    router.replace(
       redirectPath === "/dashboard" ? getSafeNextPath() ?? redirectPath : redirectPath
     );
   };
 
   const busy = loading || redirecting;
+  const sendDisabled =
+    busy || sendingOtp || resendSeconds > 0 || !phonePattern.test(phoneValue);
+  const verifyDisabled = busy || verifyingOtp || !otpPattern.test(otpValue);
+  const sendButtonText = sendingOtp
+    ? "Sending..."
+    : otpSent
+      ? resendSeconds > 0
+        ? `Resend OTP in ${resendSeconds}s`
+        : "Resend OTP"
+      : "Send OTP";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
@@ -166,10 +211,10 @@ export default function LoginPage() {
             {...phoneInput}
             id="phone"
             type="tel"
-            inputMode="numeric"
+            inputMode="tel"
             autoComplete="tel"
-            maxLength={10}
-            placeholder="9999999999"
+            maxLength={16}
+            placeholder="9999999999 or +919999999999"
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
             disabled={busy}
           />
@@ -181,10 +226,10 @@ export default function LoginPage() {
         <button
           type="button"
           onClick={handleSendOtp}
-          disabled={busy || !phonePattern.test(phoneValue)}
+          disabled={sendDisabled}
           className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading && !otpSent ? "Sending..." : "Send OTP"}
+          {sendButtonText}
         </button>
 
         {otpSent && (
@@ -214,10 +259,10 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={busy || !otpPattern.test(otpValue)}
+              disabled={verifyDisabled}
               className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {busy ? "Verifying..." : "Verify OTP"}
+              {verifyingOtp || redirecting ? "Verifying..." : "Verify OTP"}
             </button>
           </div>
         )}

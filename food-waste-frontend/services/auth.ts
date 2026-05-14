@@ -25,9 +25,7 @@ type BackendErrorResponse = ApiErrorResponse | { error?: string; message?: strin
 export type SendOtpPayload = SendOTPRequest;
 export type SendOtpResult = SendOTPResponse;
 
-export type VerifyOtpPayload = VerifyOTPRequest & {
-  otp: string;
-};
+export type VerifyOtpPayload = VerifyOTPRequest;
 export type VerifyOtpResult = VerifyOTPResponse["data"] & {
   message?: string;
 };

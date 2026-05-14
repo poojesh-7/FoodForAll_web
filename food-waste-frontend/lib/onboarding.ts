@@ -75,6 +75,11 @@ export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {
   return getRoleDashboard(user.role);
 }
 
+export function isUserOnboarded(user: OnboardingUser | null | undefined) {
+  if (!user?.role) return false;
+  return getPostAuthRedirect(user) === getRoleDashboard(user.role);
+}
+
 export function getRegistrationRedirect(
   role: VerificationRole,
   isVerified: boolean | null | undefined

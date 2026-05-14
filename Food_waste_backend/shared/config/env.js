@@ -1,6 +1,13 @@
 const logger = require("../utils/logger");
 
-const REQUIRED_ENV = ["DATABASE_URL", "REDIS_URL", "JWT_SECRET"];
+const REQUIRED_ENV = [
+  "DATABASE_URL",
+  "REDIS_URL",
+  "JWT_SECRET",
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_AUTH_TOKEN",
+  "TWILIO_VERIFY_SERVICE_SID",
+];
 const PRODUCTION_REQUIRED_ENV = [
   "FRONTEND_URL",
   "CASHFREE_APP_ID",
@@ -31,6 +38,16 @@ function validateEnvironment() {
 
   if (missing.length) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+  }
+
+  if (!process.env.TWILIO_ACCOUNT_SID.startsWith("AC")) {
+    throw new Error("TWILIO_ACCOUNT_SID must be a valid Twilio Account SID");
+  }
+
+  if (!process.env.TWILIO_VERIFY_SERVICE_SID.startsWith("VA")) {
+    throw new Error(
+      "TWILIO_VERIFY_SERVICE_SID must be a valid Twilio Verify Service SID"
+    );
   }
 
   if (process.env.NODE_ENV === "production") {

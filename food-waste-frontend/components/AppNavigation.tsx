@@ -37,10 +37,21 @@ export default function AppNavigation() {
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const initialized = useAuthStore((state) => state.initialized);
+  const isInitializing = useAuthStore((state) => state.isInitializing);
+  const isOnboarded = useAuthStore((state) => state.isOnboarded);
   const logout = useAuthStore((state) => state.logout);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  if (!isAuthenticated || !user) return null;
+  if (
+    !initialized ||
+    isInitializing ||
+    !isAuthenticated ||
+    !isOnboarded ||
+    !user
+  ) {
+    return null;
+  }
 
   const dashboardHref = getRoleDashboard(user.role);
   const currentRole = user.role;

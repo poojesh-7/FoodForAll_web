@@ -1,27 +1,24 @@
 const pool = require("../shared/config/db");
 const redis = require("../shared/config/redis");
 const crypto = require("crypto");
-const { v4: uuidv4 } = require("uuid");
-const axios = require("axios");
-const twilio = require("twilio");
 const {
   generateAccessToken,
   generateRefreshToken,
 } = require("../utils/token");
 const logger = require("../shared/utils/logger");
+const { getPhoneLookupValues, normalizePhoneNumber } = require("../utils/phone");
+const {
+  checkVerification,
+  getSafeTwilioError,
+  sendVerification,
+} = require("../shared/services/twilioVerify.service");
 const {
   isProvided,
   isValidEmail,
-  isValidPhone,
   isValidLatitude,
   isValidLongitude,
   toNumber,
 } = require("../utils/validation");
-
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -110,177 +107,147 @@ function getRefreshExpiry() {
   return expiry;
 }
 
+function jsonError(res, status, message) {
+  return res.status(status).json({
+    success: false,
+    message,
+    error: message,
+    data: null,
+  });
+}
+
+function isValidOtpCode(value) {
+  return /^\d{4,10}$/.test(String(value || "").trim());
+}
+
+async function findUserByPhone(normalizedPhone) {
+  const lookupValues = getPhoneLookupValues(normalizedPhone);
+
+  const result = await pool.query(
+    `
+    SELECT id, role, phone
+    FROM users
+    WHERE phone = ANY($1::text[])
+    ORDER BY CASE WHEN phone=$2 THEN 0 ELSE 1 END
+    LIMIT 1
+    `,
+    [lookupValues, normalizedPhone]
+  );
+
+  if (!result.rows.length) return null;
+
+  const user = result.rows[0];
+
+  if (user.phone !== normalizedPhone) {
+    try {
+      const updateResult = await pool.query(
+        `
+        UPDATE users
+        SET phone=$1
+        WHERE id=$2
+          AND NOT EXISTS (
+            SELECT 1 FROM users WHERE phone=$1 AND id<>$2
+          )
+        RETURNING id, role, phone
+        `,
+        [normalizedPhone, user.id]
+      );
+
+      return updateResult.rows[0] || user;
+    } catch (err) {
+      logger.warn("Unable to normalize existing user phone", {
+        err,
+        userId: user.id,
+      });
+    }
+  }
+
+  return user;
+}
+
+async function findOrCreateUserByPhone(normalizedPhone) {
+  const existingUser = await findUserByPhone(normalizedPhone);
+
+  if (existingUser) {
+    return {
+      isNewUser: false,
+      user: {
+        id: existingUser.id,
+        role: existingUser.role,
+      },
+    };
+  }
+
+  const newUser = await pool.query(
+    `
+    INSERT INTO users (phone, role)
+    VALUES ($1, $2)
+    ON CONFLICT (phone)
+    DO UPDATE SET phone=EXCLUDED.phone
+    RETURNING id, role
+    `,
+    [normalizedPhone, null]
+  );
+
+  return {
+    isNewUser: true,
+    user: newUser.rows[0],
+  };
+}
+
 // SEND OTP
 exports.sendOTP = async (req, res) => {
   try {
     const { phone } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phone);
 
-    if (!isValidPhone(phone)) {
-      return res.status(400).json({
-        error: "Valid phone number required",
-      });
+    if (!normalizedPhone) {
+      return jsonError(res, 400, "Valid phone number required");
     }
 
-    // await client.verify.v2
-    //   .services(process.env.TWILIO_VERIFY_SERVICE_SID)
-    //   .verifications.create({
-    //     to: `+91${phone}`,
-    //     channel: "sms",
-    //   });
+    await sendVerification(normalizedPhone);
 
     res.json({
       success: true,
       message: "OTP sent successfully",
+      data: null,
     });
 
   } catch (err) {
-    logger.error("Failed to send OTP", { err });
-
-    res.status(500).json({
-      error: "Failed to send OTP",
+    const safeError = getSafeTwilioError(err, "Failed to send OTP");
+    logger.error("Failed to send OTP", {
+      err,
+      status: safeError.status,
+      twilioCode: err?.code,
     });
+
+    return jsonError(res, safeError.status, safeError.message);
   }
 };
 
-// // VERIFY OTP
-// exports.verifyOTP = async (req, res) => {
-//   try {
-//     const { phone, otp } = req.body;
-
-//     if (!phone || !otp) {
-//       return res.status(400).json({
-//         error: "Phone and OTP required",
-//       });
-//     }
-    
-//     // const verificationCheck =
-//     //   await client.verify.v2
-//     //     .services(
-//     //       process.env.TWILIO_VERIFY_SERVICE_SID
-//     //     )
-//     //     .verificationChecks.create({
-//     //       to: `+91${phone}`,
-//     //       code: otp,
-//     //     });
-    
-//     //     if (verificationCheck.status !== "approved") {
-//     //   return res.status(401).json({
-//     //     error: "Invalid OTP",
-//     //   });
-//     // }
-//     // console.log("OTP check result:", verificationCheck.status);
-
-//     // CHECK USER
-//     const result = await pool.query(
-//       `SELECT id, role FROM users WHERE phone=$1`,
-//       [phone]
-//     );
-
-//     // EXISTING USER
-//     if (result.rows.length) {
-//       const user = result.rows[0];
-
-//       const {
-//         generateAccessToken,
-//         generateRefreshToken,
-//       } = require("../utils/token");
-
-//       const accessToken =
-//         generateAccessToken(user);
-
-//       const refreshToken =
-//         generateRefreshToken();
-
-//         const expiry = new Date();
-//         expiry.setDate(expiry.getDate() + 7);
-        
-//         await pool.query(
-//           `
-//           UPDATE users
-//           SET refresh_token=$1,
-//             refresh_token_expiry=$2
-//         WHERE id=$3
-//         `,
-//         [refreshToken, expiry, user.id]
-//       );
-      
-//       res.cookie("accessToken", accessToken, {
-//         httpOnly: true,
-//         // secure: process.env.NODE_ENV === "production",
-//         secure: false,
-//         sameSite: "lax",
-//         maxAge: 15 * 60 * 1000, // 15 min
-//       });
-
-//       res.cookie("refreshToken", refreshToken, {
-//         httpOnly: true,
-//         // secure: process.env.NODE_ENV === "production",
-//         secure: false,
-//         sameSite: "lax",
-//         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-//       });
-      
-//       return res.json({
-//         user,
-//         isNewUser: false,
-//       });
-//     }
-    
-//     console.log(accessToken, refreshToken);
-//     // NEW USER
-//     return res.json({
-//       message:
-//         "New user, complete profile",
-//       isNewUser: true,
-//       phone,
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-
-//     res.status(500).json({
-//       error: "OTP verification failed",
-//     });
-//   }
-// };
-
 exports.verifyOTP = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, otp } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phone);
 
-    if (!isValidPhone(phone)) {
-      return res.status(400).json({
-        error: "Valid phone required",
-      });
+    if (!normalizedPhone) {
+      return jsonError(res, 400, "Valid phone required");
     }
 
-    const normalizedPhone = String(phone).trim();
+    if (!isValidOtpCode(otp)) {
+      return jsonError(res, 400, "Valid OTP required");
+    }
 
-    // 🔥 OTP disabled for dev
-
-    // CHECK USER
-    let result = await pool.query(
-      `SELECT id, role FROM users WHERE phone=$1`,
-      [normalizedPhone]
+    const verificationCheck = await checkVerification(
+      normalizedPhone,
+      String(otp).trim()
     );
 
-    let user;
-
-    // 🆕 CREATE USER IF NOT EXISTS
-    if (!result.rows.length) {
-      const newUser = await pool.query(
-        `
-        INSERT INTO users (phone, role)
-        VALUES ($1, $2)
-        RETURNING id, role
-        `,
-        [normalizedPhone, null] // or "user" default
-      );
-
-      user = newUser.rows[0];
-    } else {
-      user = result.rows[0];
+    if (verificationCheck.status !== "approved") {
+      return jsonError(res, 401, "Invalid or expired OTP");
     }
+
+    const { user, isNewUser } = await findOrCreateUserByPhone(normalizedPhone);
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -297,7 +264,6 @@ exports.verifyOTP = async (req, res) => {
       [refreshToken, expiry, user.id]
     );
 
-    // 🍪 SET COOKIES
     setAuthCookies(res, { accessToken, refreshToken });
 
     return res.json({
@@ -305,16 +271,19 @@ exports.verifyOTP = async (req, res) => {
       message: "OTP verified successfully",
       data: {
         user,
-        isNewUser: !result.rows.length,
+        isNewUser,
       },
     });
 
   } catch (err) {
-    logger.error("OTP verification failed", { err });
-
-    res.status(500).json({
-      error: "OTP verification failed",
+    const safeError = getSafeTwilioError(err, "OTP verification failed");
+    logger.error("OTP verification failed", {
+      err,
+      status: safeError.status,
+      twilioCode: err?.code,
     });
+
+    return jsonError(res, safeError.status, safeError.message);
   }
 };
 
@@ -488,7 +457,9 @@ exports.completeProfile = async (req, res) => {
       });
     }
 
-    if (!isValidPhone(phone)) {
+    const normalizedPhone = normalizePhoneNumber(phone);
+
+    if (!normalizedPhone) {
       return res.status(400).json({
         error: "Invalid phone",
       });
@@ -508,8 +479,6 @@ exports.completeProfile = async (req, res) => {
         error: "Invalid role",
       });
     }
-
-    const normalizedPhone = String(phone).trim();
 
     const normalizedEmail =
       String(email).toLowerCase().trim();
@@ -545,6 +514,8 @@ exports.completeProfile = async (req, res) => {
     const latitudeValue = hasLatitude ? toNumber(latitude) : null;
     const longitudeValue = hasLongitude ? toNumber(longitude) : null;
     const hasLocation = hasLatitude && hasLongitude;
+
+    await findUserByPhone(normalizedPhone);
 
     const result = await pool.query(
       `

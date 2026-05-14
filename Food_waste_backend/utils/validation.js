@@ -1,4 +1,5 @@
 const validator = require("validator");
+const { normalizePhoneNumber } = require("./phone");
 
 const isProvided = (value) =>
   value !== undefined && value !== null && String(value).trim() !== "";
@@ -10,7 +11,7 @@ const isValidEmail = (value) =>
   isProvided(value) && validator.isEmail(String(value).trim());
 
 const isValidPhone = (value) =>
-  isProvided(value) && validator.isMobilePhone(String(value).trim(), "any");
+  Boolean(normalizePhoneNumber(value));
 
 const toNumber = (value) => Number(value);
 

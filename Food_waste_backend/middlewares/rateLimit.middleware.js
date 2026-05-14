@@ -22,6 +22,16 @@ const authLimiter = createLimiter({
   limit: 20,
 });
 
+const otpSendLimiter = createLimiter({
+  windowMs: 10 * 60 * 1000,
+  limit: 5,
+});
+
+const otpVerifyLimiter = createLimiter({
+  windowMs: 10 * 60 * 1000,
+  limit: 8,
+});
+
 const reservationCreateLimiter = createLimiter({
   windowMs: 10 * 60 * 1000,
   limit: 12,
@@ -40,6 +50,8 @@ const adminActionLimiter = createLimiter({
 module.exports = {
   adminActionLimiter,
   authLimiter,
+  otpSendLimiter,
+  otpVerifyLimiter,
   registrationLimiter,
   reservationCreateLimiter,
 };

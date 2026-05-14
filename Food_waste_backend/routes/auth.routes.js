@@ -1,10 +1,14 @@
 const router = require("express").Router();
 const authCtrl = require("../controllers/auth.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
-const { authLimiter } = require("../middlewares/rateLimit.middleware");
+const {
+  authLimiter,
+  otpSendLimiter,
+  otpVerifyLimiter,
+} = require("../middlewares/rateLimit.middleware");
 
-router.post("/send-otp", authLimiter, authCtrl.sendOTP);
-router.post("/verify-otp", authLimiter, authCtrl.verifyOTP);
+router.post("/send-otp", otpSendLimiter, authCtrl.sendOTP);
+router.post("/verify-otp", otpVerifyLimiter, authCtrl.verifyOTP);
 
 router.post("/set-role", authLimiter, authMiddleware, authCtrl.setRole);
 router.post("/refresh-token", authLimiter, authCtrl.refreshToken);

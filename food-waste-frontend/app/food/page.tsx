@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import FoodCard from "@/components/FoodCard";
+import { isNormalUserPaidListing } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -21,7 +22,7 @@ export default function FoodMarketplacePage() {
     foodService
       .getActiveFood()
       .then((result) => {
-        if (active) setListings(result);
+        if (active) setListings(result.filter(isNormalUserPaidListing));
       })
       .catch((err) => {
         if (active) setError(foodService.getErrorMessage(err));
@@ -41,7 +42,7 @@ export default function FoodMarketplacePage() {
       setListings((current) =>
         mergeListingRows<FoodListingRow>(current, listingsById).filter(
           (listing) =>
-            listing.status === "active" &&
+            isNormalUserPaidListing(listing) &&
             Number(listing.remaining_quantity ?? 0) > 0
         )
       )
@@ -55,7 +56,7 @@ export default function FoodMarketplacePage() {
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">Food Marketplace</h1>
             <p className="text-sm text-zinc-600">
-              Browse active food listings available for pickup.
+              Browse paid pickup reservations from nearby restaurants.
             </p>
           </div>
           <Link
@@ -78,10 +79,10 @@ export default function FoodMarketplacePage() {
           </div>
         ) : listings.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
-            No active food listings found.
+            No paid food reservations are available right now.
           </div>
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             {listings.map((listing) => (
               <FoodCard key={String(listing.id)} listing={listing} />
             ))}

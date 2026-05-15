@@ -78,6 +78,10 @@ export function formatFoodDate(value?: string | number | null) {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 }
 
+export function isNormalUserPaidListing(listing: FoodCardListing) {
+  return listing.status === "active" && listing.is_free === false;
+}
+
 export function getListingId(listing: FoodCardListing) {
   return listing.id;
 }

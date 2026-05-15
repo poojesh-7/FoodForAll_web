@@ -156,6 +156,8 @@ export interface FoodListingRow extends DbRow {
   latitude?: number | string;
   longitude?: number | string;
   status?: string;
+  provider_name?: string | null;
+  restaurant_name?: string | null;
 }
 
 export interface FoodListingWithDistance extends FoodListingRow {
@@ -170,7 +172,9 @@ export interface NearbyFoodListing {
   pickup_end_time?: ISODateString | null;
   status?: string;
   is_free?: boolean;
+  price?: number | string | null;
   provider_name?: string | null;
+  restaurant_name?: string | null;
 }
 
 export interface FoodNGOOption {

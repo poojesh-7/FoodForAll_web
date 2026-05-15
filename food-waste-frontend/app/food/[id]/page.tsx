@@ -1,8 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  Clock3,
+  CreditCard,
+  Leaf,
+  Minus,
+  Package,
+  Plus,
+  ShieldCheck,
+  Store,
+  Utensils,
+} from "lucide-react";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import ReviewList from "@/components/ratings/ReviewList";
 import { openCashfreeCheckout } from "@/lib/cashfree";
@@ -34,6 +47,33 @@ function delay(ms: number) {
 function getRemainingQuantity(listing: FoodListingRow) {
   const remaining = Number(listing.remaining_quantity ?? listing.quantity ?? 0);
   return Number.isFinite(remaining) ? remaining : 0;
+}
+
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
+}
+
+function getProviderDisplayName(listing: FoodListingRow) {
+  return (
+    displayValue(listing.restaurant_name) !== "-"
+      ? displayValue(listing.restaurant_name)
+      : displayValue(listing.provider_name)
+  );
+}
+
+function getStatusClasses(status?: string) {
+  if (status === "active") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "expired" || status === "inactive") {
+    return "border-zinc-200 bg-zinc-100 text-zinc-600";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-800";
+}
+
+function isPickupUrgent(value?: string | number | null) {
+  if (!value) return false;
+  const pickupEnd = new Date(value).getTime();
+  return Number.isFinite(pickupEnd) && pickupEnd - Date.now() <= 60 * 60 * 1000;
 }
 
 function getCheckoutRedirect(
@@ -209,14 +249,23 @@ export default function FoodDetailPage() {
   const remainingQuantity = listing ? getRemainingQuantity(listing) : 0;
   const maxReservableQuantity = Math.min(remainingQuantity, 2);
   const canReserve = Boolean(listing?.id && !listing.is_free && remainingQuantity > 0);
+  const providerName = listing ? getProviderDisplayName(listing) : "-";
+  const pickupUrgent = listing ? isPickupUrgent(listing.pickup_end_time) : false;
+  const quantityValue = Number(quantity);
+
+  const setQuantityWithinLimit = (nextValue: number) => {
+    const bounded = Math.max(1, Math.min(maxReservableQuantity || 1, nextValue));
+    setQuantity(String(bounded));
+  };
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="mx-auto max-w-5xl space-y-5">
         <Link
           href="/food"
-          className="inline-flex rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+          className="inline-flex min-h-10 items-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-950"
         >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to Food
         </Link>
 
@@ -231,98 +280,187 @@ export default function FoodDetailPage() {
             Loading...
           </div>
         ) : listing ? (
-          <div className="space-y-4">
-            <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h1 className="text-2xl font-semibold text-zinc-950">
-                    {String(listing.title ?? "Untitled food")}
-                  </h1>
-                  {listing.description && (
-                    <p className="mt-2 text-sm text-zinc-600">
-                      {String(listing.description)}
+          <div className="space-y-5">
+            <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="space-y-5 p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-md border px-2 py-1 text-xs font-semibold capitalize ${getStatusClasses(
+                          listing.status
+                        )}`}
+                      >
+                        {String(listing.status ?? "active").replace(/_/g, " ")}
+                      </span>
+                      {pickupUrgent && (
+                        <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                          Pickup soon
+                        </span>
+                      )}
+                    </div>
+                    <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-950">
+                      {String(listing.title ?? "Untitled food")}
+                    </h1>
+                    {listing.description && (
+                      <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">
+                        {String(listing.description)}
+                      </p>
+                    )}
+                  </div>
+                  <span className="shrink-0 rounded-md border border-zinc-200 bg-zinc-950 px-3 py-2 text-base font-semibold text-white">
+                    {getListingPrice(listing)}
+                  </span>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  <DetailPill
+                    icon={<Package className="h-4 w-4" aria-hidden="true" />}
+                    label="Available"
+                    value={`${remainingQuantity} of ${displayValue(listing.quantity)}`}
+                  />
+                  <DetailPill
+                    icon={<Clock3 className="h-4 w-4" aria-hidden="true" />}
+                    label="Pickup Window"
+                    value={
+                      <>
+                        <span>{formatFoodDate(listing.pickup_start_time)}</span>
+                        <span className="mt-1 block text-xs font-medium text-zinc-500">
+                          Ends {formatFoodDate(listing.pickup_end_time)}
+                        </span>
+                      </>
+                    }
+                    emphasis={pickupUrgent}
+                  />
+                  <DetailPill
+                    icon={<Store className="h-4 w-4" aria-hidden="true" />}
+                    label="Restaurant"
+                    value={providerName}
+                  />
+                  <DetailPill
+                    icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+                    label="Pickup Type"
+                    value="Self pickup"
+                  />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ImpactPill
+                    icon={<Utensils className="h-4 w-4" aria-hidden="true" />}
+                    label="Meals saved"
+                    value={displayValue(listingImpact?.total_meals_saved)}
+                  />
+                  <ImpactPill
+                    icon={<Leaf className="h-4 w-4" aria-hidden="true" />}
+                    label="CO2 saved"
+                    value={displayValue(listingImpact?.estimated_co2_saved)}
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-100 bg-zinc-50 p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="reservation-quantity"
+                      className="text-xs font-medium uppercase text-zinc-500"
+                    >
+                      Reserve quantity
+                    </label>
+                    <div className="flex w-fit overflow-hidden rounded-md border border-zinc-300 bg-white">
+                      <button
+                        type="button"
+                        onClick={() => setQuantityWithinLimit(quantityValue - 1)}
+                        disabled={!canReserve || reserving || quantityValue <= 1}
+                        className="flex h-11 w-11 items-center justify-center border-r border-zinc-200 text-zinc-700 disabled:opacity-40"
+                        aria-label="Decrease quantity"
+                      >
+                        <Minus className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <input
+                        id="reservation-quantity"
+                        value={quantity}
+                        inputMode="numeric"
+                        min={1}
+                        max={maxReservableQuantity}
+                        disabled={!canReserve || reserving}
+                        className="h-11 w-16 bg-white text-center text-sm font-semibold text-zinc-950 outline-none disabled:bg-zinc-100"
+                        onChange={(event) => setQuantity(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setQuantityWithinLimit(quantityValue + 1)}
+                        disabled={
+                          !canReserve ||
+                          reserving ||
+                          quantityValue >= maxReservableQuantity
+                        }
+                        className="flex h-11 w-11 items-center justify-center border-l border-zinc-200 text-zinc-700 disabled:opacity-40"
+                        aria-label="Increase quantity"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-zinc-500">
+                      Reserve up to {maxReservableQuantity || 0} item
+                      {maxReservableQuantity === 1 ? "" : "s"} from this listing.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={reserveAndPay}
+                    disabled={!canReserve || reserving}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <CreditCard className="h-4 w-4" aria-hidden="true" />
+                    {reserving ? "Processing payment..." : "Reserve and Pay"}
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {listing.is_free && (
+                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                      Free listings are reserved through NGO flows.
+                    </p>
+                  )}
+
+                  {!listing.is_free && remainingQuantity <= 0 && (
+                    <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
+                      This listing is no longer available for reservation.
+                    </p>
+                  )}
+
+                  {checkoutMessage && (
+                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                      {checkoutMessage}
                     </p>
                   )}
                 </div>
-                <span className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700">
-                  {getListingPrice(listing)}
-                </span>
               </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Info label="Quantity" value={listing.quantity} />
-                <Info label="Remaining" value={listing.remaining_quantity} />
-                <Info label="Status" value={listing.status} />
-                <Info label="Pickup start" value={formatFoodDate(listing.pickup_start_time)} />
-                <Info label="Pickup end" value={formatFoodDate(listing.pickup_end_time)} />
-                <Info label="Provider" value={listing.provider_id} />
-                <Info label="Meals saved" value={listingImpact?.total_meals_saved} />
-                <Info label="CO2 saved" value={listingImpact?.estimated_co2_saved} />
-              </div>
-
-              <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:flex-row sm:items-end sm:justify-between">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="reservation-quantity"
-                    className="text-xs font-medium uppercase text-zinc-500"
-                  >
-                    Reserve quantity
-                  </label>
-                  <input
-                    id="reservation-quantity"
-                    value={quantity}
-                    inputMode="numeric"
-                    min={1}
-                    max={maxReservableQuantity}
-                    disabled={!canReserve || reserving}
-                    className="w-28 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
-                    onChange={(event) => setQuantity(event.target.value)}
-                  />
-                  <p className="text-xs text-zinc-500">
-                    Maximum 2 items per reservation.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={reserveAndPay}
-                  disabled={!canReserve || reserving}
-                  className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {reserving ? "Processing payment..." : "Reserve and Pay"}
-                </button>
-              </div>
-
-              {listing.is_free && (
-                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                  Free listings are reserved through NGO flows.
-                </p>
-              )}
-
-              {!listing.is_free && remainingQuantity <= 0 && (
-                <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
-                  This listing is no longer available for reservation.
-                </p>
-              )}
-
-              {checkoutMessage && (
-                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                  {checkoutMessage}
-                </p>
-              )}
             </section>
 
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold text-zinc-950">
-                Provider Reputation
-              </h2>
+            <section className="space-y-3">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-950">
+                  Restaurant Reputation
+                </h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  Recent pickup feedback for {providerName}.
+                </p>
+              </div>
               <ProviderReputation summary={providerRatings} />
-            </div>
+            </section>
 
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold text-zinc-950">Reviews</h2>
+            <section className="space-y-3">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-950">Reviews</h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  What other food savers said after pickup.
+                </p>
+              </div>
               <ReviewList ratings={ratings} emptyMessage="No reviews for this listing yet." />
-            </div>
+            </section>
           </div>
         ) : (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
@@ -334,13 +472,50 @@ export default function FoodDetailPage() {
   );
 }
 
-function Info({ label, value }: { label: string; value: unknown }) {
+function DetailPill({
+  icon,
+  label,
+  value,
+  emphasis = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+  emphasis?: boolean;
+}) {
   return (
-    <div>
-      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
-      <p className="text-sm text-zinc-950">
-        {value === null || value === undefined || value === "" ? "-" : String(value)}
-      </p>
+    <div
+      className={`rounded-lg border p-4 ${
+        emphasis ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"
+      }`}
+    >
+      <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-2 text-sm font-semibold text-zinc-950">{value}</div>
+    </div>
+  );
+}
+
+function ImpactPill({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-emerald-700">
+        {icon}
+      </div>
+      <div>
+        <p className="text-xs font-medium uppercase text-emerald-700">{label}</p>
+        <p className="mt-1 text-lg font-semibold text-zinc-950">{value}</p>
+      </div>
     </div>
   );
 }

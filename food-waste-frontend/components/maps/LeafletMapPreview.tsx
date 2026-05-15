@@ -33,7 +33,7 @@ export default function LeafletMapPreview({ points }: LocationMapPreviewProps) {
   const center = [points[0].latitude, points[0].longitude] as [number, number];
 
   return (
-    <div className="relative z-0 h-32 isolate overflow-hidden rounded-md border border-zinc-200 [&_.leaflet-bottom]:!z-0 [&_.leaflet-pane]:!z-0 [&_.leaflet-top]:!z-0">
+    <div className="relative z-0 isolate h-28 overflow-hidden rounded-md border border-zinc-200 [&_.leaflet-bottom]:!z-0 [&_.leaflet-pane]:!z-0 [&_.leaflet-top]:!z-0">
       <MapContainer
         center={center}
         zoom={14}

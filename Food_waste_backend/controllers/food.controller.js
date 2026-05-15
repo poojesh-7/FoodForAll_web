@@ -601,12 +601,22 @@ exports.getActiveFood = async (req, res) => {
   // 🔹 If no location → fallback
   if (!hasLat && !hasLng) {
     const result = await pool.query(
-      `SELECT *
-       FROM food_listings
-       WHERE status = 'active'
-       AND pickup_end_time > NOW()
-       AND remaining_quantity > 0
-       ORDER BY pickup_end_time ASC`
+      `SELECT f.*,
+              u.name AS provider_name,
+              restaurant.restaurant_name
+       FROM food_listings f
+       JOIN users u ON u.id = f.provider_id
+       LEFT JOIN LATERAL (
+         SELECT restaurant_name
+         FROM restaurants
+         WHERE user_id = f.provider_id
+         ORDER BY is_verified DESC, id DESC
+         LIMIT 1
+       ) restaurant ON true
+       WHERE f.status = 'active'
+       AND f.pickup_end_time > NOW()
+       AND f.remaining_quantity > 0
+       ORDER BY f.pickup_end_time ASC`
     );
 
     return res.json(result.rows);
@@ -629,17 +639,27 @@ exports.getActiveFood = async (req, res) => {
   // 🔥 GEO QUERY
   const result = await pool.query(
     `
-    SELECT *,
+    SELECT f.*,
+    u.name AS provider_name,
+    restaurant.restaurant_name,
     ST_Distance(
-      location,
+      f.location,
       ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
     ) AS distance
-    FROM food_listings
-    WHERE status = 'active'
-    AND pickup_end_time > NOW()
-    AND remaining_quantity > 0
+    FROM food_listings f
+    JOIN users u ON u.id = f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name
+      FROM restaurants
+      WHERE user_id = f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
+    WHERE f.status = 'active'
+    AND f.pickup_end_time > NOW()
+    AND f.remaining_quantity > 0
     AND ST_DWithin(
-      location,
+      f.location,
       ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
       $3 * 1000
     )
@@ -659,9 +679,24 @@ exports.getFoodById = async (req, res) => {
     return res.status(400).json({ error: "Food id is required" });
   }
 
-  const result = await pool.query("SELECT * FROM food_listings WHERE id=$1", [
-    id,
-  ]);
+  const result = await pool.query(
+    `
+    SELECT f.*,
+           u.name AS provider_name,
+           restaurant.restaurant_name
+    FROM food_listings f
+    JOIN users u ON u.id = f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name
+      FROM restaurants
+      WHERE user_id = f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
+    WHERE f.id=$1
+    `,
+    [id]
+  );
 
   if (result.rows.length === 0)
     return res.status(404).json({ error: "Not found" });
@@ -689,16 +724,35 @@ exports.getNearbyFood = async (req, res) => {
 
   const result = await pool.query(
     `
-    SELECT id, title, remaining_quantity
-    FROM food_listings
-    WHERE status='active'
+    SELECT f.id,
+           f.title,
+           f.description,
+           f.remaining_quantity,
+           f.pickup_end_time,
+           f.status,
+           f.is_free,
+           f.price,
+           u.name AS provider_name,
+           restaurant.restaurant_name
+    FROM food_listings f
+    JOIN users u ON u.id = f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name
+      FROM restaurants
+      WHERE user_id = f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
+    WHERE f.status='active'
+    AND f.pickup_end_time > NOW()
+    AND f.remaining_quantity > 0
     AND ST_DWithin(
-        location,
+        f.location,
         ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
         $3*1000
     )
     ORDER BY ST_Distance(
-        location,
+        f.location,
         ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
     );
     `,

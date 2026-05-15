@@ -15,7 +15,7 @@ type LocationMapPreviewProps = {
 const LeafletMapPreview = dynamic(() => import("./LeafletMapPreview"), {
   ssr: false,
   loading: () => (
-    <div className="h-32 rounded-md border border-zinc-200 bg-zinc-100" />
+    <div className="h-28 rounded-md border border-zinc-200 bg-zinc-100" />
   ),
 });
 

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import FoodCard from "@/components/FoodCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import { formatFoodDate } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
@@ -32,6 +32,23 @@ function getListingQuantity(listing: NearbyFoodListing) {
   return Number.isFinite(quantity) ? quantity : 0;
 }
 
+function isVisibleFreeListing(listing: NearbyFoodListing) {
+  const status = String(listing.status ?? "active").toLowerCase();
+  const isFree = listing.is_free === undefined || listing.is_free === true;
+  const pickupEnd = listing.pickup_end_time
+    ? new Date(listing.pickup_end_time).getTime()
+    : Number.NaN;
+  const pickupActive = Number.isFinite(pickupEnd) ? pickupEnd > Date.now() : true;
+
+  return status === "active" && isFree && pickupActive && getListingQuantity(listing) > 0;
+}
+
+function getLocationStatus(form: LocationForm, searched: boolean) {
+  if (!form.lat || !form.lng) return "No rescue location selected";
+  if (searched) return "Nearby free listings loaded for this location";
+  return "Rescue location ready";
+}
+
 export default function NGONearbyListingsPage() {
   const router = useRouter();
   const [form, setForm] = useState<LocationForm>({ lat: "", lng: "" });
@@ -50,13 +67,7 @@ export default function NGONearbyListingsPage() {
     queueMicrotask(() =>
       setListings((current) =>
         mergeListingRows<NearbyFoodListing>(current, listingsById).filter(
-          (listing) => {
-            const status = (listing as { status?: string }).status;
-            return (
-              (!status || status === "active") &&
-              Number(listing.remaining_quantity ?? 0) > 0
-            );
-          }
+          isVisibleFreeListing
         )
       )
     );
@@ -93,7 +104,7 @@ export default function NGONearbyListingsPage() {
         lat: nextForm.lat,
         lng: nextForm.lng,
       });
-      setListings(data);
+      setListings(data.filter(isVisibleFreeListing));
       setQuantities({});
     } catch (err) {
       const message = ngoService.getErrorMessage(err);
@@ -192,35 +203,55 @@ export default function NGONearbyListingsPage() {
       title="Nearby Listings"
       description="Find active food listings within your NGO service radius and reserve in one flow."
     >
-      <section className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:grid-cols-[1fr_1fr_auto_auto]">
-        <input
-          value={form.lat}
-          inputMode="decimal"
-          placeholder="Latitude"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, lat: event.target.value })}
-        />
-        <input
-          value={form.lng}
-          inputMode="decimal"
-          placeholder="Longitude"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, lng: event.target.value })}
-        />
-        <button
-          onClick={() => search()}
-          disabled={loading}
-          className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          Search
-        </button>
-        <button
-          onClick={useCurrentLocation}
-          disabled={loading}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
-        >
-          Current
-        </button>
+      <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-950">
+              Rescue Location
+            </h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              {getLocationStatus(form, searched)}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={useCurrentLocation}
+              disabled={loading}
+              className="min-h-10 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {loading ? "Locating..." : "Use Current Location"}
+            </button>
+            <button
+              onClick={() => search()}
+              disabled={loading || !form.lat || !form.lng}
+              className="min-h-10 rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+            >
+              Refresh Listings
+            </button>
+          </div>
+        </div>
+
+        <details className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-zinc-700">
+            Manual coordinates
+          </summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <input
+              value={form.lat}
+              inputMode="decimal"
+              placeholder="Latitude"
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+              onChange={(event) => setForm({ ...form, lat: event.target.value })}
+            />
+            <input
+              value={form.lng}
+              inputMode="decimal"
+              placeholder="Longitude"
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+              onChange={(event) => setForm({ ...form, lng: event.target.value })}
+            />
+          </div>
+        </details>
       </section>
 
       {error && <NGOStateBlock title={error} tone="error" />}
@@ -249,31 +280,92 @@ export default function NGONearbyListingsPage() {
           description="Try your current location again or check back when providers post new food."
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           {listings.map((listing) => {
             const id = String(listing.id);
             const maxQuantity = getListingQuantity(listing);
 
             return (
-              <FoodCard
+              <article
                 key={id}
-                listing={listing}
-                href={undefined}
-                actions={
+                className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+              >
+                <div className="space-y-4 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-base font-semibold text-zinc-950">
+                          {listing.title}
+                        </h2>
+                        <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                          Free
+                        </span>
+                        <span className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
+                          Active
+                        </span>
+                      </div>
+                      {listing.description && (
+                        <p className="mt-2 line-clamp-2 text-sm text-zinc-600">
+                          {listing.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase text-zinc-500">
+                        Remaining
+                      </p>
+                      <p className="mt-1 text-zinc-950">{maxQuantity}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase text-zinc-500">
+                        Pickup Deadline
+                      </p>
+                      <p className="mt-1 text-zinc-950">
+                        {formatFoodDate(listing.pickup_end_time)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase text-zinc-500">
+                        Provider
+                      </p>
+                      <p className="mt-1 text-zinc-950">
+                        {listing.provider_name ?? "-"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col justify-between gap-3 border-t border-zinc-100 bg-zinc-50 p-4 sm:flex-row sm:items-center">
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
-                    <span>Quantity</span>
+                    <span className="font-medium">Quantity</span>
                     <input
                       value={quantities[id] ?? ""}
                       inputMode="numeric"
                       placeholder="0"
-                      className="w-24 rounded-md border border-zinc-300 px-3 py-1.5 text-zinc-950 outline-none focus:border-zinc-950"
+                      className="h-10 w-24 rounded-md border border-zinc-300 bg-white px-3 text-zinc-950 outline-none focus:border-zinc-950"
                       onChange={(event) =>
                         updateQuantity(listing.id, event.target.value, maxQuantity)
                       }
                     />
                   </label>
-                }
-              />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateQuantity(
+                        listing.id,
+                        quantities[id] ? "" : String(Math.min(maxQuantity, 10)),
+                        maxQuantity
+                      )
+                    }
+                    className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-950"
+                  >
+                    {quantities[id] ? "Clear" : "Select"}
+                  </button>
+                </div>
+              </article>
             );
           })}
         </div>

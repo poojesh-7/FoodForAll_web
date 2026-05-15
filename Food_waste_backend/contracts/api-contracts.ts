@@ -165,7 +165,12 @@ export interface FoodListingWithDistance extends FoodListingRow {
 export interface NearbyFoodListing {
   id: DbId;
   title: string;
+  description?: string | null;
   remaining_quantity: number | string;
+  pickup_end_time?: ISODateString | null;
+  status?: string;
+  is_free?: boolean;
+  provider_name?: string | null;
 }
 
 export interface FoodNGOOption {

@@ -85,5 +85,5 @@ export function getListingId(listing: FoodCardListing) {
 export function getListingPrice(listing: FoodCardListing) {
   if (!("is_free" in listing)) return "";
   if (listing.is_free) return "Free";
-  return `Rs. ${String(listing.price ?? 0)}`;
+  return `Rs. ${String("price" in listing ? listing.price ?? 0 : 0)}`;
 }

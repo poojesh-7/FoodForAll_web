@@ -285,18 +285,27 @@ exports.getNearbyListings = async (req, res) => {
 
   const result = await pool.query(
     `
-    SELECT id, title, remaining_quantity
-    FROM food_listings
-    WHERE status='active'
-    AND is_free = true
-    AND remaining_quantity > 0
+    SELECT
+      f.id,
+      f.title,
+      f.description,
+      f.remaining_quantity,
+      f.pickup_end_time,
+      f.status,
+      f.is_free,
+      u.name AS provider_name
+    FROM food_listings f
+    JOIN users u ON u.id=f.provider_id
+    WHERE f.status='active'
+    AND f.is_free = true
+    AND f.remaining_quantity > 0
     AND ST_DWithin(
-        location,
+        f.location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
         $3
     )
     ORDER BY ST_Distance(
-        location,
+        f.location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
     );
     `,

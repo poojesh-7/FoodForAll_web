@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import NGOSummaryCard from "@/components/ngo/NGOSummaryCard";
@@ -157,14 +156,9 @@ export default function NGODashboardPage() {
               value={assignedVolunteers.length}
               detail={`${volunteerJoinRequests.length} join requests pending`}
             />
-            <NGOSummaryCard
-              label="CO2 Saved"
-              value={`${rescueStats.co2}`}
-              detail="Estimated kg from completed rescues"
-            />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <section className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
             <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div>
@@ -203,31 +197,26 @@ export default function NGODashboardPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-1">
-              <Link
-                href="/ngo/nearby-listings"
-                className="rounded-lg border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-950 shadow-sm transition hover:border-zinc-400"
-              >
-                Reserve nearby food
-              </Link>
-              <Link
-                href="/ngo/incoming-requests"
-                className="rounded-lg border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-950 shadow-sm transition hover:border-zinc-400"
-              >
-                Review provider requests
-              </Link>
-              <Link
-                href="/ngo/reservations"
-                className="rounded-lg border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-950 shadow-sm transition hover:border-zinc-400"
-              >
-                View reservations
-              </Link>
-              <Link
-                href="/ngo/volunteers"
-                className="rounded-lg border border-zinc-200 bg-white p-4 text-sm font-medium text-zinc-950 shadow-sm transition hover:border-zinc-400"
-              >
-                Manage volunteers ({volunteerJoinRequests.length})
-              </Link>
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+              <NGOSummaryCard
+                label="Service Radius"
+                value={`${String(ngo?.service_radius_km ?? "-")} km`}
+                detail="Coverage used for nearby food discovery"
+              />
+              <NGOSummaryCard
+                label="Urgent Mode"
+                value={ngo?.urgent_flag ? "On" : "Off"}
+                detail={
+                  ngo?.urgent_flag
+                    ? "Prioritized for urgent rescue visibility"
+                    : "Standard rescue visibility"
+                }
+              />
+              <NGOSummaryCard
+                label="CO2 Saved"
+                value={`${rescueStats.co2}`}
+                detail="Estimated kg from completed rescues"
+              />
             </div>
           </section>
         </div>

@@ -121,6 +121,7 @@ exports.getDashboard = async (req, res) => {
           f.pickup_end_time,
           u.id AS provider_id,
           u.name AS provider_name,
+          restaurant.restaurant_name,
           u.phone AS provider_phone,
           n.organization_name AS ngo_name,
           n.latitude AS ngo_latitude,
@@ -128,6 +129,13 @@ exports.getDashboard = async (req, res) => {
         FROM reservations r
         JOIN food_listings f ON f.id=r.listing_id
         JOIN users u ON u.id=f.provider_id
+        LEFT JOIN LATERAL (
+          SELECT restaurant_name
+          FROM restaurants
+          WHERE user_id = f.provider_id
+          ORDER BY is_verified DESC, id DESC
+          LIMIT 1
+        ) restaurant ON true
         JOIN ngos n ON n.user_id=r.user_id
         WHERE r.assigned_volunteer_id=$1
         AND r.task_status IN ('in_progress','picked_from_provider')
@@ -736,6 +744,7 @@ exports.getTasks = async (req, res) => {
         f.pickup_end_time,
         u.id AS provider_id,
         u.name AS provider_name,
+        restaurant.restaurant_name,
         u.phone AS provider_phone,
         n.organization_name AS ngo_name,
         n.latitude AS ngo_latitude,
@@ -747,6 +756,13 @@ exports.getTasks = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON r.listing_id = f.id
       JOIN users u ON u.id = f.provider_id
+      LEFT JOIN LATERAL (
+        SELECT restaurant_name
+        FROM restaurants
+        WHERE user_id = f.provider_id
+        ORDER BY is_verified DESC, id DESC
+        LIMIT 1
+      ) restaurant ON true
       JOIN ngos n ON n.user_id = r.user_id
       WHERE r.user_id = $3
       AND r.pickup_type = 'ngo'

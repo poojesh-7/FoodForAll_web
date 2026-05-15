@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LocateFixed, MapPin, Search } from "lucide-react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import VolunteerTaskCard from "@/components/volunteer/VolunteerTaskCard";
@@ -79,6 +80,7 @@ export default function VolunteerTasksPage() {
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [locationStatus, setLocationStatus] = useState("Location not set");
   const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
   const reservationsById = useRealtimeStore((state) => state.reservations);
 
@@ -128,7 +130,7 @@ export default function VolunteerTasksPage() {
 
   const search = async (nextForm = form) => {
     if (!nextForm.lat || !nextForm.lng) {
-      setError("Latitude and longitude are required.");
+      setError("Use current location or enter coordinates to search nearby tasks.");
       return;
     }
 
@@ -143,6 +145,7 @@ export default function VolunteerTasksPage() {
         radius: nextForm.radius,
       });
       setTasks(result.filter(isVisibleVolunteerTask));
+      setLocationStatus(`Searching within ${nextForm.radius || "5"} km`);
     } catch (err) {
       setError(volunteerService.getErrorMessage(err));
     } finally {
@@ -162,6 +165,7 @@ export default function VolunteerTasksPage() {
         lng: String(position.coords.longitude),
       };
       setForm(nextForm);
+      setLocationStatus("Using your current location");
       await search(nextForm);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Please allow location access.");
@@ -270,42 +274,68 @@ export default function VolunteerTasksPage() {
         </section>
       )}
 
-      <section className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:grid-cols-[1fr_1fr_1fr_auto_auto]">
-        <input
-          value={form.lat}
-          inputMode="decimal"
-          placeholder="Latitude"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, lat: event.target.value })}
-        />
-        <input
-          value={form.lng}
-          inputMode="decimal"
-          placeholder="Longitude"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, lng: event.target.value })}
-        />
-        <input
-          value={form.radius}
-          inputMode="decimal"
-          placeholder="Radius km"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, radius: event.target.value })}
-        />
-        <button
-          onClick={() => search()}
-          disabled={loading}
-          className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          Search
-        </button>
-        <button
-          onClick={useCurrentLocation}
-          disabled={loading}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
-        >
-          Current
-        </button>
+      <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="flex min-h-11 flex-1 items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-700">
+            <MapPin className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+            <span className="font-medium text-zinc-950">{locationStatus}</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] lg:min-w-[440px]">
+            <label className="flex min-h-11 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-700">
+              <span className="whitespace-nowrap font-medium">Radius</span>
+              <input
+                value={form.radius}
+                inputMode="decimal"
+                aria-label="Search radius in kilometers"
+                className="min-w-0 flex-1 bg-transparent text-zinc-950 outline-none"
+                onChange={(event) =>
+                  setForm({ ...form, radius: event.target.value })
+                }
+              />
+              <span className="text-zinc-500">km</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => search()}
+              disabled={loading}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+            >
+              <Search className="h-4 w-4" aria-hidden="true" />
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={useCurrentLocation}
+              disabled={loading}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 disabled:opacity-50"
+            >
+              <LocateFixed className="h-4 w-4" aria-hidden="true" />
+              Current
+            </button>
+          </div>
+        </div>
+
+        <details className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
+          <summary className="cursor-pointer font-medium text-zinc-700">
+            Enter location manually
+          </summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <input
+              value={form.lat}
+              inputMode="decimal"
+              placeholder="Latitude"
+              className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 text-zinc-950 outline-none focus:border-zinc-950"
+              onChange={(event) => setForm({ ...form, lat: event.target.value })}
+            />
+            <input
+              value={form.lng}
+              inputMode="decimal"
+              placeholder="Longitude"
+              className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 text-zinc-950 outline-none focus:border-zinc-950"
+              onChange={(event) => setForm({ ...form, lng: event.target.value })}
+            />
+          </div>
+        </details>
       </section>
 
       {loading ? (
@@ -316,7 +346,7 @@ export default function VolunteerTasksPage() {
           description="Tasks appear when your active NGO has reserved food waiting for volunteer pickup."
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           {availableTasks.map((task) => (
             <VolunteerTaskCard
               key={String(task.reservation_id)}

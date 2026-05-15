@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ArrowRight, Store } from "lucide-react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import VolunteerSummaryCard from "@/components/volunteer/VolunteerSummaryCard";
-import VolunteerTaskCard from "@/components/volunteer/VolunteerTaskCard";
 import { volunteerService } from "@/services/volunteer.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { VolunteerDashboardData } from "@backend/contracts/api-contracts";
+import type {
+  VolunteerCurrentTask,
+  VolunteerDashboardData,
+} from "@backend/contracts/api-contracts";
 
 function toCount(value: unknown) {
   const count = Number(value ?? 0);
@@ -19,6 +22,62 @@ function formatSeconds(value: unknown) {
   const seconds = toCount(value);
   if (seconds <= 0) return "0 min";
   return `${Math.round(seconds / 60)} min`;
+}
+
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
+}
+
+function getReservationDisplayId(id: unknown) {
+  const raw = String(id ?? "").replace(/-/g, "");
+  return `RES-${(raw.slice(-4) || "----").toUpperCase()}`;
+}
+
+function getProviderDisplayName(task: VolunteerCurrentTask) {
+  return displayValue(task.restaurant_name) !== "-"
+    ? displayValue(task.restaurant_name)
+    : displayValue(task.provider_name);
+}
+
+function getTaskStatusLabel(status: unknown) {
+  return displayValue(status).replace(/_/g, " ");
+}
+
+function ActiveTaskSummary({ task }: { task: VolunteerCurrentTask }) {
+  return (
+    <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+              {getReservationDisplayId(task.reservation_id)}
+            </span>
+            <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold capitalize text-emerald-700">
+              {getTaskStatusLabel(task.task_status)}
+            </span>
+          </div>
+          <h2 className="mt-3 text-lg font-semibold text-zinc-950">
+            {displayValue(task.title)}
+          </h2>
+          <div className="mt-3 grid gap-2 text-sm text-zinc-600 sm:grid-cols-2">
+            <p className="flex items-center gap-2">
+              <Store className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+              {getProviderDisplayName(task)}
+            </p>
+            <p>NGO: {displayValue(task.ngo_name)}</p>
+          </div>
+        </div>
+        <Link
+          href="/volunteer/tasks"
+          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+        >
+          Continue Task
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
+    </article>
+  );
 }
 
 export default function VolunteerDashboardPage() {
@@ -67,7 +126,7 @@ export default function VolunteerDashboardPage() {
   return (
     <VolunteerShell
       title="Volunteer Dashboard"
-      description="Track your NGO membership, active rescue task, and pending NGO requests."
+      description="Track your NGO membership, current rescue, and completion stats."
     >
       {error && <VolunteerStateBlock title={error} tone="error" />}
 
@@ -75,7 +134,7 @@ export default function VolunteerDashboardPage() {
         <VolunteerStateBlock title="Loading volunteer operations..." />
       ) : dashboard ? (
         <div className="space-y-5">
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <section className="grid gap-3 sm:grid-cols-3">
             <VolunteerSummaryCard
               label="Active NGO"
               value={dashboard.active_ngo?.organization_name ?? "None"}
@@ -95,69 +154,20 @@ export default function VolunteerDashboardPage() {
               value={toCount(dashboard.stats.total_completed)}
               detail={`Average: ${formatSeconds(dashboard.stats.avg_completion_time)}`}
             />
-            <VolunteerSummaryCard
-              label="Pending Requests"
-              value={dashboard.pending_requests.length}
-              detail="NGO invitations awaiting response"
-            />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold text-zinc-950">
-                Current Active Task
-              </h2>
-              {dashboard.current_task ? (
-                <VolunteerTaskCard
-                  task={dashboard.current_task}
-                  active
-                  action={
-                    <Link
-                      href="/volunteer/tasks"
-                      className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white"
-                    >
-                      Continue Task
-                    </Link>
-                  }
-                />
-              ) : (
-                <VolunteerStateBlock
-                  title="No active task."
-                  description="Start a nearby pending rescue when your NGO has available reservations."
-                />
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold text-zinc-950">
-                Pending NGO Requests
-              </h2>
-              {dashboard.pending_requests.length === 0 ? (
-                <VolunteerStateBlock title="No pending requests." />
-              ) : (
-                <div className="space-y-3">
-                  {dashboard.pending_requests.slice(0, 3).map((request) => (
-                    <article
-                      key={String(request.id)}
-                      className="rounded-lg border border-zinc-200 bg-white p-4 text-sm shadow-sm"
-                    >
-                      <p className="font-medium text-zinc-950">
-                        {request.organization_name}
-                      </p>
-                      <p className="mt-1 text-zinc-600">
-                        Status: {request.status ?? "pending"}
-                      </p>
-                    </article>
-                  ))}
-                  <Link
-                    href="/volunteer/requests"
-                    className="inline-flex rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950"
-                  >
-                    Review Requests
-                  </Link>
-                </div>
-              )}
-            </div>
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold text-zinc-950">
+              Current Active Task
+            </h2>
+            {dashboard.current_task ? (
+              <ActiveTaskSummary task={dashboard.current_task} />
+            ) : (
+              <VolunteerStateBlock
+                title="No active task."
+                description="Start a nearby pending rescue when your NGO has available reservations."
+              />
+            )}
           </section>
         </div>
       ) : (

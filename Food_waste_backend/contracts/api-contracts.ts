@@ -301,6 +301,7 @@ export interface VolunteerTask {
   pickup_end_time?: ISODateString | null;
   provider_id?: DbId;
   provider_name?: string | null;
+  restaurant_name?: string | null;
   provider_phone?: string | null;
   distance: number | string;
 }

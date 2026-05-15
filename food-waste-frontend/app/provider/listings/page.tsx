@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import FoodCard from "@/components/FoodCard";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
-import ReviewList from "@/components/ratings/ReviewList";
+import { formatFoodDate, getListingPrice } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -20,6 +19,100 @@ import type {
 } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
+type ListingView = "active" | "history";
+
+function toNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function isActiveListing(listing: FoodListingRow) {
+  const status = String(listing.status ?? "active").toLowerCase();
+  const pickupEnd = listing.pickup_end_time
+    ? new Date(listing.pickup_end_time).getTime()
+    : Number.NaN;
+  const hasFuturePickup = Number.isFinite(pickupEnd) ? pickupEnd > Date.now() : true;
+  const remaining = toNumber(listing.remaining_quantity ?? listing.quantity);
+
+  return status === "active" && hasFuturePickup && remaining > 0;
+}
+
+function getListingStatusLabel(listing: FoodListingRow) {
+  const status = String(listing.status ?? "active").toLowerCase();
+  const pickupEnd = listing.pickup_end_time
+    ? new Date(listing.pickup_end_time).getTime()
+    : Number.NaN;
+
+  if (status !== "active") return status.replace(/_/g, " ");
+  if (Number.isFinite(pickupEnd) && pickupEnd <= Date.now()) return "expired";
+  if (toNumber(listing.remaining_quantity ?? listing.quantity) <= 0) {
+    return "completed";
+  }
+  return "active";
+}
+
+function formatReviewDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
+}
+
+function ListingMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+}) {
+  return (
+    <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-zinc-950">{value}</p>
+      <p className="mt-1 text-sm text-zinc-600">{detail}</p>
+    </article>
+  );
+}
+
+function ListingReviews({
+  ratings,
+}: {
+  ratings: ListingRating[];
+}) {
+  if (!ratings.length) {
+    return <p className="text-sm text-zinc-600">No reviews for this listing yet.</p>;
+  }
+
+  return (
+    <div className="divide-y divide-zinc-200 rounded-md border border-zinc-200 bg-white">
+      {ratings.map((rating, index) => (
+        <div
+          key={String(
+            rating.id ?? `${String(rating.name ?? "review")}-${rating.created_at}-${index}`
+          )}
+          className="p-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-zinc-950">
+              {rating.name || "Food saver"}
+            </p>
+            <p className="text-sm font-medium text-amber-700">
+              {Number(rating.rating).toFixed(1)} / 5
+            </p>
+          </div>
+          {rating.review && (
+            <p className="mt-1 text-sm text-zinc-600">{rating.review}</p>
+          )}
+          <p className="mt-1 text-xs text-zinc-500">
+            {formatReviewDate(rating.created_at)}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ProviderListingsPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -31,6 +124,7 @@ export default function ProviderListingsPage() {
   const [listingRatings, setListingRatings] = useState<Record<string, ListingRating[]>>({});
   const [selectedListingId, setSelectedListingId] = useState<DbId | null>(null);
   const [selectedNGOId, setSelectedNGOId] = useState("");
+  const [listingView, setListingView] = useState<ListingView>("active");
   const [loading, setLoading] = useState(true);
   const [ngoLoading, setNgoLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -43,6 +137,20 @@ export default function ProviderListingsPage() {
     () =>
       listings.filter((listing) => String(listing.provider_id) === String(user?.id)),
     [listings, user?.id]
+  );
+  const activeListings = useMemo(
+    () => providerListings.filter(isActiveListing),
+    [providerListings]
+  );
+  const historicalListings = useMemo(
+    () => providerListings.filter((listing) => !isActiveListing(listing)),
+    [providerListings]
+  );
+  const visibleListings =
+    listingView === "active" ? activeListings : historicalListings;
+  const totalRemaining = activeListings.reduce(
+    (sum, listing) => sum + toNumber(listing.remaining_quantity ?? listing.quantity),
+    0
   );
 
   useEffect(() => {
@@ -170,11 +278,13 @@ export default function ProviderListingsPage() {
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-5xl space-y-4">
+      <div className="mx-auto max-w-7xl space-y-5">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">Provider Listings</h1>
-            <p className="text-sm text-zinc-600">Manage food listings from your restaurant.</p>
+            <p className="text-sm text-zinc-600">
+              Manage active food availability first, then review inactive listings.
+            </p>
           </div>
           <Link
             href="/provider/listings/create"
@@ -232,11 +342,23 @@ export default function ProviderListingsPage() {
         )}
 
         {!loading && (
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold text-zinc-950">
-              Provider Reputation
-            </h2>
+          <section className="grid gap-3 lg:grid-cols-[1.2fr_repeat(3,1fr)]">
             <ProviderReputation summary={providerRatings} />
+            <ListingMetric
+              label="Active Listings"
+              value={activeListings.length}
+              detail="Visible in current operations"
+            />
+            <ListingMetric
+              label="Remaining"
+              value={totalRemaining}
+              detail="Items still available"
+            />
+            <ListingMetric
+              label="History"
+              value={historicalListings.length}
+              detail="Expired or completed listings"
+            />
           </section>
         )}
 
@@ -249,43 +371,137 @@ export default function ProviderListingsPage() {
             No listings found.
           </div>
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {providerListings.map((listing) => (
-              <div key={String(listing.id)} className="space-y-3">
-                <FoodCard
-                  listing={listing}
-                  href={undefined}
-                  actions={
-                    <>
-                      <Link
-                        href={`/provider/listings/edit/${String(listing.id)}`}
-                        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
-                      >
-                        Edit
-                      </Link>
-                      <button
-                        onClick={() => listing.id && openNGORequest(listing.id)}
-                        disabled={!listing.id || actionLoading}
-                        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 disabled:opacity-50"
-                      >
-                        Request NGO
-                      </button>
-                      <button
-                        onClick={() => listing.id && deleteListing(listing.id)}
-                        disabled={!listing.id || actionLoading}
-                        className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
-                    </>
-                  }
-                />
-                <ReviewList
-                  ratings={listingRatings[String(listing.id)] ?? []}
-                  emptyMessage="No reviews for this listing yet."
-                />
+          <div className="space-y-4">
+            <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+              <div className="flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
+                {(["active", "history"] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setListingView(item)}
+                    className={`min-h-10 flex-1 rounded px-3 text-sm font-medium transition ${
+                      listingView === item
+                        ? "bg-white text-zinc-950 shadow-sm"
+                        : "text-zinc-600 hover:text-zinc-950"
+                    }`}
+                  >
+                    {item === "active"
+                      ? `Active (${activeListings.length})`
+                      : `History (${historicalListings.length})`}
+                  </button>
+                ))}
               </div>
-            ))}
+            </section>
+
+            {visibleListings.length === 0 ? (
+              <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+                No {listingView === "active" ? "active" : "historical"} listings found.
+              </div>
+            ) : (
+              <section className="grid gap-4 xl:grid-cols-2">
+                {visibleListings.map((listing) => (
+                  <article
+                    key={String(listing.id)}
+                    className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+                  >
+                    <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-medium uppercase text-zinc-500">
+                          Listing
+                        </p>
+                        <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold capitalize text-zinc-700">
+                          {getListingStatusLabel(listing)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="text-base font-semibold text-zinc-950">
+                            {String(listing.title ?? "Untitled food")}
+                          </h2>
+                          {listing.description && (
+                            <p className="mt-1 line-clamp-2 text-sm text-zinc-600">
+                              {String(listing.description)}
+                            </p>
+                          )}
+                        </div>
+                        {getListingPrice(listing) && (
+                          <span className="shrink-0 rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700">
+                            {getListingPrice(listing)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid gap-3 text-sm sm:grid-cols-3">
+                        <div>
+                          <p className="text-xs font-medium uppercase text-zinc-500">
+                            Remaining
+                          </p>
+                          <p className="mt-1 text-zinc-950">
+                            {String(listing.remaining_quantity ?? listing.quantity ?? "-")}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase text-zinc-500">
+                            Quantity
+                          </p>
+                          <p className="mt-1 text-zinc-950">
+                            {String(listing.quantity ?? "-")}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase text-zinc-500">
+                            Pickup Ends
+                          </p>
+                          <p className="mt-1 text-zinc-950">
+                            {formatFoodDate(listing.pickup_end_time)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          href={`/provider/listings/edit/${String(listing.id)}`}
+                          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
+                        >
+                          Edit
+                        </Link>
+                        <button
+                          onClick={() => listing.id && openNGORequest(listing.id)}
+                          disabled={!listing.id || actionLoading || !isActiveListing(listing)}
+                          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                        >
+                          Request NGO
+                        </button>
+                        <button
+                          onClick={() => listing.id && deleteListing(listing.id)}
+                          disabled={!listing.id || actionLoading}
+                          className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-zinc-100 bg-zinc-50 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h2 className="text-sm font-semibold text-zinc-950">
+                          Reviews
+                        </h2>
+                        <span className="text-xs font-medium text-zinc-500">
+                          {(listingRatings[String(listing.id)] ?? []).length} total
+                        </span>
+                      </div>
+                      <ListingReviews
+                        ratings={listingRatings[String(listing.id)] ?? []}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </section>
+            )}
           </div>
         )}
       </div>

@@ -543,6 +543,7 @@ exports.getMyReservations = async (req, res) => {
         r.task_status,
         r.status,
         r.payment_status,
+        r.assigned_volunteer_id,
         r.receive_code,
         r.completed_at,
         r.reserved_at,
@@ -562,6 +563,9 @@ exports.getMyReservations = async (req, res) => {
         f.latitude AS provider_latitude,
         f.longitude AS provider_longitude,
 
+        volunteer.name AS assigned_volunteer_name,
+        volunteer.phone AS assigned_volunteer_phone,
+
         rating.id AS review_id,
         rating.rating AS review_rating,
         rating.review AS review_text
@@ -571,6 +575,8 @@ exports.getMyReservations = async (req, res) => {
         ON f.id = r.listing_id
       JOIN users u
         ON u.id = f.provider_id
+      LEFT JOIN users volunteer
+        ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN ratings rating
         ON rating.reservation_id = r.id
 

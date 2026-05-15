@@ -1,5 +1,6 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import { formatFoodDate } from "@/lib/food";
+import { Clock3, MapPin, Navigation, Package, Store, Ticket, Truck, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import type { NGOReservationHistoryRow } from "@/services/ngo.service";
 
@@ -7,6 +8,16 @@ type NGOReservationCardProps = {
   reservation: NGOReservationHistoryRow;
   actions?: ReactNode;
 };
+
+type ReservationStatus =
+  | "reserved"
+  | "pending"
+  | "volunteer_started"
+  | "picked_from_provider"
+  | "completed"
+  | "cancelled"
+  | "expired"
+  | "failed";
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
@@ -33,35 +44,92 @@ function getReservationDisplayId(id: unknown) {
   return `RES-${(raw.slice(-4) || "----").toUpperCase()}`;
 }
 
-function getReservationStatus(reservation: NGOReservationHistoryRow) {
-  if (reservation.status === "cancelled") return "cancelled";
-  if (reservation.status === "expired" || reservation.payment_status === "expired") {
-    return "expired";
-  }
+function getReservationStatus(reservation: NGOReservationHistoryRow): ReservationStatus {
+  const status = String(reservation.status ?? "").toLowerCase();
+  const taskStatus = String(reservation.task_status ?? "").toLowerCase();
+  const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
+
+  if (status === "cancelled") return "cancelled";
+  if (status === "expired" || paymentStatus === "expired") return "expired";
+  if (status === "failed" || paymentStatus === "failed") return "failed";
   if (
-    reservation.task_status === "delivered" ||
-    reservation.status === "picked_up" ||
+    taskStatus === "delivered" ||
+    status === "picked_up" ||
     Boolean(reservation.completed_at)
   ) {
     return "completed";
   }
-  if (reservation.task_status === "picked_from_provider") {
-    return "picked from provider";
-  }
-  if (reservation.task_status === "in_progress") return "volunteer started";
-  if (reservation.task_status === "pending") return "pending";
-  return String(reservation.status ?? "reserved").replace(/_/g, " ");
+  if (taskStatus === "picked_from_provider") return "picked_from_provider";
+  if (taskStatus === "in_progress") return "volunteer_started";
+  if (taskStatus === "pending") return "pending";
+  return "reserved";
 }
 
-function getStatusClasses(status: string) {
-  if (status === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "volunteer started" || status === "picked from provider") {
+function getStatusLabel(status: ReservationStatus) {
+  const labels: Record<ReservationStatus, string> = {
+    reserved: "Reserved",
+    pending: "Pending",
+    volunteer_started: "Volunteer Started",
+    picked_from_provider: "Picked From Provider",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    expired: "Expired",
+    failed: "Failed",
+  };
+
+  return labels[status];
+}
+
+function getStatusClasses(status: ReservationStatus) {
+  if (status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "volunteer_started" || status === "picked_from_provider") {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
-  if (status === "cancelled" || status === "expired") {
-    return "border-zinc-200 bg-zinc-100 text-zinc-600";
+  if (status === "cancelled" || status === "expired" || status === "failed") {
+    return "border-red-200 bg-red-50 text-red-700";
   }
   return "border-sky-200 bg-sky-50 text-sky-700";
+}
+
+function getVolunteerState(reservation: NGOReservationHistoryRow, status: ReservationStatus) {
+  if (!reservation.assigned_volunteer_id) return "Not assigned";
+  if (status === "completed") return "Delivered";
+  if (status === "picked_from_provider") return "Picked from provider";
+  if (status === "volunteer_started") return "Started pickup";
+  return "Assigned";
+}
+
+function shouldShowVolunteer(reservation: NGOReservationHistoryRow, status: ReservationStatus) {
+  return Boolean(
+    reservation.assigned_volunteer_id ||
+      reservation.assigned_volunteer_name ||
+      reservation.assigned_volunteer_phone ||
+      status === "volunteer_started" ||
+      status === "picked_from_provider" ||
+      status === "completed"
+  );
+}
+
+function DetailItem({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-zinc-950">{value}</div>
+    </div>
+  );
 }
 
 export default function NGOReservationCard({
@@ -72,6 +140,7 @@ export default function NGOReservationCard({
   const status = getReservationStatus(reservation);
   const providerLatitude = toCoordinate(reservation.provider_latitude);
   const providerLongitude = toCoordinate(reservation.provider_longitude);
+  const showVolunteer = shouldShowVolunteer(reservation, status);
   const providerLocation =
     providerLatitude !== null && providerLongitude !== null
       ? {
@@ -87,18 +156,21 @@ export default function NGOReservationCard({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-zinc-950">
+              <h2 className="text-lg font-semibold leading-snug text-zinc-950">
                 {reservation.title}
               </h2>
               <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
                 {getReservationDisplayId(reservation.id)}
               </span>
               <span
-                className={`rounded-md border px-2 py-1 text-xs font-semibold capitalize ${getStatusClasses(
+                className={`rounded-md border px-2 py-1 text-xs font-semibold ${getStatusClasses(
                   status
                 )}`}
               >
-                {status}
+                {getStatusLabel(status)}
+              </span>
+              <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+                {displayValue(reservation.pickup_type)}
               </span>
               {price && (
                 <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -107,63 +179,82 @@ export default function NGOReservationCard({
               )}
             </div>
             {reservation.description && (
-              <p className="mt-2 line-clamp-2 text-sm text-zinc-600">
+              <p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-600">
                 {reservation.description}
               </p>
             )}
           </div>
         </div>
 
-        <div className="grid gap-3 text-sm sm:grid-cols-4">
-          <div>
-            <p className="text-xs font-medium uppercase text-zinc-500">Quantity</p>
-            <p className="mt-1 text-zinc-950">
-              {displayValue(reservation.quantity_reserved)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase text-zinc-500">Pickup</p>
-            <p className="mt-1 text-zinc-950">
-              {displayValue(reservation.pickup_type)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase text-zinc-500">Volunteer</p>
-            <p className="mt-1 text-zinc-950">
-              {displayValue(reservation.assigned_volunteer_id)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase text-zinc-500">Pickup Ends</p>
-            <p className="mt-1 text-zinc-950">
-              {formatFoodDate(reservation.pickup_end_time)}
-            </p>
-          </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <DetailItem
+            icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Quantity"
+            value={displayValue(reservation.quantity_reserved)}
+          />
+          <DetailItem
+            icon={<Truck className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Volunteer State"
+            value={getVolunteerState(reservation, status)}
+          />
+          <DetailItem
+            icon={<Clock3 className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Pickup Ends"
+            value={formatFoodDate(reservation.pickup_end_time)}
+          />
+          <DetailItem
+            icon={<Ticket className="h-3.5 w-3.5" aria-hidden="true" />}
+            label="Receive Code"
+            value={displayValue(reservation.receive_code)}
+          />
         </div>
 
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
-          <div className="flex flex-col justify-between gap-2 sm:flex-row">
-            <div>
-              <p className="font-medium text-zinc-950">Provider</p>
-              <p>{displayValue(reservation.provider_name)}</p>
-              <p>{displayValue(reservation.provider_phone)}</p>
+        <div className="grid gap-3 text-sm md:grid-cols-2">
+          <div className="rounded-md border border-zinc-200 bg-white p-3">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
+              <Store className="h-3.5 w-3.5" aria-hidden="true" />
+              Provider
             </div>
-            <div className="text-left sm:text-right">
-              <p className="font-medium text-zinc-950">Receive Code</p>
-              <p>{displayValue(reservation.receive_code)}</p>
-            </div>
+            <p className="mt-2 font-semibold text-zinc-950">
+              {displayValue(reservation.provider_name)}
+            </p>
+            <p className="mt-1 text-zinc-600">
+              {displayValue(reservation.provider_phone)}
+            </p>
           </div>
+
+          {showVolunteer && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase text-amber-700">
+                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+                Volunteer
+              </div>
+              <p className="mt-2 font-semibold text-zinc-950">
+                {displayValue(reservation.assigned_volunteer_name)}
+              </p>
+              <p className="mt-1 text-zinc-700">
+                {displayValue(reservation.assigned_volunteer_phone)}
+              </p>
+              <p className="mt-2 text-xs font-medium text-amber-800">
+                {getVolunteerState(reservation, status)}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
       {providerLocation && (
         <div className="space-y-3 border-t border-zinc-100 bg-zinc-50 p-4">
-          <p className="text-sm font-medium text-zinc-950">Restaurant Location</p>
-          <LocationMapPreview points={[providerLocation]} />
-          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-            <p className="text-sm text-zinc-600">
-              {displayValue(reservation.provider_address)}
-            </p>
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+            <div>
+              <p className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
+                <MapPin className="h-4 w-4" aria-hidden="true" />
+                Restaurant Location
+              </p>
+              <p className="mt-1 text-sm text-zinc-600">
+                {displayValue(reservation.provider_address)}
+              </p>
+            </div>
             <a
               href={getGoogleMapsUrl(
                 providerLocation.latitude,
@@ -171,11 +262,13 @@ export default function NGOReservationCard({
               )}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
             >
+              <Navigation className="h-4 w-4" aria-hidden="true" />
               Navigate
             </a>
           </div>
+          <LocationMapPreview points={[providerLocation]} />
         </div>
       )}
 

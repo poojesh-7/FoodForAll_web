@@ -376,6 +376,8 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   provider_address?: string | null;
   provider_latitude?: number | string | null;
   provider_longitude?: number | string | null;
+  assigned_volunteer_name?: string | null;
+  assigned_volunteer_phone?: string | null;
   review_id?: DbId | null;
   review_rating?: number | string | null;
   review_text?: string | null;

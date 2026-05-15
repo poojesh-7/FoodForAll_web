@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import LogoutButton from "@/components/LogoutButton";
 import ImpactMetricGrid from "@/components/analytics/ImpactMetricGrid";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { getRoleDashboard } from "@/lib/onboarding";
@@ -74,14 +73,13 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-6xl space-y-5">
-        <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <header>
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">Dashboard</h1>
             <p className="mt-1 text-sm text-zinc-600">
               Impact, reputation, and platform rescue totals.
             </p>
           </div>
-          <LogoutButton />
         </header>
 
         {error && (

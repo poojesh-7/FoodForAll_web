@@ -21,15 +21,21 @@ const roleLinks: Partial<Record<UserRole, { href: string; label: string }[]>> = 
     { href: "/ngo/nearby-listings", label: "Listings" },
     { href: "/ngo/incoming-requests", label: "Requests" },
     { href: "/ngo/reservations", label: "Reservations" },
+    { href: "/ngo/volunteers", label: "Volunteers" },
   ],
   volunteer: [
-    { href: "/volunteer/tasks", label: "Tasks" },
+    { href: "/volunteer/ngos", label: "NGOs" },
     { href: "/volunteer/requests", label: "Requests" },
+    { href: "/volunteer/tasks", label: "Tasks" },
   ],
   admin: [{ href: "/admin", label: "Admin" }],
 };
 
 function isActive(pathname: string, href: string) {
+  if (href === "/ngo" || href === "/volunteer/dashboard") {
+    return pathname === href;
+  }
+
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

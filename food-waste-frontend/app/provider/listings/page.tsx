@@ -171,7 +171,7 @@ export default function ProviderListingsPage() {
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-5xl space-y-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">Provider Listings</h1>
             <p className="text-sm text-zinc-600">Manage food listings from your restaurant.</p>
@@ -181,12 +181,6 @@ export default function ProviderListingsPage() {
             className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white"
           >
             Create
-          </Link>
-          <Link
-            href="/provider/reservations"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
-          >
-            Reservations
           </Link>
         </div>
 

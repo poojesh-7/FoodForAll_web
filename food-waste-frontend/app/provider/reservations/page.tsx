@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
@@ -170,7 +169,7 @@ export default function ProviderReservationsPage() {
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-6xl space-y-5">
-        <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <header>
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">
               Provider Reservations
@@ -179,12 +178,6 @@ export default function ProviderReservationsPage() {
               Confirm pickups, track requester type, and monitor volunteer assignment.
             </p>
           </div>
-          <Link
-            href="/provider/listings"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
-          >
-            Listings
-          </Link>
         </header>
 
         {error && (

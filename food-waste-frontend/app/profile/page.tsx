@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import LogoutButton from "@/components/LogoutButton";
 import { authService } from "@/services/auth";
 import { userService } from "@/services/user";
 import { useAuthStore } from "@/store/authStore";
@@ -144,15 +143,14 @@ export default function ProfilePage() {
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-3xl space-y-4">
-        <div className="flex items-center justify-between gap-3">
+        <header>
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">Profile</h1>
             <p className="text-sm text-zinc-600">
               View and update your account details.
             </p>
           </div>
-          <LogoutButton />
-        </div>
+        </header>
 
         {(error || success) && (
           <div className="space-y-2">

@@ -635,8 +635,11 @@ exports.completeProfile = async (req, res) => {
 };
 
 exports.updateLocation = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const userId = req.user.id;
+    const role = req.user.role;
 
     const {
       address,
@@ -666,7 +669,9 @@ exports.updateLocation = async (req, res) => {
     const latitudeValue = toNumber(latitude);
     const longitudeValue = toNumber(longitude);
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `
       UPDATE users
       SET
@@ -692,6 +697,36 @@ exports.updateLocation = async (req, res) => {
       ]
     );
 
+    if (role === "ngo") {
+      await client.query(
+        `
+        UPDATE ngos
+        SET
+          latitude = $1,
+          longitude = $2,
+          location = ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+        WHERE user_id = $3
+        `,
+        [latitudeValue, longitudeValue, userId]
+      );
+    }
+
+    if (role === "provider") {
+      await client.query(
+        `
+        UPDATE restaurants
+        SET
+          latitude = $1,
+          longitude = $2,
+          location = ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+        WHERE user_id = $3
+        `,
+        [latitudeValue, longitudeValue, userId]
+      );
+    }
+
+    await client.query("COMMIT");
+
     res.json({
       message:
         "Location updated successfully",
@@ -699,12 +734,15 @@ exports.updateLocation = async (req, res) => {
     });
 
   } catch (err) {
+    await client.query("ROLLBACK");
     logger.error("Location update failed", { err, userId: req.user?.id });
 
     res.status(500).json({
       error:
         "Failed to update location",
     });
+  } finally {
+    client.release();
   }
 };
 

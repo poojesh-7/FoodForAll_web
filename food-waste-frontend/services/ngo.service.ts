@@ -19,6 +19,7 @@ import type {
   NGORegistration,
   NGOReservationHistoryRow,
   NGOReservationsResponse,
+  NGOProfile,
   NGOUnassignedVolunteer,
   NGOUnassignedVolunteersResponse,
   NearbyFoodListing,
@@ -42,16 +43,7 @@ type MessageResponse = { message?: string };
 type LegacyNGOReservationsResponse = {
   reservations: NGOReservationHistoryRow[];
 };
-type MyNGOProfile = DbRow & {
-  id?: DbId;
-  user_id?: DbId;
-  organization_name?: string;
-  service_radius_km?: number | string;
-  urgent_flag?: boolean | null;
-  is_verified?: boolean;
-  latitude?: number | string | null;
-  longitude?: number | string | null;
-};
+type MyNGOProfile = NGOProfile & DbRow;
 type LegacyBulkReserveResponse = BulkReserveData;
 
 function getNGOData(body: RegisterNGOResponse | LegacyRegisterNGOResponse): RegisterNGOData {

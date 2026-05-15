@@ -3,9 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { authService } from "@/services/auth";
+import { foodService } from "@/services/food.service";
+import { ngoService } from "@/services/ngo.service";
 import { userService } from "@/services/user";
 import { useAuthStore } from "@/store/authStore";
-import type { UserProfile } from "@backend/contracts/api-contracts";
+import type {
+  NGOProfile,
+  RestaurantProfile,
+  UserProfile,
+  UserRole,
+} from "@backend/contracts/api-contracts";
 
 type ProfileForm = {
   name: string;
@@ -13,6 +20,54 @@ type ProfileForm = {
   profile_image: string;
   address: string;
 };
+
+type RoleProfile = NGOProfile | RestaurantProfile;
+
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function displayRadius(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  return `${String(value)} km`;
+}
+
+function displayCoordinates(
+  latitude: unknown,
+  longitude: unknown
+) {
+  if (
+    latitude === null ||
+    latitude === undefined ||
+    latitude === "" ||
+    longitude === null ||
+    longitude === undefined ||
+    longitude === ""
+  ) {
+    return "-";
+  }
+
+  return `${String(latitude)}, ${String(longitude)}`;
+}
+
+function getVerificationState(profile: RoleProfile | null) {
+  if (!profile) return "-";
+  if (profile.is_verified) return "Approved";
+  if (profile.rejection_reason) return "Rejected";
+  return "Pending";
+}
+
+function isNGOProfile(profile: RoleProfile | null): profile is NGOProfile {
+  return Boolean(profile && "organization_name" in profile);
+}
+
+function isRestaurantProfile(
+  profile: RoleProfile | null
+): profile is RestaurantProfile {
+  return Boolean(profile && "restaurant_name" in profile);
+}
 
 function getCurrentPosition() {
   return new Promise<GeolocationPosition>((resolve, reject) => {
@@ -26,6 +81,7 @@ export default function ProfilePage() {
   const fetchMe = useAuthStore((state) => state.fetchMe);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [roleProfile, setRoleProfile] = useState<RoleProfile | null>(null);
   const [form, setForm] = useState<ProfileForm>({
     name: "",
     email: "",
@@ -42,16 +98,30 @@ export default function ProfilePage() {
     if (!authUser?.id) return;
 
     let active = true;
+    const userId = authUser.id;
+    const role = authUser.role as UserRole | null | undefined;
 
-    userService
-      .getUser(authUser.id)
-      .then((result) => {
+    async function loadProfile() {
+      const accountProfile = await userService.getUser(userId);
+      const specializedProfile =
+        role === "ngo"
+          ? await ngoService.getMyNGO()
+          : role === "provider"
+            ? await foodService.getMyRestaurant()
+            : null;
+
+      return { accountProfile, specializedProfile };
+    }
+
+    loadProfile()
+      .then(({ accountProfile, specializedProfile }) => {
         if (!active) return;
 
-        setProfile(result);
+        setProfile(accountProfile);
+        setRoleProfile(specializedProfile);
         setForm({
-          name: result.name ?? "",
-          email: result.email ?? "",
+          name: accountProfile.name ?? "",
+          email: accountProfile.email ?? "",
           profile_image: "",
           address: "",
         });
@@ -66,7 +136,7 @@ export default function ProfilePage() {
     return () => {
       active = false;
     };
-  }, [authUser?.id]);
+  }, [authUser?.id, authUser?.role]);
 
   const saveProfile = async () => {
     if (!authUser?.id || saving) return;
@@ -123,6 +193,15 @@ export default function ProfilePage() {
         longitude: position.coords.longitude,
       });
       await fetchMe();
+      setRoleProfile((current) =>
+        current
+          ? {
+              ...current,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            }
+          : current
+      );
 
       setSuccess("Location updated successfully.");
     } catch (err) {
@@ -211,6 +290,153 @@ export default function ProfilePage() {
             {saving ? "Saving..." : "Save Profile"}
           </button>
         </section>
+
+        {isNGOProfile(roleProfile) && (
+          <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-950">NGO Details</h2>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  NGO name
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayValue(roleProfile.organization_name)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Registration number
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayValue(roleProfile.registration_number)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Service radius
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayRadius(roleProfile.service_radius_km)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Verification
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {getVerificationState(roleProfile)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Urgent requests
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayValue(roleProfile.urgent_flag)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Location
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayCoordinates(
+                    roleProfile.latitude,
+                    roleProfile.longitude
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {roleProfile.rejection_reason && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {roleProfile.rejection_reason}
+              </p>
+            )}
+          </section>
+        )}
+
+        {isRestaurantProfile(roleProfile) && (
+          <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-950">
+                Provider Details
+              </h2>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Restaurant name
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayValue(roleProfile.restaurant_name)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  FSSAI number
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayValue(roleProfile.fssai_number)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Service radius
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayRadius(roleProfile.service_radius_km)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Verification
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {getVerificationState(roleProfile)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Certificate
+                </p>
+                {roleProfile.fssai_certificate_url ? (
+                  <a
+                    href={roleProfile.fssai_certificate_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-medium text-zinc-950 underline underline-offset-2"
+                  >
+                    View certificate
+                  </a>
+                ) : (
+                  <p className="text-sm text-zinc-950">-</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Location
+                </p>
+                <p className="text-sm text-zinc-950">
+                  {displayCoordinates(
+                    roleProfile.latitude,
+                    roleProfile.longitude
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {roleProfile.rejection_reason && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {roleProfile.rejection_reason}
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-zinc-950">Location</h2>

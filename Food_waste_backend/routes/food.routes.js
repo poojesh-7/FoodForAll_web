@@ -12,6 +12,7 @@ router.post(
   upload.single("fssai_certificate"),
   foodCtrl.registerRestaurant,
 );
+router.get("/me", authMiddleware, requireVerified, foodCtrl.getMyRestaurant);
 router.post("/", authMiddleware, requireVerified, foodCtrl.createFood);
 router.put("/:id", authMiddleware, requireVerified, foodCtrl.updateFood);
 router.delete("/:id", authMiddleware, requireVerified, foodCtrl.deleteFood);

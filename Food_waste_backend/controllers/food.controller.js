@@ -227,6 +227,38 @@ exports.registerRestaurant = async (req, res) => {
   }
 };
 
+exports.getMyRestaurant = async (req, res) => {
+  try {
+    if (req.user.role !== "provider") {
+      return res.status(403).json({ error: "Only providers allowed" });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM restaurants
+      WHERE user_id=$1
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [req.user.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Restaurant profile not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    logger.error("Restaurant profile fetch failed", {
+      err,
+      userId: req.user?.id,
+    });
+
+    res.status(500).json({ error: "Restaurant profile fetch failed" });
+  }
+};
+
 const expiryQueue = require("../queues/expiry.queue");
 const alertQueue = require("../queues/expiryAlert.queue");
 

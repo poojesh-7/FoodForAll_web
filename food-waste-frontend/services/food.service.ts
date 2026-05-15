@@ -11,9 +11,11 @@ import type {
   GetAllFoodResponse,
   GetFoodByIdResponse,
   GetNearbyFoodResponse,
+  GetMyRestaurantResponse,
   RegisterRestaurantData,
   RegisterRestaurantRequest,
   RegisterRestaurantResponse,
+  RestaurantProfile,
   RestaurantRegistration,
   RequestNGORequest,
   RequestNGOResponse,
@@ -68,6 +70,14 @@ export async function registerRestaurant(
   });
 
   return getRestaurantData(data);
+}
+
+export async function getMyRestaurant(): Promise<RestaurantProfile> {
+  const { data } = await api.get<GetMyRestaurantResponse | RestaurantProfile>(
+    "/food/me"
+  );
+
+  return getEnvelopeData<RestaurantProfile>(data);
 }
 
 export async function createFood(
@@ -150,6 +160,7 @@ export async function requestNGO(
 
 export const foodService = {
   registerRestaurant,
+  getMyRestaurant,
   createFood,
   updateFood,
   deleteFood,

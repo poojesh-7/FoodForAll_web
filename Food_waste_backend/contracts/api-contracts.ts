@@ -114,6 +114,15 @@ export interface RestaurantRegistration {
   verification_status?: "pending" | "approved" | "rejected";
 }
 
+export interface RestaurantProfile extends RestaurantRegistration {
+  fssai_certificate_url?: string | null;
+  service_radius_km?: number | string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+}
+
 export interface NGORegistration {
   id: DbId;
   user_id: DbId;
@@ -122,6 +131,15 @@ export interface NGORegistration {
   is_verified: boolean;
   rejection_reason?: string | null;
   verification_status?: "pending" | "approved" | "rejected";
+}
+
+export interface NGOProfile extends NGORegistration {
+  registration_number?: string;
+  urgent_flag?: boolean | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
 }
 
 export interface FoodListingRow extends DbRow {
@@ -518,6 +536,7 @@ export interface RegisterRestaurantData {
   restaurant: RestaurantRegistration;
 }
 export type RegisterRestaurantResponse = ApiResponse<RegisterRestaurantData>;
+export type GetMyRestaurantResponse = ApiResponse<RestaurantProfile>;
 
 export interface CreateFoodRequest {
   title: string;
@@ -565,7 +584,7 @@ export interface RegisterNGOData {
   ngo: NGORegistration;
 }
 export type RegisterNGOResponse = ApiResponse<RegisterNGOData>;
-export type GetMyNGOResponse = ApiResponse<DbRow>;
+export type GetMyNGOResponse = ApiResponse<NGOProfile>;
 export type NGONearbyListingsResponse = ApiResponse<NearbyFoodListing[]>;
 
 export interface BulkReserveItem {
@@ -837,6 +856,15 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "RegisterRestaurantRequest", contentType: "multipart/form-data" },
       response: "RegisterRestaurantResponse",
       statusCodes: [201, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/food/me",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerified"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetMyRestaurantResponse",
+      statusCodes: [200, 401, 403, 404, 500],
     },
     {
       method: "POST",

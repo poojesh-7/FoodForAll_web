@@ -1,6 +1,7 @@
 const pool = require("../shared/config/db");
 
 const notificationQueue = require("../queues/notification.queue");
+const { ensureFoodListingSoftDeleteSchema } = require("../shared/services/foodListingSchema.service");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
 const logger = require("../shared/utils/logger");
 const {
@@ -489,6 +490,8 @@ exports.updateFood = async (req, res) => {
     return res.status(400).json({ error: "Food id is required" });
   }
 
+  await ensureFoodListingSoftDeleteSchema();
+
   const food = await pool.query("SELECT * FROM food_listings WHERE id=$1", [
     id,
   ]);
@@ -498,6 +501,10 @@ exports.updateFood = async (req, res) => {
 
   if (food.rows[0].provider_id !== req.user.id)
     return res.status(403).json({ error: "Unauthorized" });
+
+  if (food.rows[0].is_deleted || food.rows[0].status === "deleted") {
+    return res.status(409).json({ error: "Archived listings cannot be edited" });
+  }
 
   const { title, description, price, pickup_start_time, pickup_end_time } =
     req.body;
@@ -549,25 +556,84 @@ exports.deleteFood = async (req, res) => {
     return res.status(400).json({ error: "Food id is required" });
   }
 
-  const food = await pool.query("SELECT * FROM food_listings WHERE id=$1", [
-    id,
-  ]);
+  await ensureFoodListingSoftDeleteSchema();
 
-  if (food.rows.length === 0)
-    return res.status(404).json({ error: "Not found" });
+  const client = await pool.connect();
 
-  if (food.rows[0].provider_id !== req.user.id)
-    return res.status(403).json({ error: "Unauthorized" });
+  try {
+    await client.query("BEGIN");
 
-  const deleted = food.rows[0];
-  await pool.query("DELETE FROM food_listings WHERE id=$1", [id]);
+    const food = await client.query(
+      "SELECT * FROM food_listings WHERE id=$1 FOR UPDATE",
+      [id],
+    );
 
-  await publishListingUpdated(id, {
-    action: "deleted",
-    listing: { ...deleted, status: "deleted" },
-  });
+    if (food.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Not found" });
+    }
 
-  res.json({ message: "Deleted successfully" });
+    if (food.rows[0].provider_id !== req.user.id) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const activeReservations = await client.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM reservations
+      WHERE listing_id=$1
+      AND NOT (
+        status IN ('cancelled', 'expired', 'failed', 'picked_up', 'delivered', 'completed')
+        OR payment_status IN ('failed', 'expired', 'refunded')
+        OR task_status = 'delivered'
+        OR completed_at IS NOT NULL
+      )
+      `,
+      [id],
+    );
+
+    if (Number(activeReservations.rows[0]?.count ?? 0) > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "Cannot delete listing with active reservations.",
+      });
+    }
+
+    const result = await client.query(
+      `
+      UPDATE food_listings
+      SET is_deleted=true,
+          deleted_at=COALESCE(deleted_at, NOW()),
+          status='deleted'
+      WHERE id=$1
+      RETURNING *
+      `,
+      [id],
+    );
+
+    await client.query("COMMIT");
+
+    await publishListingUpdated(id, {
+      action: "deleted",
+      listing: result.rows[0],
+    });
+
+    res.json({
+      message: "Listing archived successfully.",
+      listing: result.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Food deletion failed", {
+      err,
+      listingId: id,
+      userId: req.user?.id,
+    });
+    res.status(500).json({ error: "Food deletion failed" });
+  } finally {
+    client.release();
+  }
 };
 
 // GET ALL FOOD
@@ -594,6 +660,8 @@ exports.getAllFood = async (req, res) => {
 
 // GET ACTIVE FOOD
 exports.getActiveFood = async (req, res) => {
+  await ensureFoodListingSoftDeleteSchema();
+
   const { lat, lng, radius = 5 } = req.query;
   const hasLat = isProvided(lat);
   const hasLng = isProvided(lng);
@@ -614,6 +682,7 @@ exports.getActiveFood = async (req, res) => {
          LIMIT 1
        ) restaurant ON true
        WHERE f.status = 'active'
+       AND f.is_deleted = false
        AND f.pickup_end_time > NOW()
        AND f.remaining_quantity > 0
        ORDER BY f.pickup_end_time ASC`
@@ -656,6 +725,7 @@ exports.getActiveFood = async (req, res) => {
       LIMIT 1
     ) restaurant ON true
     WHERE f.status = 'active'
+    AND f.is_deleted = false
     AND f.pickup_end_time > NOW()
     AND f.remaining_quantity > 0
     AND ST_DWithin(
@@ -678,6 +748,8 @@ exports.getFoodById = async (req, res) => {
   if (!isValidId(id)) {
     return res.status(400).json({ error: "Food id is required" });
   }
+
+  await ensureFoodListingSoftDeleteSchema();
 
   const result = await pool.query(
     `
@@ -707,6 +779,8 @@ exports.getFoodById = async (req, res) => {
 // GET NEARBY FOOD (basic radius search)
 exports.getNearbyFood = async (req, res) => {
   const { lat, lng, radius = 5 } = req.query;
+
+  await ensureFoodListingSoftDeleteSchema();
 
   if (!isProvided(lat) || !isProvided(lng)) {
     return res.status(400).json({ error: "Latitude and longitude required" });
@@ -744,6 +818,7 @@ exports.getNearbyFood = async (req, res) => {
       LIMIT 1
     ) restaurant ON true
     WHERE f.status='active'
+    AND f.is_deleted = false
     AND f.pickup_end_time > NOW()
     AND f.remaining_quantity > 0
     AND ST_DWithin(

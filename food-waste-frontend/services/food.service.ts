@@ -32,7 +32,7 @@ type LegacyCreateFoodResponse = {
   message?: string;
   listing: FoodListingRow;
 };
-type MessageResponse = { message?: string };
+type MessageResponse = { message?: string; listing?: FoodListingRow };
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -101,8 +101,12 @@ export async function updateFood(
   return getEnvelopeData<FoodListingRow>(data);
 }
 
-export async function deleteFood(id: string | number): Promise<void> {
-  await api.delete<DeleteFoodResponse | MessageResponse>(`/food/${id}`);
+export async function deleteFood(id: string | number): Promise<FoodListingRow | null> {
+  const { data } = await api.delete<DeleteFoodResponse | MessageResponse>(
+    `/food/${id}`
+  );
+  const body = getEnvelopeData<DeleteFoodResponse["data"] | MessageResponse>(data);
+  return "listing" in body ? body.listing ?? null : null;
 }
 
 export async function getAllFood(): Promise<FoodListingRow[]> {

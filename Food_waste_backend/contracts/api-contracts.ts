@@ -156,6 +156,8 @@ export interface FoodListingRow extends DbRow {
   latitude?: number | string;
   longitude?: number | string;
   status?: string;
+  is_deleted?: boolean;
+  deleted_at?: ISODateString | null;
   provider_name?: string | null;
   restaurant_name?: string | null;
 }
@@ -572,7 +574,10 @@ export interface UpdateFoodRequest {
   pickup_end_time?: ISODateString | null;
 }
 export type UpdateFoodResponse = ApiResponse<FoodListingRow>;
-export type DeleteFoodResponse = ApiResponse<EmptyData>;
+export interface DeleteFoodData {
+  listing: FoodListingRow;
+}
+export type DeleteFoodResponse = ApiResponse<DeleteFoodData>;
 export type GetAllFoodResponse = ApiResponse<FoodListingRow[]>;
 export type GetActiveFoodResponse = ApiResponse<Array<FoodListingRow | FoodListingWithDistance>>;
 export type GetNearbyFoodResponse = ApiResponse<NearbyFoodListing[]>;
@@ -903,7 +908,7 @@ export const apiContracts = {
       middleware: ["authMiddleware", "requireVerified"],
       request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
       response: "DeleteFoodResponse",
-      statusCodes: [200, 400, 401, 403, 404, 500],
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
     },
     {
       method: "GET",

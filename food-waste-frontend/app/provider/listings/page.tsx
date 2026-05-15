@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
+import toast from "react-hot-toast";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatFoodDate, getListingPrice } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
@@ -27,6 +29,8 @@ function toNumber(value: unknown) {
 }
 
 function isActiveListing(listing: FoodListingRow) {
+  if (listing.is_deleted || listing.status === "deleted") return false;
+
   const status = String(listing.status ?? "active").toLowerCase();
   const pickupEnd = listing.pickup_end_time
     ? new Date(listing.pickup_end_time).getTime()
@@ -38,6 +42,8 @@ function isActiveListing(listing: FoodListingRow) {
 }
 
 function getListingStatusLabel(listing: FoodListingRow) {
+  if (listing.is_deleted || listing.status === "deleted") return "archived";
+
   const status = String(listing.status ?? "active").toLowerCase();
   const pickupEnd = listing.pickup_end_time
     ? new Date(listing.pickup_end_time).getTime()
@@ -113,6 +119,108 @@ function ListingReviews({
   );
 }
 
+function ArchiveListingModal({
+  listing,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  listing: FoodListingRow | null;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!listing) return;
+
+    cancelButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !loading) {
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [listing, loading, onCancel]);
+
+  return (
+    <AnimatePresence>
+      {listing && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16 }}
+          onMouseDown={() => {
+            if (!loading) onCancel();
+          }}
+        >
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="archive-listing-title"
+            aria-describedby="archive-listing-description"
+            className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 shadow-xl"
+            initial={{ opacity: 0, scale: 0.96, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div>
+              <h2
+                id="archive-listing-title"
+                className="text-lg font-semibold text-zinc-950"
+              >
+                Archive this listing?
+              </h2>
+              <p className="mt-2 text-sm font-medium text-zinc-700">
+                {String(listing.title ?? "Untitled food")}
+              </p>
+              <p
+                id="archive-listing-description"
+                className="mt-4 text-sm leading-6 text-zinc-600"
+              >
+                Archived listings are removed from public discovery but reservation,
+                payment, review, penalty, and refund history remain preserved.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-zinc-600">
+                Listings with active reservations or ongoing pickups cannot be
+                archived.
+              </p>
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                ref={cancelButtonRef}
+                type="button"
+                onClick={onCancel}
+                disabled={loading}
+                className="inline-flex min-h-10 items-center justify-center rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={loading}
+                className="inline-flex min-h-10 items-center justify-center rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? "Archiving..." : "Archive Listing"}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function ProviderListingsPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -123,6 +231,7 @@ export default function ProviderListingsPage() {
     useState<ProviderRatingSummary | null>(null);
   const [listingRatings, setListingRatings] = useState<Record<string, ListingRating[]>>({});
   const [selectedListingId, setSelectedListingId] = useState<DbId | null>(null);
+  const [archiveListing, setArchiveListing] = useState<FoodListingRow | null>(null);
   const [selectedNGOId, setSelectedNGOId] = useState("");
   const [listingView, setListingView] = useState<ListingView>("active");
   const [loading, setLoading] = useState(true);
@@ -205,24 +314,36 @@ export default function ProviderListingsPage() {
     );
   }, [listingVersion, listingsById]);
 
-  const deleteListing = async (id: DbId) => {
-    if (!confirm("Delete this listing?")) return;
-
+  const archiveSelectedListing = async () => {
+    if (!archiveListing?.id) return;
+    const id = archiveListing.id;
     try {
       setActionLoading(true);
       setError("");
       setSuccess("");
-      await foodService.deleteFood(id);
+      const archivedListing = await foodService.deleteFood(id);
       setListings((current) =>
-        current.filter((listing) => String(listing.id) !== String(id))
+        current.map((listing) =>
+          String(listing.id) === String(id)
+            ? archivedListing ?? {
+                ...listing,
+                is_deleted: true,
+                deleted_at: new Date().toISOString(),
+                status: "deleted",
+              }
+            : listing
+        )
       );
-      setSuccess("Listing deleted successfully.");
+      setListingView("history");
+      setArchiveListing(null);
+      setSuccess("Listing archived successfully.");
     } catch (err) {
       const message = foodService.getErrorMessage(err);
       if (isPendingVerificationError(message)) {
         router.push(pendingVerificationRoute);
         return;
       }
+      toast.error(message);
       setError(message);
     } finally {
       setActionLoading(false);
@@ -278,6 +399,12 @@ export default function ProviderListingsPage() {
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
+      <ArchiveListingModal
+        listing={archiveListing}
+        loading={actionLoading}
+        onCancel={() => setArchiveListing(null)}
+        onConfirm={archiveSelectedListing}
+      />
       <div className="mx-auto max-w-7xl space-y-5">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
@@ -464,7 +591,11 @@ export default function ProviderListingsPage() {
                       <div className="flex flex-wrap gap-2">
                         <Link
                           href={`/provider/listings/edit/${String(listing.id)}`}
-                          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
+                          className={`rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 ${
+                            listing.is_deleted || listing.status === "deleted"
+                              ? "pointer-events-none opacity-50"
+                              : ""
+                          }`}
                         >
                           Edit
                         </Link>
@@ -476,11 +607,16 @@ export default function ProviderListingsPage() {
                           Request NGO
                         </button>
                         <button
-                          onClick={() => listing.id && deleteListing(listing.id)}
-                          disabled={!listing.id || actionLoading}
+                          onClick={() => setArchiveListing(listing)}
+                          disabled={
+                            !listing.id ||
+                            actionLoading ||
+                            listing.is_deleted ||
+                            listing.status === "deleted"
+                          }
                           className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50"
                         >
-                          Delete
+                          Archive
                         </button>
                       </div>
                     </div>

@@ -95,7 +95,7 @@ export default function NotificationBell() {
       </button>
 
       <div
-        className={`absolute right-0 z-50 mt-2 w-[min(24rem,calc(100vw-1rem))] origin-top-right overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl transition duration-150 ${
+        className={`fixed inset-x-2 top-16 z-50 max-h-[calc(100dvh-5rem)] origin-top-right overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl transition duration-150 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(24rem,calc(100vw-1rem))] ${
           open
             ? "scale-100 opacity-100"
             : "pointer-events-none scale-95 opacity-0"
@@ -120,7 +120,7 @@ export default function NotificationBell() {
           </button>
         </div>
 
-        <div className="max-h-[26rem] overflow-y-auto">
+        <div className="max-h-[calc(100dvh-12rem)] overflow-y-auto sm:max-h-[26rem]">
           <NotificationList
             compact
             error={error}

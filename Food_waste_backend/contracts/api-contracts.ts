@@ -387,6 +387,12 @@ export interface NGOIncomingRequest {
   title: string;
   remaining_quantity: number | string;
   provider_name: string | null;
+  provider_id?: DbId;
+  provider_phone?: string | null;
+  pickup_end_time?: ISODateString | null;
+  requested_at?: ISODateString | null;
+  trust_score?: number | string | null;
+  restriction_level?: number | string | null;
 }
 
 export interface NGOReservationHistoryRow extends ReservationRow {

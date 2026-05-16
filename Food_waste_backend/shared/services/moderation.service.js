@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
+const { providerDisplaySelect } = require("./providerDisplay.service");
 const { recordViolation } = require("./restriction.service");
 
 const REPORT_REASONS = new Set([
@@ -140,7 +141,7 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
   const result = await client.query(
     `
     SELECT pr.*,
-           COALESCE(restaurant.restaurant_name, provider.name) AS provider_name,
+           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
            COALESCE(reporter_ngo.organization_name, reporter.name) AS reporter_name,
            reporter.role AS reporter_role,
            r.pickup_type AS reservation_pickup_type,
@@ -150,7 +151,14 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
     FROM provider_reports pr
     JOIN users provider ON provider.id = pr.provider_id
     JOIN users reporter ON reporter.id = pr.reported_by
-    LEFT JOIN restaurants restaurant ON restaurant.user_id = provider.id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id=provider.id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     LEFT JOIN ngos reporter_ngo ON reporter_ngo.user_id = reporter.id
     LEFT JOIN reservations r ON r.id = pr.reservation_id
     LEFT JOIN food_listings f ON f.id = r.listing_id

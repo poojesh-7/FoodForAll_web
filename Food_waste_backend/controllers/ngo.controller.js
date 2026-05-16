@@ -11,6 +11,7 @@ const {
 } = require("../shared/services/realtime.service");
 const { createReservationPayment } = require("../shared/services/payment.service");
 const { getReservationPolicy } = require("../shared/services/restriction.service");
+const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
@@ -947,10 +948,24 @@ exports.viewIncomingRequests = async (req, res) => {
            f.id AS listing_id,
            f.title,
            f.remaining_quantity,
-           u.name AS provider_name
+           f.pickup_end_time,
+           nr.requested_at,
+           provider.id AS provider_id,
+           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+           provider.phone AS provider_phone,
+           provider.trust_score,
+           provider.restriction_level
     FROM ngo_requests nr
     JOIN food_listings f ON f.id=nr.listing_id
-    JOIN users u ON u.id=f.provider_id
+    JOIN users provider ON provider.id=f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id=f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     WHERE nr.ngo_id=$1
     AND nr.status='pending'
     ORDER BY nr.requested_at DESC

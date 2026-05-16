@@ -2,6 +2,7 @@ const pool = require("../shared/config/db");
 
 const notificationQueue = require("../queues/notification.queue");
 const { ensureFoodListingSoftDeleteSchema } = require("../shared/services/foodListingSchema.service");
+const { resolveProviderDisplayName } = require("../shared/services/providerDisplay.service");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
 const logger = require("../shared/utils/logger");
 const {
@@ -13,14 +14,6 @@ const {
   isValidLongitude,
   toNumber,
 } = require("../utils/validation");
-
-function getProviderDisplayName(food) {
-  return (
-    String(food.restaurant_name || "").trim() ||
-    String(food.provider_name || "").trim() ||
-    "A provider"
-  );
-}
 
 function isFreeRescueListing(food) {
   return Boolean(food.is_free) || Number(food.price) === 0;
@@ -977,7 +970,13 @@ exports.requestNGO = async (req, res) => {
            restaurant.restaurant_name
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id
-    LEFT JOIN restaurants restaurant ON restaurant.user_id=f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name
+      FROM restaurants
+      WHERE user_id=f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     WHERE f.id=$1 AND f.provider_id=$2
     `,
     [listingId, req.user.id]
@@ -987,7 +986,7 @@ exports.requestNGO = async (req, res) => {
     return res.status(404).json({ error: "Listing not found" });
 
   const food = listing.rows[0];
-  const providerDisplayName = getProviderDisplayName(food);
+  const providerDisplayName = resolveProviderDisplayName(food);
 
   if (!isFreeRescueListing(food)) {
     return res.status(403).json({

@@ -6,6 +6,8 @@ type FoodListingFormProps = {
   values: FoodFormValues;
   mode: "create" | "edit";
   loading: boolean;
+  canEditPricing?: boolean;
+  pickupStartLabel?: string;
   onChange: (values: FoodFormValues) => void;
   onSubmit: () => void;
 };
@@ -14,6 +16,8 @@ export default function FoodListingForm({
   values,
   mode,
   loading,
+  canEditPricing = true,
+  pickupStartLabel,
   onChange,
   onSubmit,
 }: FoodListingFormProps) {
@@ -36,21 +40,19 @@ export default function FoodListingForm({
         onChange={(event) => update({ description: event.target.value })}
       />
 
-      {mode === "create" && (
-        <input
-          value={values.quantity}
-          inputMode="numeric"
-          placeholder="Quantity"
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => update({ quantity: event.target.value })}
-        />
-      )}
+      <input
+        value={values.quantity}
+        inputMode="numeric"
+        placeholder="Quantity"
+        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+        onChange={(event) => update({ quantity: event.target.value })}
+      />
 
       <label className="flex items-center gap-2 text-sm text-zinc-700">
         <input
           type="checkbox"
           checked={values.is_free}
-          disabled={mode === "edit"}
+          disabled={!canEditPricing}
           onChange={(event) =>
             update({
               is_free: event.target.checked,
@@ -65,21 +67,35 @@ export default function FoodListingForm({
         value={values.price}
         inputMode="decimal"
         placeholder="Price"
-        disabled={values.is_free}
+        disabled={values.is_free || !canEditPricing}
         className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
         onChange={(event) => update({ price: event.target.value })}
       />
+      {!canEditPricing && (
+        <p className="text-sm text-zinc-600">
+          Price and free status are locked once reservations exist.
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-sm text-zinc-700">
-          Pickup start
-          <input
-            value={values.pickup_start_time}
-            type="datetime-local"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-            onChange={(event) => update({ pickup_start_time: event.target.value })}
-          />
-        </label>
+        {mode === "create" ? (
+          <label className="space-y-1 text-sm text-zinc-700">
+            Pickup start
+            <input
+              value={values.pickup_start_time}
+              type="datetime-local"
+              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+              onChange={(event) => update({ pickup_start_time: event.target.value })}
+            />
+          </label>
+        ) : (
+          <div className="space-y-1 text-sm text-zinc-700">
+            <p>Pickup start</p>
+            <p className="min-h-10 rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-zinc-700">
+              {pickupStartLabel || "Not set"}
+            </p>
+          </div>
+        )}
 
         <label className="space-y-1 text-sm text-zinc-700">
           Pickup end

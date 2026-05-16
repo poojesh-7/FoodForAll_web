@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import toast from "react-hot-toast";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
-import { formatFoodDate, getListingPrice } from "@/lib/food";
+import { formatFoodDate, getListingPrice, isFreeRescueListing } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -351,6 +351,12 @@ export default function ProviderListingsPage() {
   };
 
   const openNGORequest = async (id: DbId) => {
+    const listing = listings.find((item) => String(item.id) === String(id));
+    if (!listing || !isFreeRescueListing(listing)) {
+      setError("NGO rescue is only available for free listings.");
+      return;
+    }
+
     try {
       setSelectedListingId(id);
       setSelectedNGOId("");
@@ -555,7 +561,13 @@ export default function ProviderListingsPage() {
                           )}
                         </div>
                         {getListingPrice(listing) && (
-                          <span className="shrink-0 rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700">
+                          <span
+                            className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${
+                              isFreeRescueListing(listing)
+                                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border border-amber-200 bg-amber-50 text-amber-800"
+                            }`}
+                          >
                             {getListingPrice(listing)}
                           </span>
                         )}
@@ -587,6 +599,11 @@ export default function ProviderListingsPage() {
                           </p>
                         </div>
                       </div>
+                      <p className="text-sm font-medium text-zinc-600">
+                        {isFreeRescueListing(listing)
+                          ? "Donation listing: NGO rescue requests are available."
+                          : "Paid listing: reserved for direct self-purchase."}
+                      </p>
 
                       <div className="flex flex-wrap gap-2">
                         <Link
@@ -599,13 +616,15 @@ export default function ProviderListingsPage() {
                         >
                           Edit
                         </Link>
-                        <button
-                          onClick={() => listing.id && openNGORequest(listing.id)}
-                          disabled={!listing.id || actionLoading || !isActiveListing(listing)}
-                          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-950 disabled:opacity-50"
-                        >
-                          Request NGO
-                        </button>
+                        {isFreeRescueListing(listing) && (
+                          <button
+                            onClick={() => listing.id && openNGORequest(listing.id)}
+                            disabled={!listing.id || actionLoading || !isActiveListing(listing)}
+                            className="rounded-md border border-emerald-200 px-3 py-1.5 text-sm font-medium text-emerald-700 disabled:opacity-50"
+                          >
+                            Request NGO
+                          </button>
+                        )}
                         <button
                           onClick={() => setArchiveListing(listing)}
                           disabled={

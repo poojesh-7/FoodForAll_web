@@ -14,6 +14,18 @@ const {
   toNumber,
 } = require("../utils/validation");
 
+function getProviderDisplayName(food) {
+  return (
+    String(food.restaurant_name || "").trim() ||
+    String(food.provider_name || "").trim() ||
+    "A provider"
+  );
+}
+
+function isFreeRescueListing(food) {
+  return Boolean(food.is_free) || Number(food.price) === 0;
+}
+
 exports.registerRestaurant = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -492,60 +504,149 @@ exports.updateFood = async (req, res) => {
 
   await ensureFoodListingSoftDeleteSchema();
 
-  const food = await pool.query("SELECT * FROM food_listings WHERE id=$1", [
-    id,
-  ]);
+  const client = await pool.connect();
 
-  if (food.rows.length === 0)
-    return res.status(404).json({ error: "Not found" });
+  try {
+    await client.query("BEGIN");
 
-  if (food.rows[0].provider_id !== req.user.id)
-    return res.status(403).json({ error: "Unauthorized" });
+    const food = await client.query(
+      "SELECT * FROM food_listings WHERE id=$1 FOR UPDATE",
+      [id],
+    );
 
-  if (food.rows[0].is_deleted || food.rows[0].status === "deleted") {
-    return res.status(409).json({ error: "Archived listings cannot be edited" });
+    if (food.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const current = food.rows[0];
+
+    if (current.provider_id !== req.user.id) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    if (current.is_deleted || current.status === "deleted") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Archived listings cannot be edited" });
+    }
+
+    const { title, description, price, is_free, quantity, pickup_end_time } =
+      req.body;
+    const endTime = new Date(pickup_end_time).getTime();
+    const originalStartTime = new Date(current.pickup_start_time).getTime();
+
+    if (!isProvided(title) || !isProvided(pickup_end_time)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Title and pickup end time are required" });
+    }
+
+    if (!Number.isFinite(endTime) || endTime <= Date.now()) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Pickup end time must be in the future" });
+    }
+
+    if (Number.isFinite(originalStartTime) && originalStartTime >= endTime) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Pickup end time must be after pickup start" });
+    }
+
+    const reservationSummary = await client.query(
+      `
+      SELECT COUNT(*)::int AS reservation_count
+      FROM reservations
+      WHERE listing_id=$1
+      `,
+      [id],
+    );
+    const reservationCount = reservationSummary.rows[0]?.reservation_count || 0;
+
+    const currentQuantity = toNumber(current.quantity);
+    const currentRemaining = toNumber(current.remaining_quantity);
+    const nextQuantity = isProvided(quantity) ? toNumber(quantity) : currentQuantity;
+
+    if (!isIntegerInRange(nextQuantity, 1, 10000)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Quantity must be greater than 0" });
+    }
+
+    const quantityDelta = nextQuantity - currentQuantity;
+    const nextRemaining = currentRemaining + quantityDelta;
+
+    if (nextRemaining < 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "Quantity cannot be lower than already reserved items",
+      });
+    }
+
+    const requestedFree =
+      is_free === true || is_free === "true"
+        ? true
+        : is_free === false || is_free === "false"
+          ? false
+          : Boolean(current.is_free);
+    const requestedPrice = isProvided(price) ? toNumber(price) : toNumber(current.price);
+    const nextPrice = requestedFree ? 0 : requestedPrice;
+    const pricingChanged =
+      requestedFree !== Boolean(current.is_free) ||
+      Number(nextPrice) !== Number(current.price);
+
+    if (pricingChanged && reservationCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "Price and free status cannot be changed after reservations exist",
+      });
+    }
+
+    if (!Number.isFinite(nextPrice) || nextPrice < 0 || nextPrice > 100000) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Invalid price" });
+    }
+
+    if (!requestedFree && nextPrice <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Paid food must have valid price" });
+    }
+
+    const result = await client.query(
+      `UPDATE food_listings
+       SET title=$1,
+           description=$2,
+           quantity=$3,
+           remaining_quantity=$4,
+           price=$5,
+           is_free=$6,
+           pickup_end_time=$7
+       WHERE id=$8
+       RETURNING *`,
+      [
+        String(title).trim(),
+        description,
+        nextQuantity,
+        nextRemaining,
+        nextPrice,
+        requestedFree,
+        pickup_end_time,
+        id,
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    await publishListingUpdated(id, {
+      action: "updated",
+      listing: result.rows[0],
+    });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Food update failed", { err, listingId: id, userId: req.user?.id });
+    res.status(500).json({ error: "Food update failed" });
+  } finally {
+    client.release();
   }
-
-  const { title, description, price, pickup_start_time, pickup_end_time } =
-    req.body;
-  const priceValue = toNumber(price);
-  const startTime = new Date(pickup_start_time).getTime();
-  const endTime = new Date(pickup_end_time).getTime();
-
-  if (!isProvided(title) || !isProvided(pickup_end_time)) {
-    return res.status(400).json({ error: "Title and pickup end time are required" });
-  }
-
-  if (!Number.isFinite(priceValue) || priceValue < 0 || priceValue > 100000) {
-    return res.status(400).json({ error: "Invalid price" });
-  }
-
-  if (Number.isFinite(startTime) && startTime >= endTime) {
-    return res.status(400).json({ error: "Start time must be before end time" });
-  }
-
-  if (!Number.isFinite(endTime) || endTime <= Date.now()) {
-    return res.status(400).json({ error: "Pickup end time must be in the future" });
-  }
-
-  const result = await pool.query(
-    `UPDATE food_listings
-     SET title=$1,
-         description=$2,
-         price=$3,
-         pickup_start_time=$4,
-         pickup_end_time=$5
-     WHERE id=$6
-     RETURNING *`,
-    [String(title).trim(), description, priceValue, pickup_start_time, pickup_end_time, id],
-  );
-
-  await publishListingUpdated(id, {
-    action: "updated",
-    listing: result.rows[0],
-  });
-
-  res.json(result.rows[0]);
 };
 
 // DELETE FOOD
@@ -755,7 +856,12 @@ exports.getFoodById = async (req, res) => {
     `
     SELECT f.*,
            u.name AS provider_name,
-           restaurant.restaurant_name
+           restaurant.restaurant_name,
+           (
+             SELECT COUNT(*)::int
+             FROM reservations r
+             WHERE r.listing_id=f.id
+           ) AS reservation_count
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
     LEFT JOIN LATERAL (
@@ -866,9 +972,12 @@ exports.requestNGO = async (req, res) => {
   // 1️⃣ Validate listing
   const listing = await pool.query(
     `
-    SELECT f.*, u.name AS provider_name
+    SELECT f.*,
+           u.name AS provider_name,
+           restaurant.restaurant_name
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id
+    LEFT JOIN restaurants restaurant ON restaurant.user_id=f.provider_id
     WHERE f.id=$1 AND f.provider_id=$2
     `,
     [listingId, req.user.id]
@@ -878,6 +987,13 @@ exports.requestNGO = async (req, res) => {
     return res.status(404).json({ error: "Listing not found" });
 
   const food = listing.rows[0];
+  const providerDisplayName = getProviderDisplayName(food);
+
+  if (!isFreeRescueListing(food)) {
+    return res.status(403).json({
+      error: "NGO rescue is only available for free listings.",
+    });
+  }
 
   // ⏱ Time check
   const endTime = new Date(food.pickup_end_time).getTime();
@@ -949,7 +1065,7 @@ exports.requestNGO = async (req, res) => {
     userId: ngoUserId,
     type: "ngo_request_received",
     title: "New Food Rescue Request",
-    message: `${food.provider_name} requested your NGO to collect food: ${food.title}`,
+    message: `${providerDisplayName} requested your NGO to collect food: ${food.title}`,
   });
 
   const io = req.app.get("io");

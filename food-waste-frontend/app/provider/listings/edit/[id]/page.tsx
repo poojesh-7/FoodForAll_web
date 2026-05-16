@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import FoodListingForm from "@/components/FoodListingForm";
 import { foodService } from "@/services/food.service";
 import {
+  formatFoodDate,
   getFoodValidationError,
   toDateTimeLocal,
   type FoodFormValues,
@@ -29,6 +30,8 @@ export default function EditProviderListingPage() {
   const id = params.id;
 
   const [values, setValues] = useState<FoodFormValues>(emptyValues);
+  const [pickupStartLabel, setPickupStartLabel] = useState("");
+  const [canEditPricing, setCanEditPricing] = useState(true);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState("");
@@ -55,6 +58,8 @@ export default function EditProviderListingPage() {
           pickup_start_time: toDateTimeLocal(listing.pickup_start_time),
           pickup_end_time: toDateTimeLocal(listing.pickup_end_time),
         });
+        setPickupStartLabel(formatFoodDate(listing.pickup_start_time));
+        setCanEditPricing(Number(listing.reservation_count ?? 0) === 0);
       })
       .catch((err) => setError(foodService.getErrorMessage(err)))
       .finally(() => {
@@ -69,7 +74,10 @@ export default function EditProviderListingPage() {
   const submit = async () => {
     if (loading) return;
 
-    const validationError = getFoodValidationError(values, false);
+    const validationError = getFoodValidationError(values, {
+      includeQuantity: true,
+      includePickupStart: false,
+    });
     if (validationError) {
       setError(validationError);
       return;
@@ -82,8 +90,9 @@ export default function EditProviderListingPage() {
       await foodService.updateFood(id, {
         title: values.title.trim(),
         description: values.description.trim() || null,
+        quantity: Number(values.quantity),
         price: values.is_free ? 0 : Number(values.price),
-        pickup_start_time: new Date(values.pickup_start_time).toISOString(),
+        is_free: values.is_free,
         pickup_end_time: new Date(values.pickup_end_time).toISOString(),
       });
 
@@ -125,6 +134,8 @@ export default function EditProviderListingPage() {
             values={values}
             mode="edit"
             loading={loading}
+            canEditPricing={canEditPricing}
+            pickupStartLabel={pickupStartLabel}
             onChange={setValues}
             onSubmit={submit}
           />

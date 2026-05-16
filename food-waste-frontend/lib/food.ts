@@ -14,7 +14,19 @@ export type FoodFormValues = {
   pickup_end_time: string;
 };
 
-export function getFoodValidationError(values: FoodFormValues, includeQuantity = true) {
+type FoodValidationOptions = {
+  includeQuantity?: boolean;
+  includePickupStart?: boolean;
+};
+
+export function getFoodValidationError(
+  values: FoodFormValues,
+  options: boolean | FoodValidationOptions = true
+) {
+  const includeQuantity =
+    typeof options === "boolean" ? options : options.includeQuantity ?? true;
+  const includePickupStart =
+    typeof options === "boolean" ? options : options.includePickupStart ?? true;
   const title = values.title.trim();
   const quantity = Number(values.quantity);
   const price = Number(values.price);
@@ -22,23 +34,25 @@ export function getFoodValidationError(values: FoodFormValues, includeQuantity =
   const startTime = new Date(values.pickup_start_time).getTime();
   const endTime = new Date(values.pickup_end_time).getTime();
 
-  if (!title || !values.pickup_start_time || !values.pickup_end_time) {
-    return "Title, pickup start, and pickup end time are required.";
+  if (!title || !values.pickup_end_time || (includePickupStart && !values.pickup_start_time)) {
+    return includePickupStart
+      ? "Title, pickup start, and pickup end time are required."
+      : "Title and pickup end time are required.";
   }
 
   if (includeQuantity && (!Number.isFinite(quantity) || quantity <= 0)) {
     return "Quantity must be greater than 0.";
   }
 
-  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+  if ((includePickupStart && !Number.isFinite(startTime)) || !Number.isFinite(endTime)) {
     return "Enter valid pickup times.";
   }
 
-  if (startTime < now) {
+  if (includePickupStart && startTime < now) {
     return "Pickup start time cannot be in the past.";
   }
 
-  if (startTime >= endTime) {
+  if (includePickupStart && startTime >= endTime) {
     return "Start time must be before end time.";
   }
 
@@ -90,4 +104,11 @@ export function getListingPrice(listing: FoodCardListing) {
   if (!("is_free" in listing)) return "";
   if (listing.is_free) return "Free";
   return `Rs. ${String("price" in listing ? listing.price ?? 0 : 0)}`;
+}
+
+export function isFreeRescueListing(listing: FoodCardListing) {
+  return (
+    Boolean("is_free" in listing && listing.is_free) ||
+    Number("price" in listing ? listing.price : 0) === 0
+  );
 }

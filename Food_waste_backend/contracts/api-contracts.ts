@@ -168,6 +168,7 @@ export interface FoodListingRow extends DbRow {
   deleted_at?: ISODateString | null;
   provider_name?: string | null;
   restaurant_name?: string | null;
+  reservation_count?: number | string;
 }
 
 export interface FoodListingWithDistance extends FoodListingRow {
@@ -598,7 +599,9 @@ export type CreateFoodResponse = ApiResponse<FoodListingData>;
 export interface UpdateFoodRequest {
   title?: string | null;
   description?: string | null;
+  quantity?: number | string | null;
   price?: number | string | null;
+  is_free?: boolean | "true" | "false" | null;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString | null;
 }

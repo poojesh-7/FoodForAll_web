@@ -242,6 +242,12 @@ exports.createReservation = async (req, res) => {
     res.status(201).json({
       reservation,
       payment,
+      pricing: {
+        foodAmount,
+        depositAmount,
+        totalAmount: foodAmount + depositAmount,
+        requiresDeposit: depositAmount > 0,
+      },
       policy: {
         ...policy,
         depositAmount,
@@ -1016,6 +1022,79 @@ exports.markAsPickedUp = async (req, res) => {
     });
   } finally {
     client.release();
+  }
+};
+
+exports.previewReservation = async (req, res) => {
+  if (req.user.role !== "user") {
+    return res.status(403).json({ error: "Only users allowed" });
+  }
+
+  const { listing_id, quantity } = req.body;
+  const quantityValue = toNumber(quantity);
+
+  if (!isValidId(listing_id)) {
+    return res.status(400).json({ error: "Listing id is required" });
+  }
+
+  if (!isProvided(quantity) || !isIntegerInRange(quantityValue, 1, 2)) {
+    return res.status(400).json({ error: "Quantity must be 1 or 2" });
+  }
+
+  try {
+    const foodResult = await pool.query(
+      `
+      SELECT id, price, is_free, remaining_quantity, status, pickup_end_time
+      FROM food_listings
+      WHERE id=$1
+      `,
+      [listing_id]
+    );
+
+    if (!foodResult.rows.length) {
+      return res.status(404).json({ error: "Listing not found" });
+    }
+
+    const food = foodResult.rows[0];
+
+    if (food.is_free) {
+      return res.status(403).json({ error: "Free listings are only available for NGOs" });
+    }
+
+    if (String(food.status || "active") !== "active") {
+      return res.status(409).json({ error: "Listing is not active" });
+    }
+
+    if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
+      return res.status(409).json({ error: "Listing pickup window has ended" });
+    }
+
+    if (toNumber(food.remaining_quantity) < quantityValue) {
+      return res.status(409).json({ error: "Not enough quantity" });
+    }
+
+    const foodAmount = Number(food.price) * quantityValue;
+    const policy = await getReservationPolicy({
+      userId: req.user.id,
+      role: req.user.role,
+      foodCost: foodAmount,
+    });
+    const depositAmount = policy.requiresDeposit ? Number(policy.depositAmount || 0) : 0;
+
+    res.json({
+      foodAmount,
+      depositAmount,
+      totalAmount: foodAmount + depositAmount,
+      requiresDeposit: depositAmount > 0,
+      policy: {
+        ...policy,
+        depositAmount,
+        requiresDeposit: depositAmount > 0,
+      },
+    });
+  } catch (err) {
+    logger.error("Reservation preview failed", { err, userId: req.user?.id, listingId: listing_id });
+    res.status(500).json({ error: "Reservation preview failed" });
   }
 };
 

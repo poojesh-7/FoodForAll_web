@@ -13,6 +13,8 @@ import type {
   ProviderReservationRow,
   ReportProviderRequest,
   ReportProviderResponse,
+  ReservationPricingPreview,
+  ReservationPricingPreviewResponse,
   ReservationDetails,
   ReservationHistoryRow,
   ReservationWithPaymentData,
@@ -55,6 +57,17 @@ export async function createReservation(
   >("/reservations", payload);
 
   return getEnvelopeData<ReservationWithPaymentData>(data);
+}
+
+export async function previewReservation(payload: {
+  listing_id: DbId;
+  quantity: number | string;
+}): Promise<ReservationPricingPreview> {
+  const { data } = await api.post<
+    ReservationPricingPreviewResponse | ReservationPricingPreview
+  >("/reservations/preview", payload);
+
+  return getEnvelopeData<ReservationPricingPreview>(data);
 }
 
 export async function getReservationById(
@@ -103,6 +116,7 @@ export async function reportProvider(
 
 export const reservationService = {
   createReservation,
+  previewReservation,
   getMyReservations,
   getReservationById,
   getProviderReservations,

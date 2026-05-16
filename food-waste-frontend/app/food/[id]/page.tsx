@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import ReviewList from "@/components/ratings/ReviewList";
+import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { foodService } from "@/services/food.service";
 import { impactService } from "@/services/impact.service";
@@ -35,6 +36,7 @@ import type {
   ListingRating,
   ReservationDetails,
   ProviderRatingSummary,
+  ReservationPricingPreview,
 } from "@backend/contracts/api-contracts";
 
 const PAYMENT_POLL_ATTEMPTS = 8;
@@ -98,6 +100,9 @@ export default function FoodDetailPage() {
   const [providerRatings, setProviderRatings] =
     useState<ProviderRatingSummary | null>(null);
   const [quantity, setQuantity] = useState("1");
+  const [pricingPreview, setPricingPreview] =
+    useState<ReservationPricingPreview | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(false);
   const [reserving, setReserving] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -141,6 +146,55 @@ export default function FoodDetailPage() {
       active = false;
     };
   }, [params.id]);
+
+  useEffect(() => {
+    if (!listing?.id || listing.is_free) {
+      queueMicrotask(() => {
+        setPricingPreview(null);
+        setPricingLoading(false);
+      });
+      return;
+    }
+
+    const quantityValue = Number(quantity);
+    const maxQuantity = Math.min(getRemainingQuantity(listing), 2);
+
+    if (
+      !Number.isFinite(quantityValue) ||
+      quantityValue <= 0 ||
+      quantityValue > maxQuantity
+    ) {
+      queueMicrotask(() => {
+        setPricingPreview(null);
+        setPricingLoading(false);
+      });
+      return;
+    }
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setPricingLoading(true);
+      reservationService
+        .previewReservation({
+          listing_id: listing.id as DbId,
+          quantity: quantityValue,
+        })
+        .then((preview) => {
+          if (active) setPricingPreview(preview);
+        })
+        .catch(() => {
+          if (active) setPricingPreview(null);
+        })
+        .finally(() => {
+          if (active) setPricingLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [listing, quantity]);
 
   const pollReservationPayment = async (reservationId: DbId) => {
     let latest: ReservationDetails | null = null;
@@ -196,10 +250,12 @@ export default function FoodDetailPage() {
         listingId: listing.id,
       });
 
-      const depositAmount = Number(result.policy?.depositAmount ?? 0);
+      const depositAmount = Number(
+        result.payment.reliability_deposit_amount ?? result.policy?.depositAmount ?? 0
+      );
       setCheckoutMessage(
         depositAmount > 0
-          ? `Opening secure Cashfree checkout. Total includes a refundable Rs. ${depositAmount.toFixed(2)} reliability deposit.`
+          ? `Rs. ${depositAmount.toFixed(2)} refundable reliability deposit added. Deposit will be refunded automatically after successful pickup completion.`
           : "Opening secure Cashfree checkout..."
       );
       const checkoutResult = await openCashfreeCheckout({
@@ -257,6 +313,13 @@ export default function FoodDetailPage() {
   const providerName = listing ? getProviderDisplayName(listing) : "-";
   const pickupUrgent = listing ? isPickupUrgent(listing.pickup_end_time) : false;
   const quantityValue = Number(quantity);
+  const fallbackFoodAmount =
+    listing && Number.isFinite(quantityValue)
+      ? Number(listing.price || 0) * Math.max(quantityValue, 0)
+      : 0;
+  const foodAmount = pricingPreview?.foodAmount ?? fallbackFoodAmount;
+  const depositAmount = pricingPreview?.depositAmount ?? 0;
+  const totalAmount = pricingPreview?.totalAmount ?? foodAmount + depositAmount;
 
   const setQuantityWithinLimit = (nextValue: number) => {
     const bounded = Math.max(1, Math.min(maxReservableQuantity || 1, nextValue));
@@ -412,15 +475,29 @@ export default function FoodDetailPage() {
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={reserveAndPay}
-                    disabled={!canReserve || reserving}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <CreditCard className="h-4 w-4" aria-hidden="true" />
-                    {reserving ? "Processing payment..." : "Reserve and Pay"}
-                  </button>
+                  <div className="w-full max-w-md space-y-3 lg:w-[28rem]">
+                    {canReserve && (
+                      <PricingBreakdown
+                        role="user"
+                        foodAmount={foodAmount}
+                        depositAmount={depositAmount}
+                        totalAmount={totalAmount}
+                        requiresDeposit={pricingPreview?.requiresDeposit}
+                        loading={pricingLoading}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={reserveAndPay}
+                      disabled={!canReserve || reserving || pricingLoading}
+                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <CreditCard className="h-4 w-4" aria-hidden="true" />
+                      {reserving
+                        ? "Processing payment..."
+                        : `Reserve & Pay Rs. ${totalAmount.toFixed(2)}`}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 space-y-3">

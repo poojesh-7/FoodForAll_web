@@ -499,6 +499,13 @@ exports.bulkReserve = async (req, res) => {
     res.json({
       reservations: created,
       payment,
+      pricing: {
+        foodAmount: 0,
+        depositAmount: policy.requiresDeposit ? Number(policy.depositAmount || 0) : 0,
+        totalAmount: policy.requiresDeposit ? Number(policy.depositAmount || 0) : 0,
+        requiresDeposit: Boolean(policy.requiresDeposit),
+        totalQuantity,
+      },
       policy,
     });
 
@@ -540,6 +547,105 @@ exports.viewVolunteers = async (req, res) => {
   );
 
   res.json(result.rows);
+};
+
+exports.previewBulkReserve = async (req, res) => {
+  if (req.user.role !== "ngo") {
+    return res.status(403).json({ error: "Only NGOs allowed" });
+  }
+
+  const { reservations } = req.body;
+
+  if (!Array.isArray(reservations) || reservations.length === 0) {
+    return res.status(400).json({ error: "Reservations are required" });
+  }
+
+  let totalQuantity = 0;
+
+  for (const item of reservations) {
+    if (!isValidId(item?.listing_id)) {
+      return res.status(400).json({ error: "Listing id is required" });
+    }
+
+    const quantity = toNumber(item?.quantity);
+
+    if (!isIntegerInRange(quantity, 1, 40)) {
+      return res.status(400).json({ error: "Quantity must be an integer between 1 and 40" });
+    }
+
+    totalQuantity += quantity;
+  }
+
+  if (totalQuantity > 40) {
+    return res.status(400).json({
+      error: "NGO cannot reserve more than 40 items at once",
+    });
+  }
+
+  try {
+    const policy = await getReservationPolicy({
+      userId: req.user.id,
+      role: "ngo",
+    });
+
+    if (!policy.canReserve) {
+      return res.status(403).json({
+        error: policy.restrictionReason || "NGO reservation restricted",
+      });
+    }
+
+    for (const item of reservations) {
+      const quantity = toNumber(item.quantity);
+      const foodResult = await pool.query(
+        `
+        SELECT id, is_free, remaining_quantity, status, pickup_end_time
+        FROM food_listings
+        WHERE id=$1
+        `,
+        [item.listing_id]
+      );
+
+      const food = foodResult.rows[0];
+
+      if (!food) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      if (!food.is_free) {
+        return res.status(403).json({ error: "NGOs can reserve only free listings" });
+      }
+
+      if (String(food.status || "active") !== "active") {
+        return res.status(409).json({ error: "Listing is not active" });
+      }
+
+      if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
+        return res.status(409).json({ error: "Listing pickup window has ended" });
+      }
+
+      if (toNumber(food.remaining_quantity) < quantity) {
+        return res.status(409).json({ error: "Not enough quantity" });
+      }
+    }
+
+    const depositAmount = policy.requiresDeposit ? Number(policy.depositAmount || 0) : 0;
+
+    res.json({
+      foodAmount: 0,
+      depositAmount,
+      totalAmount: depositAmount,
+      requiresDeposit: depositAmount > 0,
+      totalQuantity,
+      policy: {
+        ...policy,
+        depositAmount,
+        requiresDeposit: depositAmount > 0,
+      },
+    });
+  } catch (err) {
+    logger.error("NGO bulk reservation preview failed", { err, userId: req.user?.id });
+    res.status(500).json({ error: "Reservation preview failed" });
+  }
 };
 
 // 👤 View unassigned volunteers

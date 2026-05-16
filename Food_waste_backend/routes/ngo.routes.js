@@ -26,6 +26,12 @@ router.post(
   reservationRestrictionMiddleware,
   ngoCtrl.bulkReserve,
 );
+router.post(
+  "/bulk-reserve/preview",
+  authMiddleware,
+  requireVerified,
+  ngoCtrl.previewBulkReserve,
+);
 router.get(
   "/reservations",
   authMiddleware,

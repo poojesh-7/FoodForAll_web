@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import { formatFoodDate } from "@/lib/food";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { savePaymentSession } from "@/lib/payment-flow";
@@ -10,7 +11,11 @@ import { mergeListingRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId, NearbyFoodListing } from "@backend/contracts/api-contracts";
+import type {
+  DbId,
+  NearbyFoodListing,
+  ReservationPricingPreview,
+} from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 type LocationForm = {
@@ -59,6 +64,9 @@ export default function NGONearbyListingsPage() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reserving, setReserving] = useState(false);
+  const [pricingPreview, setPricingPreview] =
+    useState<ReservationPricingPreview | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const listingVersion = useRealtimeStore((state) => state.listingVersion);
@@ -90,6 +98,37 @@ export default function NGONearbyListingsPage() {
     (sum, item) => sum + item.quantity,
     0
   );
+
+  useEffect(() => {
+    if (selectedReservations.length === 0) {
+      queueMicrotask(() => {
+        setPricingPreview(null);
+        setPricingLoading(false);
+      });
+      return;
+    }
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setPricingLoading(true);
+      ngoService
+        .previewBulkReserve({ reservations: selectedReservations })
+        .then((preview) => {
+          if (active) setPricingPreview(preview);
+        })
+        .catch(() => {
+          if (active) setPricingPreview(null);
+        })
+        .finally(() => {
+          if (active) setPricingLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [selectedReservations]);
 
   const search = async (nextForm = form) => {
     if (!nextForm.lat || !nextForm.lng) {
@@ -189,10 +228,13 @@ export default function NGONearbyListingsPage() {
           paymentSessionId: result.payment.payment_session_id,
           reservationId: result.reservations[0].id,
         });
+        const depositAmount = Number(
+          result.payment.reliability_deposit_amount ?? result.policy?.depositAmount ?? 0
+        );
         setSuccess(
-          `Reservation created. Checkout includes refundable reliability deposit Rs. ${Number(
-            result.payment.reliability_deposit_amount ?? result.policy?.depositAmount ?? 0
-          ).toFixed(2)}.`
+          depositAmount > 0
+            ? `Reservation created. Rs. ${depositAmount.toFixed(2)} refundable reliability deposit added. Deposit will be refunded automatically after successful rescue completion.`
+            : "Reservation created. Opening checkout."
         );
         await openCashfreeCheckout({
           paymentSessionId: result.payment.payment_session_id,
@@ -272,17 +314,38 @@ export default function NGONearbyListingsPage() {
       {success && <NGOStateBlock title={success} tone="success" />}
 
       {listings.length > 0 && (
-        <section className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
-          <p className="text-sm text-zinc-600">
-            {selectedReservations.length} listings selected, {totalSelected} total items
-          </p>
-          <button
-            onClick={reserveSelected}
-            disabled={reserving || selectedReservations.length === 0}
-            className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {reserving ? "Reserving..." : "Reserve Selected"}
-          </button>
+        <section className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm lg:grid-cols-[1fr_28rem] lg:items-start">
+          <div>
+            <p className="text-sm font-medium text-zinc-950">
+              {selectedReservations.length} listings selected
+            </p>
+            <p className="mt-1 text-sm text-zinc-600">
+              {totalSelected} total items selected for NGO rescue.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {selectedReservations.length > 0 && (
+              <PricingBreakdown
+                role="ngo"
+                foodAmount={pricingPreview?.foodAmount ?? 0}
+                depositAmount={pricingPreview?.depositAmount ?? 0}
+                totalAmount={pricingPreview?.totalAmount ?? 0}
+                requiresDeposit={pricingPreview?.requiresDeposit}
+                loading={pricingLoading}
+              />
+            )}
+            <button
+              onClick={reserveSelected}
+              disabled={reserving || pricingLoading || selectedReservations.length === 0}
+              className="min-h-10 w-full rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reserving
+                ? "Reserving..."
+                : pricingPreview?.totalAmount
+                  ? `Reserve & Pay Rs. ${pricingPreview.totalAmount.toFixed(2)}`
+                  : "Reserve Selected"}
+            </button>
+          </div>
         </section>
       )}
 

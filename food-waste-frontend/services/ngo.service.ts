@@ -31,6 +31,8 @@ import type {
   RejectVolunteerJoinRequestResponse,
   RequestVolunteerRequest,
   RequestVolunteerResponse,
+  ReservationPricingPreview,
+  ReservationPricingPreviewResponse,
   SetUrgentRequest,
   SetUrgentResponse,
 } from "@backend/contracts/api-contracts";
@@ -96,6 +98,16 @@ export async function bulkReserve(
   );
 
   return getEnvelopeData<BulkReserveData>(data);
+}
+
+export async function previewBulkReserve(
+  payload: BulkReserveRequest
+): Promise<ReservationPricingPreview> {
+  const { data } = await api.post<
+    ReservationPricingPreviewResponse | ReservationPricingPreview
+  >("/ngos/bulk-reserve/preview", payload);
+
+  return getEnvelopeData<ReservationPricingPreview>(data);
 }
 
 export async function getAssignedVolunteers(): Promise<NGOAssignedVolunteer[]> {
@@ -190,6 +202,7 @@ export const ngoService = {
   getMyNGO,
   getNearbyListings,
   bulkReserve,
+  previewBulkReserve,
   getAssignedVolunteers,
   getUnassignedVolunteers,
   requestVolunteer,

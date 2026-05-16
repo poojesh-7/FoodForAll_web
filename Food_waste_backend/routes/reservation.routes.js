@@ -13,6 +13,7 @@ router.post(
   reservationRestrictionMiddleware,
   reservationCtrl.createReservation
 );
+router.post("/preview", authMiddleware, reservationCtrl.previewReservation);
 router.get("/my", authMiddleware, reservationCtrl.getMyReservations);
 router.get("/provider", authMiddleware, reservationCtrl.getProviderReservations);
 router.get("/:id", authMiddleware, reservationCtrl.getReservationById);

@@ -242,11 +242,22 @@ export interface ReservationWithPaymentData {
   reservation: ReservationRow;
   payment: PaymentCreateResult;
   policy?: RestrictionPolicy;
+  pricing?: ReservationPricingPreview;
 }
 
 export interface BulkReserveData {
   reservations: ReservationRow[];
   payment: PaymentCreateResult | null;
+  policy?: RestrictionPolicy;
+  pricing?: ReservationPricingPreview;
+}
+
+export interface ReservationPricingPreview {
+  foodAmount: number;
+  depositAmount: number;
+  totalAmount: number;
+  requiresDeposit: boolean;
+  totalQuantity?: number;
   policy?: RestrictionPolicy;
 }
 
@@ -650,6 +661,7 @@ export interface BulkReserveRequest {
   reservations: BulkReserveItem[];
 }
 export type BulkReserveResponse = ApiResponse<BulkReserveData>;
+export type ReservationPricingPreviewResponse = ApiResponse<ReservationPricingPreview>;
 export type NGOAssignedVolunteersResponse = ApiResponse<NGOAssignedVolunteer[]>;
 export type NGOUnassignedVolunteersResponse = ApiResponse<NGOUnassignedVolunteer[]>;
 export type NGOVolunteerJoinRequestsResponse = ApiResponse<NGOVolunteerJoinRequest[]>;

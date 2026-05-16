@@ -5,6 +5,7 @@ import {
   MapPin,
   Navigation,
   Package,
+  ShieldCheck,
   Store,
   Ticket,
   UserRound,
@@ -62,6 +63,15 @@ function getReservationDisplayId(id?: DbId) {
 function toCoordinate(value: unknown) {
   const coordinate = Number(value);
   return Number.isFinite(coordinate) ? coordinate : null;
+}
+
+function toMoney(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMoney(value: unknown) {
+  return `Rs. ${toMoney(value).toFixed(2)}`;
 }
 
 function getGoogleMapsUrl(latitude: number, longitude: number) {
@@ -203,6 +213,9 @@ export default function ReservationCard({
       Boolean(reservation.assigned_volunteer_name) ||
       Boolean(reservation.assigned_volunteer_phone));
   const pickupUrgent = isPickupUrgent(reservation, status);
+  const depositAmount = toMoney(reservation.reliability_deposit_amount);
+  const foodAmount = toMoney(reservation.food_amount);
+  const showDeposit = depositAmount > 0;
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -261,6 +274,31 @@ export default function ReservationCard({
             label="Reserved"
             value={formatFoodDate(reservation.reserved_at ?? reservation.created_at)}
           />
+          {showDeposit && (
+            <DetailItem
+              icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Refundable Deposit"
+              value={
+                <span>
+                  {formatMoney(depositAmount)}
+                  <span className="mt-1 block text-xs font-medium text-zinc-500">
+                    {String(reservation.reliability_deposit_status ?? "held").replace(
+                      /_/g,
+                      " "
+                    )}
+                  </span>
+                </span>
+              }
+              emphasis
+            />
+          )}
+          {showDeposit && foodAmount > 0 && (
+            <DetailItem
+              icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Food Price"
+              value={formatMoney(foodAmount)}
+            />
+          )}
         </div>
 
         <div className="grid gap-3 text-sm md:grid-cols-2">

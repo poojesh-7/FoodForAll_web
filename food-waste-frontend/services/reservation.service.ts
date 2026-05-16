@@ -11,6 +11,8 @@ import type {
   MarkAsPickedUpRequest,
   MarkAsPickedUpResponse,
   ProviderReservationRow,
+  ReportProviderRequest,
+  ReportProviderResponse,
   ReservationDetails,
   ReservationHistoryRow,
   ReservationWithPaymentData,
@@ -89,6 +91,16 @@ export async function confirmPickup(
   );
 }
 
+export async function reportProvider(
+  id: DbId,
+  payload: ReportProviderRequest
+): Promise<void> {
+  await api.post<ReportProviderResponse | MessageResponse>(
+    `/reservations/${encodeId(id)}/report-provider`,
+    payload
+  );
+}
+
 export const reservationService = {
   createReservation,
   getMyReservations,
@@ -96,5 +108,6 @@ export const reservationService = {
   getProviderReservations,
   cancelReservation,
   confirmPickup,
+  reportProvider,
   getErrorMessage,
 };

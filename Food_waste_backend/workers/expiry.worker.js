@@ -6,6 +6,8 @@ const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
 
 const notificationQueue = require("../queues/notification.queue");
+const { applyPenalty } = require("../shared/services/penalty.service");
+const { retainReliabilityDeposit } = require("../shared/services/payment.service");
 const {
   publishListingUpdated,
   publishReservationUpdated,
@@ -50,11 +52,13 @@ const expiryWorker = new Worker(
       */
       const reservations = await client.query(
         `
-        SELECT id,user_id,quantity_reserved,pickup_type,assigned_volunteer_id
-        FROM reservations
-        WHERE listing_id=$1
-        AND status='reserved'
-        AND task_status IN ('pending','self_pickup')
+        SELECT r.id,r.user_id,r.quantity_reserved,r.pickup_type,r.assigned_volunteer_id,
+               f.price
+        FROM reservations r
+        JOIN food_listings f ON f.id = r.listing_id
+        WHERE r.listing_id=$1
+        AND r.status='reserved'
+        AND r.task_status IN ('pending','self_pickup')
         FOR UPDATE
         `,
         [listingId]
@@ -95,67 +99,25 @@ const expiryWorker = new Worker(
         [listingId]
       );
 
-      /*
-      5️⃣ NGO penalty
-      */
-      const ngoUsers = expired.rows
-        .filter((r) => r.pickup_type === "ngo" && !r.assigned_volunteer_id)
-        .map((r) => r.user_id);
+      const expiredById = new Map(expired.rows.map((reservation) => [reservation.id, reservation]));
+      for (const reservation of reservations.rows) {
+        if (!expiredById.has(reservation.id)) continue;
 
-      if (ngoUsers.length) {
-        await client.query(
-          `UPDATE users SET penalty_count = penalty_count + 1 WHERE id = ANY($1)`,
-          [ngoUsers]
-        );
+        if (reservation.pickup_type === "ngo" && reservation.assigned_volunteer_id) {
+          continue;
+        }
 
-        await client.query(
-          `
-          UPDATE users
-          SET banned_until = NOW() + INTERVAL '24 hours'
-          WHERE id = ANY($1)
-          AND penalty_count % 3 = 0
-          `,
-          [ngoUsers]
-        );
+        const role = reservation.pickup_type === "ngo" ? "ngo" : "user";
+        await applyPenalty({
+          client,
+          userId: reservation.user_id,
+          role,
+          reservationId: reservation.id,
+          reason: "Food not picked up before pickup window ended",
+          foodCost: Number(reservation.price || 0) * Number(reservation.quantity_reserved || 0),
+        });
+        await retainReliabilityDeposit(client, reservation.id);
       }
-
-      /*
-      6️⃣ USER penalty (self pickup)
-      */
-      const normalUsers = expired.rows
-        .filter((r) => r.pickup_type === "self_pickup")
-        .map((r) => r.user_id);
-
-      if (normalUsers.length) {
-        await client.query(
-          `UPDATE users SET penalty_count = penalty_count + 1 WHERE id = ANY($1)`,
-          [normalUsers]
-        );
-
-        await client.query(
-          `
-          UPDATE users
-          SET banned_until = NOW() + INTERVAL '1 hour'
-          WHERE id = ANY($1)
-          AND penalty_count % 3 = 0
-          `,
-          [normalUsers]
-        );
-      }
-
-      /*
-      7️⃣ Penalty logs
-      */
-     await client.query(
-       `
-       INSERT INTO penalties (user_id,reservation_id,reason)
-        SELECT user_id,id,'Food not picked up before pickup window ended'
-        FROM reservations
-        WHERE listing_id=$1
-        AND task_status='expired'
-        `,
-        [listingId]
-      );
       
       /*
       7️⃣ update ngo requests

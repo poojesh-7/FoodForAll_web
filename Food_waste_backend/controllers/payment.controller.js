@@ -9,6 +9,7 @@ const {
   publishListingUpdated,
   publishPaymentUpdated,
   publishReservationUpdated,
+  publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
@@ -479,6 +480,14 @@ exports.cashfreeWebhook = async (req, res) => {
             action: "payment_changed",
             reservation,
           }),
+          reservation?.pickup_type === "ngo" &&
+          reservation?.status === "reserved" &&
+          reservation?.task_status === "pending"
+            ? publishTaskAvailabilityUpdated(reservationId, {
+                action: "available",
+                reservation,
+              })
+            : Promise.resolve(),
           reservation?.listing_id
             ? publishListingUpdated(reservation.listing_id, {
                 action: "quantity_updated",

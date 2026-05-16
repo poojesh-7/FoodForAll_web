@@ -6,6 +6,9 @@ const {
   registrationLimiter,
   reservationCreateLimiter,
 } = require("../middlewares/rateLimit.middleware");
+const {
+  reservationRestrictionMiddleware,
+} = require("../middlewares/restriction.middleware");
 
 router.post("/register", authMiddleware, registrationLimiter, ngoCtrl.registerNGO);
 router.get("/me", authMiddleware, requireVerified, ngoCtrl.getMyNGO);
@@ -20,6 +23,7 @@ router.post(
   authMiddleware,
   reservationCreateLimiter,
   requireVerified,
+  reservationRestrictionMiddleware,
   ngoCtrl.bulkReserve,
 );
 router.get(
@@ -75,6 +79,7 @@ router.put(
   "/requests/:requestID/accept",
   authMiddleware,
   requireVerified,
+  reservationRestrictionMiddleware,
   ngoCtrl.acceptNGORequest,
 );
 router.put(

@@ -7,6 +7,7 @@ const navItems = [
   { href: "/admin", label: "Operations" },
   { href: "/admin/ngos", label: "NGO Moderation" },
   { href: "/admin/restaurants", label: "Restaurant Moderation" },
+  { href: "/admin/provider-reports", label: "Provider Reports" },
   { href: "/admin/queues", label: "Queues" },
 ];
 
@@ -46,7 +47,7 @@ export default function AdminShell({
 
               return (
                 <Link
-                  key={item.href}
+                  key={`${item.href}-${item.label}`}
                   href={item.href}
                   className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
                     active

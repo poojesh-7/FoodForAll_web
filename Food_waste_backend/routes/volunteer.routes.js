@@ -1,6 +1,9 @@
 const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const volunteerCtrl = require("../controllers/volunteer.controller");
+const {
+  volunteerRestrictionMiddleware,
+} = require("../middlewares/restriction.middleware");
 
 router.get("/available", authMiddleware, volunteerCtrl.viewAvailableNGOs);
 router.get("/dashboard", authMiddleware, volunteerCtrl.getDashboard);
@@ -12,8 +15,18 @@ router.put(
   authMiddleware,
   volunteerCtrl.respondToRequest,
 );
-router.put("/tasks/:id/start", authMiddleware, volunteerCtrl.startTask);
+router.put(
+  "/tasks/:id/start",
+  authMiddleware,
+  volunteerRestrictionMiddleware,
+  volunteerCtrl.startTask
+);
 router.put("/tasks/:id/complete", authMiddleware, volunteerCtrl.completeTask);
-router.get("/tasks", authMiddleware, volunteerCtrl.getTasks);
+router.get(
+  "/tasks",
+  authMiddleware,
+  volunteerRestrictionMiddleware,
+  volunteerCtrl.getTasks
+);
 
 module.exports = router;

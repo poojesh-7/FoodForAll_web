@@ -196,7 +196,12 @@ export default function FoodDetailPage() {
         listingId: listing.id,
       });
 
-      setCheckoutMessage("Opening secure Cashfree checkout...");
+      const depositAmount = Number(result.policy?.depositAmount ?? 0);
+      setCheckoutMessage(
+        depositAmount > 0
+          ? `Opening secure Cashfree checkout. Total includes a refundable Rs. ${depositAmount.toFixed(2)} reliability deposit.`
+          : "Opening secure Cashfree checkout..."
+      );
       const checkoutResult = await openCashfreeCheckout({
         paymentSessionId: result.payment.payment_session_id,
       });

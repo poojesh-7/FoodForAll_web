@@ -41,6 +41,24 @@ export type AdminRestaurant = PendingRestaurantRow & {
 
 type MessageResponse = { message?: string };
 
+export type AdminProviderReport = {
+  id: DbId;
+  provider_id: DbId;
+  reported_by: DbId;
+  reservation_id?: DbId | null;
+  reason: string;
+  description?: string | null;
+  status: string;
+  created_at?: string;
+  provider_name?: string | null;
+  reporter_name?: string | null;
+  reporter_role?: string | null;
+  reservation_pickup_type?: string | null;
+  reservation_status?: string | null;
+  reservation_task_status?: string | null;
+  listing_title?: string | null;
+};
+
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
     return (body as { data: TData }).data;
@@ -128,6 +146,24 @@ export async function getQueueHealth(): Promise<AdminQueueHealth[]> {
   return getEnvelopeData<{ queues: AdminQueueHealth[] }>(data).queues;
 }
 
+export async function getProviderReports(
+  status: "pending" | "all" = "pending"
+): Promise<AdminProviderReport[]> {
+  const { data } = await api.get<
+    { reports: AdminProviderReport[] } | { data: { reports: AdminProviderReport[] } }
+  >("/admin/provider-reports", { params: { status } });
+
+  return getEnvelopeData<{ reports: AdminProviderReport[] }>(data).reports;
+}
+
+export async function validateProviderReport(id: DbId): Promise<void> {
+  await api.patch<MessageResponse>(`/admin/provider-reports/${String(id)}/validate`);
+}
+
+export async function dismissProviderReport(id: DbId): Promise<void> {
+  await api.patch<MessageResponse>(`/admin/provider-reports/${String(id)}/dismiss`);
+}
+
 export const adminService = {
   getPendingNGOs,
   approveNGO,
@@ -137,6 +173,9 @@ export const adminService = {
   rejectRestaurant,
   getOperationalSummary,
   getQueueHealth,
+  getProviderReports,
+  validateProviderReport,
+  dismissProviderReport,
   getBullBoardUrl,
   getAssetUrl,
   getErrorMessage,

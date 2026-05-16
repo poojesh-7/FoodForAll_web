@@ -763,6 +763,14 @@ exports.getMe = async (req, res) => {
         u.email,
         u.phone,
         u.role,
+        u.reliability_deposit_amount,
+        u.requires_reliability_deposit,
+        u.restriction_level,
+        u.restriction_reason,
+        u.cooldown_until,
+        u.banned_until,
+        u.trust_score,
+        u.restriction_type,
         CASE
           WHEN u.role = 'ngo' THEN COALESCE((
             SELECT n.is_verified

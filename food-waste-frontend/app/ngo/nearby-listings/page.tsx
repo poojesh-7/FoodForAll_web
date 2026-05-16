@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import { formatFoodDate } from "@/lib/food";
+import { openCashfreeCheckout } from "@/lib/cashfree";
+import { savePaymentSession } from "@/lib/payment-flow";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
@@ -181,11 +183,23 @@ export default function NGONearbyListingsPage() {
           .filter((listing) => getListingQuantity(listing) > 0)
       );
       setQuantities({});
-      setSuccess(
-        result.payment
-          ? "Reservation created. Payment handling is not part of this phase."
-          : "Reservation created successfully."
-      );
+      if (result.payment && result.reservations[0]?.id) {
+        savePaymentSession({
+          orderId: result.payment.order_id,
+          paymentSessionId: result.payment.payment_session_id,
+          reservationId: result.reservations[0].id,
+        });
+        setSuccess(
+          `Reservation created. Checkout includes refundable reliability deposit Rs. ${Number(
+            result.payment.reliability_deposit_amount ?? result.policy?.depositAmount ?? 0
+          ).toFixed(2)}.`
+        );
+        await openCashfreeCheckout({
+          paymentSessionId: result.payment.payment_session_id,
+        });
+      } else {
+        setSuccess("Reservation created successfully.");
+      }
     } catch (err) {
       const message = ngoService.getErrorMessage(err);
       setError(

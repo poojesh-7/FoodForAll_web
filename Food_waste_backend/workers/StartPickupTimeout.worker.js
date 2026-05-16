@@ -13,6 +13,7 @@ const {
   publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
+const { applyPenalty } = require("../shared/services/penalty.service");
 
 /*
 Socket publisher
@@ -24,9 +25,6 @@ async function publishSocketEvent(room, event, data) {
   );
 }
 
-/*
-Volunteer penalty logic (UNCHANGED)
-*/
 async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
   await client.query(
     `
@@ -46,34 +44,13 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
     [volunteerId]
   );
 
-  await client.query(
-    `
-    INSERT INTO penalties (user_id,reservation_id,reason)
-    VALUES ($1,$2,$3)
-    `,
-    [volunteerId, reservationId, reason]
-  );
-
-  const penalty = await client.query(
-    `
-    UPDATE users
-    SET penalty_count = penalty_count + 1
-    WHERE id=$1
-    RETURNING penalty_count
-    `,
-    [volunteerId]
-  );
-
-  if (penalty.rows[0].penalty_count >= 5) {
-    await client.query(
-      `
-      UPDATE users
-      SET banned_until = NOW() + INTERVAL '24 hours'
-      WHERE id=$1
-      `,
-      [volunteerId]
-    );
-  }
+  await applyPenalty({
+    client,
+    userId: volunteerId,
+    role: "volunteer",
+    reservationId,
+    reason,
+  });
 }
 
 /*

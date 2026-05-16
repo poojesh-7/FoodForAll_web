@@ -8,6 +8,11 @@ const deliveryQueue = require("../queues/delivery.queue");
 const notificationQueue = require("../queues/notification.queue");
 const paymentQueue = require("../queues/payment.queue");
 const refundQueue = require("../queues/refund.queue");
+const {
+  dismissProviderReport,
+  listProviderReports,
+  validateProviderReport,
+} = require("../shared/services/moderation.service");
 
 const monitoredQueues = [
   expiryQueue,
@@ -262,3 +267,58 @@ exports.getQueueHealth = async (req, res) => {
     });
   }
 };
+
+exports.getProviderReports = async (req, res) => {
+  try {
+    const reports = await listProviderReports({
+      status: req.query.status === "all" ? null : req.query.status || "pending",
+    });
+    res.json({ reports });
+  } catch (err) {
+    logger.error("Failed to fetch provider reports", { err, adminId: req.user?.id });
+    res.status(500).json({ error: "Failed to fetch provider reports" });
+  }
+};
+
+async function reviewProviderReport(req, res, action) {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Report id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const report =
+      action === "validate"
+        ? await validateProviderReport({ client, reportId: id, adminId: req.user.id })
+        : await dismissProviderReport({ client, reportId: id, adminId: req.user.id });
+
+    if (!report) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Pending report not found" });
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: `Provider report ${action}d`, report });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Provider report review failed", {
+      err,
+      adminId: req.user?.id,
+      reportId: id,
+      action,
+    });
+    res.status(500).json({ error: "Provider report review failed" });
+  } finally {
+    client.release();
+  }
+}
+
+exports.validateProviderReport = (req, res) =>
+  reviewProviderReport(req, res, "validate");
+
+exports.dismissProviderReport = (req, res) =>
+  reviewProviderReport(req, res, "dismiss");

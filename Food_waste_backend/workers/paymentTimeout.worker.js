@@ -88,7 +88,11 @@ const paymentTimeoutWorker = new Worker(
         await client.query(
           `
           UPDATE food_listings
-          SET remaining_quantity = remaining_quantity + $1
+          SET remaining_quantity = remaining_quantity + $1,
+              status = CASE
+                WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
+                ELSE status
+              END
           WHERE id=$2
           `,
           [reservation.quantity_reserved, reservation.listing_id]

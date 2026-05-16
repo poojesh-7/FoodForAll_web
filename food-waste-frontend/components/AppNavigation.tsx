@@ -148,7 +148,7 @@ export default function AppNavigation() {
 
             return (
               <Link
-                key={item.href}
+                key={`${item.href}-${item.label}`}
                 href={item.href}
                 onClick={() => setDrawerOpen(false)}
                 tabIndex={drawerTabIndex}
@@ -210,7 +210,7 @@ export default function AppNavigation() {
 
               return (
                 <Link
-                  key={item.href}
+                  key={`${item.href}-${item.label}`}
                   href={item.href}
                   className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
                     active

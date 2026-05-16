@@ -16,5 +16,16 @@ router.patch("/restaurants/:id/approve", adminActionLimiter, adminCtrl.approveRe
 router.patch("/restaurants/:id/reject", adminActionLimiter, adminCtrl.rejectRestaurant);
 router.get("/operations/summary", adminCtrl.getOperationalSummary);
 router.get("/queues/health", adminCtrl.getQueueHealth);
+router.get("/provider-reports", adminCtrl.getProviderReports);
+router.patch(
+  "/provider-reports/:id/validate",
+  adminActionLimiter,
+  adminCtrl.validateProviderReport,
+);
+router.patch(
+  "/provider-reports/:id/dismiss",
+  adminActionLimiter,
+  adminCtrl.dismissProviderReport,
+);
 
 module.exports = router;

@@ -10,6 +10,7 @@ const {
   publishPaymentUpdated,
   publishReservationUpdated,
 } = require("../shared/services/realtime.service");
+const { ensureRestrictionSchema } = require("../shared/services/restrictionSchema.service");
 
 logger.info("Refund worker started");
 
@@ -128,6 +129,14 @@ async function persistRefundStatus(reservationId, refundStatus) {
         UPDATE payments
         SET status='refunded',
             refund_status='refunded',
+            reliability_deposit_status = CASE
+              WHEN reliability_deposit_amount > 0 THEN 'refunded'
+              ELSE reliability_deposit_status
+            END,
+            reliability_deposit_refunded_at = CASE
+              WHEN reliability_deposit_amount > 0 THEN NOW()
+              ELSE reliability_deposit_refunded_at
+            END,
             updated_at=NOW()
         WHERE id=$1
         `,
@@ -199,10 +208,166 @@ async function persistRefundStatus(reservationId, refundStatus) {
   }
 }
 
+async function markDepositRefundFailed(reservationId) {
+  const client = await pool.connect();
+
+  try {
+    await ensureRestrictionSchema(client);
+    await client.query("BEGIN");
+    await client.query(
+      `
+      UPDATE payments
+      SET reliability_deposit_status='refund_failed',
+          updated_at=NOW()
+      WHERE reservation_id=$1
+      AND reliability_deposit_amount > 0
+      AND reliability_deposit_status <> 'refunded'
+      `,
+      [reservationId]
+    );
+    await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: "deposit_refund_failed" }),
+      publishPaymentUpdated(reservationId, { action: "deposit_refund_failed" }),
+    ]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function persistDepositRefundStatus(reservationId, refundStatus) {
+  const client = await pool.connect();
+
+  try {
+    await ensureRestrictionSchema(client);
+    await client.query("BEGIN");
+
+    if (refundStatus === "refunded") {
+      await client.query(
+        `
+        UPDATE payments
+        SET reliability_deposit_status='refunded',
+            reliability_deposit_refunded_at=NOW(),
+            updated_at=NOW()
+        WHERE reservation_id=$1
+        AND reliability_deposit_amount > 0
+        `,
+        [reservationId]
+      );
+    } else if (refundStatus === "refund_failed") {
+      await client.query(
+        `
+        UPDATE payments
+        SET reliability_deposit_status='refund_failed',
+            updated_at=NOW()
+        WHERE reservation_id=$1
+        AND reliability_deposit_amount > 0
+        AND reliability_deposit_status <> 'refunded'
+        `,
+        [reservationId]
+      );
+    } else {
+      await client.query(
+        `
+        UPDATE payments
+        SET reliability_deposit_status='refund_pending',
+            updated_at=NOW()
+        WHERE reservation_id=$1
+        AND reliability_deposit_amount > 0
+        AND reliability_deposit_status <> 'refunded'
+        `,
+        [reservationId]
+      );
+    }
+
+    await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: `deposit_${refundStatus}` }),
+      publishPaymentUpdated(reservationId, { action: `deposit_${refundStatus}` }),
+    ]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function prepareDepositRefund(reservationId) {
+  const client = await pool.connect();
+
+  try {
+    await ensureRestrictionSchema(client);
+    await client.query("BEGIN");
+
+    const paymentResult = await client.query(
+      `
+      SELECT *
+      FROM payments
+      WHERE reservation_id=$1
+      FOR UPDATE
+      `,
+      [reservationId]
+    );
+
+    if (!paymentResult.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const payment = paymentResult.rows[0];
+    const amount = Number(payment.reliability_deposit_amount || 0);
+
+    if (
+      amount <= 0 ||
+      payment.status !== "paid" ||
+      payment.reliability_deposit_status === "refunded" ||
+      payment.reliability_deposit_status === "retained"
+    ) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const refundId = payment.reliability_deposit_refund_id || crypto.randomUUID();
+
+    await client.query(
+      `
+      UPDATE payments
+      SET reliability_deposit_status='refund_pending',
+          reliability_deposit_refund_id=$1,
+          updated_at=NOW()
+      WHERE id=$2
+      `,
+      [refundId, payment.id]
+    );
+
+    await client.query("COMMIT");
+    await Promise.all([
+      publishReservationUpdated(reservationId, { action: "deposit_refund_pending" }),
+      publishPaymentUpdated(reservationId, { action: "deposit_refund_pending" }),
+    ]);
+
+    return {
+      orderId: payment.order_id,
+      refundId,
+      amount,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function prepareRefund(reservationId) {
   const client = await pool.connect();
 
   try {
+    await ensureRestrictionSchema(client);
     await client.query("BEGIN");
 
     const paymentResult = await client.query(
@@ -289,7 +454,49 @@ async function prepareRefund(reservationId) {
 const refundWorker = new Worker(
   "refund-queue",
   async (job) => {
-    const { reservationId } = job.data;
+    const { reservationId, refundType } = job.data;
+    if (refundType === "reliability_deposit") {
+      const refund = await prepareDepositRefund(reservationId);
+
+      if (!refund) return;
+
+      try {
+        const response = await cashfree.PGOrderCreateRefund(
+          refund.orderId,
+          {
+            refund_id: refund.refundId,
+            refund_amount: refund.amount,
+            refund_note: "Refundable reliability deposit returned after successful pickup",
+          },
+          undefined,
+          refund.refundId
+        );
+
+        const refundStatus = normalizeRefundStatus(response.data?.refund_status);
+        await persistDepositRefundStatus(reservationId, refundStatus);
+      } catch (err) {
+        const attempts = job.opts.attempts || 5;
+        const isLastAttempt = job.attemptsMade + 1 >= attempts;
+
+        logger.error("Reliability deposit refund failed", {
+          err,
+          reservationId,
+          orderId: refund.orderId,
+          refundId: refund.refundId,
+          attemptsMade: job.attemptsMade,
+          attempts,
+        });
+
+        if (isLastAttempt) {
+          await markDepositRefundFailed(reservationId);
+        }
+
+        throw err;
+      }
+
+      return;
+    }
+
     const refund = await prepareRefund(reservationId);
 
     if (!refund) return;

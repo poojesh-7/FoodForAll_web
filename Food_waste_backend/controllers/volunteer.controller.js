@@ -1,7 +1,10 @@
 const pool = require("../shared/config/db");
 const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
+const refundQueue = require("../queues/refund.queue");
 const notificationQueue = require("../queues/notification.queue");
+const { applyRecovery } = require("../shared/services/penalty.service");
+const { refundReliabilityDeposit } = require("../shared/services/payment.service");
 const {
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
@@ -849,6 +852,18 @@ exports.completeTask = async (req, res) => {
       [id],
     );
 
+    await applyRecovery({
+      client,
+      userId: reservation.user_id,
+      role: "ngo",
+    });
+
+    await applyRecovery({
+      client,
+      userId: volunteerId,
+      role: "volunteer",
+    });
+
     /*
     Update volunteer stats
     */
@@ -909,6 +924,7 @@ exports.completeTask = async (req, res) => {
 
     // 🔥 cancel delivery timeout
     await deliveryQueue.remove(`delivery-${reservation.id}`);
+    await refundReliabilityDeposit(refundQueue, reservation.id);
 
     await Promise.all([
       publishReservationUpdated(reservation.id, { action: "delivered" }),

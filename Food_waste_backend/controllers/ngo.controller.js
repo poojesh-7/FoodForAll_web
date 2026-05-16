@@ -4,10 +4,13 @@ const { addNGOLocation } = require("../services/geo.service");
 const notificationQueue = require("../queues/notification.queue");
 const {
   publishListingUpdated,
+  publishPaymentUpdated,
   publishToUsers,
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
+const { createReservationPayment } = require("../shared/services/payment.service");
+const { getReservationPolicy } = require("../shared/services/restriction.service");
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
@@ -353,9 +356,19 @@ exports.bulkReserve = async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    const policy = await getReservationPolicy({
+      client,
+      userId: req.user.id,
+      role: "ngo",
+    });
+
+    if (!policy.canReserve) {
+      throw withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+    }
 
     const created = [];
     const providerNotifications = [];
+    const paymentReservations = [];
     for (const item of reservations) {
       const quantity = toNumber(item.quantity);
       const foodResult = await client.query(
@@ -393,7 +406,7 @@ exports.bulkReserve = async (req, res) => {
         `
         INSERT INTO reservations
         (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-        VALUES ($1,$2,$3,'ngo','pending','reserved','not_required',$4,$5)
+        VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5)
         RETURNING *
         `,
         [
@@ -402,11 +415,18 @@ exports.bulkReserve = async (req, res) => {
           quantity,
           generatePickupCode(),
           generatePickupCode(),
+          policy.requiresDeposit ? "payment_pending" : "reserved",
+          policy.requiresDeposit ? "pending" : "not_required",
         ]
       );
 
       const r = reservation.rows[0];
       created.push(r);
+      paymentReservations.push({
+        ...r,
+        food_amount: 0,
+        reliability_deposit_amount: policy.requiresDeposit ? policy.depositAmount : 0,
+      });
       providerNotifications.push({
         providerId: food.provider_id,
         reservationId: r.id,
@@ -431,6 +451,14 @@ exports.bulkReserve = async (req, res) => {
       }
     }
 
+    const payment = policy.requiresDeposit
+      ? await createReservationPayment({
+          client,
+          user: req.user,
+          reservations: paymentReservations,
+        })
+      : null;
+
     await client.query("COMMIT");
 
     await Promise.all([
@@ -438,7 +466,9 @@ exports.bulkReserve = async (req, res) => {
         publishReservationUpdated(reservation.id, { action: "created" })
       ),
       ...created.map((reservation) =>
-        publishTaskAvailabilityUpdated(reservation.id, { action: "available" })
+        policy.requiresDeposit
+          ? publishPaymentUpdated(reservation.id, { action: "created" })
+          : publishTaskAvailabilityUpdated(reservation.id, { action: "available" })
       ),
       ...uniqueListingIds(created).map((listingId) =>
         publishListingUpdated(listingId, { action: "quantity_updated" })
@@ -467,7 +497,8 @@ exports.bulkReserve = async (req, res) => {
 
     res.json({
       reservations: created,
-      payment: null,
+      payment,
+      policy,
     });
 
   } catch (err) {
@@ -555,6 +586,9 @@ exports.getMyReservations = async (req, res) => {
         f.pickup_end_time,
         f.is_free,
         f.price,
+        p.food_amount,
+        p.reliability_deposit_amount,
+        p.reliability_deposit_status,
 
         u.id AS provider_id,
         u.name AS provider_name,
@@ -579,6 +613,8 @@ exports.getMyReservations = async (req, res) => {
         ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN ratings rating
         ON rating.reservation_id = r.id
+      LEFT JOIN payments p
+        ON p.reservation_id = r.id
 
       WHERE r.user_id = $1
       ORDER BY r.reserved_at DESC;
@@ -952,6 +988,15 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     const ngoId = ngoResult.rows[0].id;
+    const policy = await getReservationPolicy({
+      client,
+      userId: req.user.id,
+      role: "ngo",
+    });
+
+    if (!policy.canReserve) {
+      throw withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+    }
 
     // 2️⃣ Get request
     const request = await client.query(
@@ -1041,11 +1086,34 @@ exports.acceptNGORequest = async (req, res) => {
       `
       INSERT INTO reservations
       (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-      VALUES ($1,$2,$3,'ngo','pending','reserved','not_required',$4,$5)
+      VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5)
       RETURNING *
       `,
-      [listingId, req.user.id, listing.remaining_quantity, pickupCode, receiveCode]
+      [
+        listingId,
+        req.user.id,
+        listing.remaining_quantity,
+        pickupCode,
+        receiveCode,
+        policy.requiresDeposit ? "payment_pending" : "reserved",
+        policy.requiresDeposit ? "pending" : "not_required",
+      ]
     );
+
+    const createdReservation = reservationResult.rows[0];
+    const payment = policy.requiresDeposit
+      ? await createReservationPayment({
+          client,
+          user: req.user,
+          reservations: [
+            {
+              ...createdReservation,
+              food_amount: 0,
+              reliability_deposit_amount: policy.depositAmount,
+            },
+          ],
+        })
+      : null;
 
     // 7️⃣ Mark listing completed
     await client.query(
@@ -1061,11 +1129,11 @@ exports.acceptNGORequest = async (req, res) => {
     await client.query("COMMIT");
 
     // 🔔 Notification AFTER commit
-    const createdReservation = reservationResult.rows[0];
-
     await Promise.all([
       publishReservationUpdated(createdReservation.id, { action: "created" }),
-      publishTaskAvailabilityUpdated(createdReservation.id, { action: "available" }),
+      policy.requiresDeposit
+        ? publishPaymentUpdated(createdReservation.id, { action: "created" })
+        : publishTaskAvailabilityUpdated(createdReservation.id, { action: "available" }),
       publishListingUpdated(listingId, { action: "completed" }),
     ]);
 
@@ -1076,7 +1144,7 @@ exports.acceptNGORequest = async (req, res) => {
       message: `${ngoResult.rows[0].organization_name} accepted your request`,
     });
 
-    res.json({ message: "Request accepted successfully" });
+    res.json({ message: "Request accepted successfully", reservation: createdReservation, payment, policy });
 
   } catch (err) {
     await client.query("ROLLBACK");

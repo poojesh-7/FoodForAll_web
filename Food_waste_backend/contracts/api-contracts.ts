@@ -92,6 +92,14 @@ export interface AuthMeUser extends UserProfile {
   is_verified: boolean;
   verification_status?: "unregistered" | "pending" | "approved" | "rejected";
   rejection_reason?: string | null;
+  reliability_deposit_amount?: number | string;
+  requires_reliability_deposit?: boolean;
+  restriction_level?: number | string;
+  restriction_reason?: string | null;
+  cooldown_until?: ISODateString | null;
+  banned_until?: ISODateString | null;
+  trust_score?: number | string;
+  restriction_type?: string | null;
 }
 
 export interface CompleteProfileUser {
@@ -202,22 +210,43 @@ export interface ReservationRow extends DbRow {
   assigned_at?: ISODateString | null;
   picked_up_at?: ISODateString | null;
   completed_at?: ISODateString | null;
+  food_amount?: number | string | null;
+  reliability_deposit_amount?: number | string | null;
+  reliability_deposit_status?: string | null;
 }
 
 export interface PaymentCreateResult {
   order_id: string;
   payment_session_id: string;
   amount: number;
+  food_amount?: number;
+  reliability_deposit_amount?: number;
+}
+
+export interface RestrictionPolicy {
+  canReserve?: boolean;
+  canTakeTask?: boolean;
+  canList?: boolean;
+  requiresDeposit?: boolean;
+  depositAmount?: number;
+  restrictionLevel?: number;
+  bannedUntil?: ISODateString | null;
+  cooldownUntil?: ISODateString | null;
+  restrictionReason?: string | null;
+  restrictionType?: string | null;
+  trustScore?: number;
 }
 
 export interface ReservationWithPaymentData {
   reservation: ReservationRow;
   payment: PaymentCreateResult;
+  policy?: RestrictionPolicy;
 }
 
 export interface BulkReserveData {
   reservations: ReservationRow[];
   payment: PaymentCreateResult | null;
+  policy?: RestrictionPolicy;
 }
 
 export interface ReservationDetails extends ReservationRow {
@@ -675,6 +704,36 @@ export interface MarkAsPickedUpRequest {
   pickup_code: string;
 }
 export type MarkAsPickedUpResponse = ApiResponse<EmptyData>;
+
+export interface ReportProviderRequest {
+  reason:
+    | "fake_listing"
+    | "unsafe_food"
+    | "expired_food"
+    | "provider_unavailable"
+    | "repeated_cancellations"
+    | "abusive_behavior"
+    | "incorrect_listing";
+  description?: string | null;
+}
+export interface ProviderReportRow extends DbRow {
+  id?: DbId;
+  provider_id?: DbId;
+  reported_by?: DbId;
+  reservation_id?: DbId | null;
+  reason?: string;
+  description?: string | null;
+  status?: string;
+  created_at?: ISODateString;
+  provider_name?: string | null;
+  reporter_name?: string | null;
+  reporter_role?: UserRole | string | null;
+  reservation_pickup_type?: string | null;
+  reservation_status?: string | null;
+  reservation_task_status?: string | null;
+  listing_title?: string | null;
+}
+export type ReportProviderResponse = ApiResponse<ProviderReportRow>;
 
 // Rating requests/responses
 export interface CreateRatingRequest {

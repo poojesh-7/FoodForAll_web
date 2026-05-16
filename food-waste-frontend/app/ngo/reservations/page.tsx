@@ -5,6 +5,7 @@ import NGOReservationCard from "@/components/ngo/NGOReservationCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import RatingForm from "@/components/ratings/RatingForm";
+import ProviderReportForm from "@/components/reservations/ProviderReportForm";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
@@ -208,32 +209,42 @@ export default function NGOReservationsPage() {
   }, [activeFilter, reservations]);
 
   const renderReviewAction = (reservation: NGOReservationHistoryRow) => {
-    if (reservation.review_id) {
-      return (
-        <p className="text-sm font-medium text-emerald-700">
-          You have already reviewed this reservation.
-        </p>
-      );
-    }
-
-    if (!canReviewReservation(reservation)) return null;
-
     return (
-      <details className="rounded-md border border-zinc-200 bg-white p-3">
-        <summary className="cursor-pointer text-sm font-medium text-zinc-950">
-          Review provider
-        </summary>
-        <div className="mt-3">
-          <RatingForm
-            framed={false}
-            title="Provider Rating"
-            description="Rate the provider after successful delivery."
-            onSubmit={(rating, review) =>
-              submitReview(reservation, rating, review)
-            }
-          />
-        </div>
-      </details>
+      <div className="space-y-2">
+        {reservation.review_id ? (
+          <p className="text-sm font-medium text-emerald-700">
+            You have already reviewed this reservation.
+          </p>
+        ) : canReviewReservation(reservation) ? (
+          <details className="rounded-md border border-zinc-200 bg-white p-3">
+            <summary className="cursor-pointer text-sm font-medium text-zinc-950">
+              Review provider
+            </summary>
+            <div className="mt-3">
+              <RatingForm
+                framed={false}
+                title="Provider Rating"
+                description="Rate the provider after successful delivery."
+                onSubmit={(rating, review) =>
+                  submitReview(reservation, rating, review)
+                }
+              />
+            </div>
+          </details>
+        ) : null}
+        <details className="rounded-md border border-red-100 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-medium text-red-700">
+            Report provider
+          </summary>
+          <div className="mt-3">
+            <ProviderReportForm
+              reservationId={reservation.id}
+              onError={setError}
+              onSuccess={setSuccess}
+            />
+          </div>
+        </details>
+      </div>
     );
   };
 

@@ -13,6 +13,12 @@ import type {
 } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
+function formatRestrictionDate(value: unknown) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : null;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -86,6 +92,39 @@ export default function DashboardPage() {
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </p>
+        )}
+
+        {user && Number("restriction_level" in user ? user.restriction_level ?? 0 : 0) > 0 && (
+          <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">
+              Restriction level {String("restriction_level" in user ? user.restriction_level : 0)}
+            </p>
+            <p className="mt-1">
+              {String(
+                ("restriction_reason" in user && user.restriction_reason) ||
+                  "Successful pickups gradually restore trust."
+              )}
+            </p>
+            {"requires_reliability_deposit" in user &&
+              user.requires_reliability_deposit && (
+                <p className="mt-1">
+                  Next eligible reservation may include a refundable reliability deposit of Rs.{" "}
+                  {Number(user.reliability_deposit_amount ?? 0).toFixed(2)}.
+                </p>
+              )}
+            {formatRestrictionDate("cooldown_until" in user ? user.cooldown_until : null) && (
+              <p className="mt-1">
+                Cooldown until{" "}
+                {formatRestrictionDate("cooldown_until" in user ? user.cooldown_until : null)}
+              </p>
+            )}
+            {formatRestrictionDate("banned_until" in user ? user.banned_until : null) && (
+              <p className="mt-1">
+                Temporarily unavailable until{" "}
+                {formatRestrictionDate("banned_until" in user ? user.banned_until : null)}
+              </p>
+            )}
+          </section>
         )}
 
         {loading ? (

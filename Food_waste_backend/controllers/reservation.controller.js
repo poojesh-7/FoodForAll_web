@@ -7,7 +7,14 @@ const refundQueue = require("../queues/refund.queue");
 const paymentQueue = require("../queues/payment.queue");
 const logger = require("../shared/utils/logger");
 
-const { createPayment, cancelPayment } = require("../shared/services/payment.service");
+const {
+  createReservationPayment,
+  cancelPayment,
+  refundReliabilityDeposit,
+} = require("../shared/services/payment.service");
+const { getReservationPolicy } = require("../shared/services/restriction.service");
+const { applyRecovery } = require("../shared/services/penalty.service");
+const { createProviderReport } = require("../shared/services/moderation.service");
 const {
   publishListingUpdated,
   publishPaymentUpdated,
@@ -148,6 +155,18 @@ exports.createReservation = async (req, res) => {
     if (food.remaining_quantity < quantityValue)
       throw withStatus("Not enough quantity", 409);
 
+    const foodAmount = Number(food.price) * quantityValue;
+    const policy = await getReservationPolicy({
+      client,
+      userId: req.user.id,
+      role: req.user.role,
+      foodCost: foodAmount,
+    });
+
+    if (!policy.canReserve) {
+      throw withStatus(policy.restrictionReason || "Reservation restricted", 403);
+    }
+
     /*
     CREATE RESERVATION
     */
@@ -181,11 +200,17 @@ exports.createReservation = async (req, res) => {
     /*
     💳 PAYMENT (MANDATORY NOW)
     */
-    const payment = await createPayment({
+    const depositAmount = policy.requiresDeposit ? policy.depositAmount : 0;
+    const payment = await createReservationPayment({
       client,
       user: req.user,
-      reservations: [reservation],
-      totalAmount: Number(food.price) * quantityValue,
+      reservations: [
+        {
+          ...reservation,
+          food_amount: foodAmount,
+          reliability_deposit_amount: depositAmount,
+        },
+      ],
     });
 
     await client.query("COMMIT");
@@ -217,6 +242,11 @@ exports.createReservation = async (req, res) => {
     res.status(201).json({
       reservation,
       payment,
+      policy: {
+        ...policy,
+        depositAmount,
+        requiresDeposit: depositAmount > 0,
+      },
     });
 
   } catch (err) {
@@ -261,6 +291,9 @@ exports.getReservationById = async (req, res) => {
             f.pickup_end_time,
             f.is_free,
             f.price,
+            p.food_amount,
+            p.reliability_deposit_amount,
+            p.reliability_deposit_status,
             provider.name AS provider_name,
             provider.phone AS provider_phone,
             provider.address AS provider_address,
@@ -279,6 +312,7 @@ exports.getReservationById = async (req, res) => {
     JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     LEFT JOIN ratings rating ON rating.reservation_id = r.id
+    LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.id=$1
     FOR UPDATE OF r`,
     [id],
@@ -323,6 +357,9 @@ exports.getMyReservations = async (req, res) => {
           f.pickup_end_time,
           f.is_free,
           f.price,
+          p.food_amount,
+          p.reliability_deposit_amount,
+          p.reliability_deposit_status,
           provider.name AS provider_name,
           provider.phone AS provider_phone,
           provider.address AS provider_address,
@@ -342,6 +379,7 @@ exports.getMyReservations = async (req, res) => {
     JOIN users provider ON provider.id = f.provider_id
     LEFT JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+    LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.user_id = $1
     ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
     `,
@@ -378,6 +416,9 @@ exports.getProviderReservations = async (req, res) => {
              f.pickup_end_time,
              f.is_free,
              f.price,
+             p.food_amount,
+             p.reliability_deposit_amount,
+             p.reliability_deposit_status,
              requester.id AS requester_id,
              requester.name AS requester_name,
              requester.phone AS requester_phone,
@@ -391,6 +432,7 @@ exports.getProviderReservations = async (req, res) => {
       JOIN food_listings f ON f.id = r.listing_id
       JOIN users requester ON requester.id = r.user_id
       LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+      LEFT JOIN payments p ON p.reservation_id = r.id
       WHERE f.provider_id = $1
       ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
       `,
@@ -884,6 +926,14 @@ exports.markAsPickedUp = async (req, res) => {
       provider_id: reservation.provider_id,
     };
 
+    if (!isNGOPickup) {
+      await applyRecovery({
+        client,
+        userId: reservation.user_id,
+        role: "user",
+      });
+    }
+
     await client.query("COMMIT");
 
     await Promise.all([
@@ -948,6 +998,8 @@ exports.markAsPickedUp = async (req, res) => {
       );
 
       logger.info("Delivery timeout scheduled", { reservationId: id });
+    } else {
+      await refundReliabilityDeposit(refundQueue, updatedReservation.id);
     }
 
     res.json({
@@ -962,6 +1014,65 @@ exports.markAsPickedUp = async (req, res) => {
     res.status(err.statusCode || 400).json({
       error: err.message,
     });
+  } finally {
+    client.release();
+  }
+};
+
+exports.reportProvider = async (req, res) => {
+  const { id } = req.params;
+  const { reason, description } = req.body;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Reservation id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const reservationResult = await client.query(
+      `
+      SELECT r.id, r.user_id, r.pickup_type, f.provider_id
+      FROM reservations r
+      JOIN food_listings f ON f.id = r.listing_id
+      WHERE r.id=$1
+      FOR UPDATE
+      `,
+      [id]
+    );
+
+    if (!reservationResult.rows.length) throw withStatus("Reservation not found", 404);
+
+    const reservation = reservationResult.rows[0];
+
+    if (!["user", "ngo"].includes(req.user.role)) {
+      throw withStatus("Only users and NGOs can report providers", 403);
+    }
+
+    if (String(reservation.user_id) !== String(req.user.id)) {
+      throw withStatus("Only the requester can report this provider", 403);
+    }
+
+    const report = await createProviderReport({
+      client,
+      providerId: reservation.provider_id,
+      reportedBy: req.user.id,
+      reservationId: reservation.id,
+      reason,
+      description,
+    });
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Provider report submitted for moderation.",
+      report,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(err.statusCode || 400).json({ error: err.message });
   } finally {
     client.release();
   }

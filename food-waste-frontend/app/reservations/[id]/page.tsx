@@ -5,6 +5,7 @@ import Link from "next/link";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import RatingForm from "@/components/ratings/RatingForm";
 import ReviewList from "@/components/ratings/ReviewList";
+import ProviderReportForm from "@/components/reservations/ProviderReportForm";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
 import { openCashfreeCheckout } from "@/lib/cashfree";
@@ -425,6 +426,23 @@ export default function ReservationDetailPage() {
                   Listing Reviews
                 </h2>
                 <ReviewList ratings={ratings} />
+              </section>
+            )}
+            {reservation.id && reservation.provider_id && (
+              <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                <div>
+                  <h2 className="text-base font-semibold text-zinc-950">
+                    Report Provider
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Flag unsafe, fake, unavailable, or abusive pickup experiences.
+                  </p>
+                </div>
+                <ProviderReportForm
+                  reservationId={reservation.id}
+                  onError={setError}
+                  onSuccess={setSuccess}
+                />
               </section>
             )}
           </>

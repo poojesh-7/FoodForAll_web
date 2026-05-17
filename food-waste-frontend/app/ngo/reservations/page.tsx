@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ReservationCancelModal from "@/components/modals/ReservationCancelModal";
 import NGOReservationCard from "@/components/ngo/NGOReservationCard";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
@@ -133,6 +134,8 @@ export default function NGOReservationsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [cancellingId, setCancellingId] = useState<DbId | null>(null);
+  const [cancelTarget, setCancelTarget] =
+    useState<NGOReservationHistoryRow | null>(null);
   const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
   const reservationsById = useRealtimeStore((state) => state.reservations);
 
@@ -203,20 +206,24 @@ export default function NGOReservationsPage() {
     }
   };
 
-  const cancelReservation = async (reservation: NGOReservationHistoryRow) => {
+  const cancelReservation = async () => {
+    if (!cancelTarget?.id) return;
+    if (cancellingId) return;
+
     try {
       setError("");
       setSuccess("");
-      setCancellingId(reservation.id);
-      await reservationService.cancelReservation(reservation.id);
+      setCancellingId(cancelTarget.id);
+      await reservationService.cancelReservation(cancelTarget.id);
       setReservations((current) =>
         current.map((item) =>
-          String(item.id) === String(reservation.id)
+          String(item.id) === String(cancelTarget.id)
             ? { ...item, status: "cancelled" }
             : item
         )
       );
       setSuccess("Reservation cancelled successfully.");
+      setCancelTarget(null);
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
     } finally {
@@ -251,7 +258,7 @@ export default function NGOReservationsPage() {
         {canCancelReservation(reservation) && (
           <button
             type="button"
-            onClick={() => cancelReservation(reservation)}
+            onClick={() => setCancelTarget(reservation)}
             disabled={String(cancellingId) === String(reservation.id)}
             className="min-h-10 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
           >
@@ -424,6 +431,16 @@ export default function NGOReservationsPage() {
           </section>
         </div>
       )}
+      <ReservationCancelModal
+        open={Boolean(cancelTarget)}
+        onClose={() => {
+          if (!cancellingId) setCancelTarget(null);
+        }}
+        onConfirm={cancelReservation}
+        loading={Boolean(cancellingId)}
+        reservationType="ngo"
+        reservationId={cancelTarget?.id ?? null}
+      />
     </NGOShell>
   );
 }

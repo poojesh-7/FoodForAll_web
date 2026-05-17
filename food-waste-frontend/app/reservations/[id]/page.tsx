@@ -5,6 +5,7 @@ import Link from "next/link";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import RatingForm from "@/components/ratings/RatingForm";
 import ReviewList from "@/components/ratings/ReviewList";
+import ReservationCancelModal from "@/components/modals/ReservationCancelModal";
 import ProviderReportForm from "@/components/reservations/ProviderReportForm";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import ReservationTimeline from "@/components/reservations/ReservationTimeline";
@@ -116,6 +117,7 @@ export default function ReservationDetailPage() {
   const [ratings, setRatings] = useState<ListingRating[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [error, setError] = useState("");
@@ -200,7 +202,7 @@ export default function ReservationDetailPage() {
 
   const cancelReservation = async () => {
     if (!reservation?.id) return;
-    if (!confirm("Cancel this reservation?")) return;
+    if (cancelling) return;
 
     try {
       setCancelling(true);
@@ -213,6 +215,7 @@ export default function ReservationDetailPage() {
           ? "Reservation cancelled. Refund is being processed."
           : "Reservation cancelled successfully."
       );
+      setCancelModalOpen(false);
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
     } finally {
@@ -390,7 +393,7 @@ export default function ReservationDetailPage() {
               actions={
                 canCancel(reservation) ? (
                   <button
-                    onClick={cancelReservation}
+                    onClick={() => setCancelModalOpen(true)}
                     disabled={cancelling}
                     className="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-50"
                   >
@@ -445,6 +448,18 @@ export default function ReservationDetailPage() {
                 />
               </section>
             )}
+            <ReservationCancelModal
+              open={cancelModalOpen}
+              onClose={() => {
+                if (!cancelling) setCancelModalOpen(false);
+              }}
+              onConfirm={cancelReservation}
+              loading={cancelling}
+              reservationType={
+                reservation.pickup_type === "ngo" ? "ngo" : "user"
+              }
+              reservationId={reservation.id}
+            />
           </>
         ) : (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

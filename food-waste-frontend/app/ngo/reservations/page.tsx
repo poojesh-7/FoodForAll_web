@@ -13,7 +13,9 @@ import {
   type NGOReservationHistoryRow,
 } from "@/services/ngo.service";
 import { ratingService } from "@/services/rating.service";
+import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
+import type { DbId } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 type ActiveReservationFilter =
@@ -108,6 +110,19 @@ function canReviewReservation(reservation: NGOReservationHistoryRow) {
   );
 }
 
+function canCancelReservation(reservation: NGOReservationHistoryRow) {
+  const status = String(reservation.status ?? "").toLowerCase();
+  const taskStatus = String(reservation.task_status ?? "").toLowerCase();
+  const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
+
+  return (
+    status === "reserved" &&
+    taskStatus === "pending" &&
+    !["refund_pending", "refunded", "refund_failed"].includes(paymentStatus) &&
+    !reservation.completed_at
+  );
+}
+
 export default function NGOReservationsPage() {
   const router = useRouter();
   const [reservations, setReservations] = useState<NGOReservationHistoryRow[]>([]);
@@ -117,6 +132,7 @@ export default function NGOReservationsPage() {
     useState<ActiveReservationFilter>("all");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [cancellingId, setCancellingId] = useState<DbId | null>(null);
   const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
   const reservationsById = useRealtimeStore((state) => state.reservations);
 
@@ -187,6 +203,27 @@ export default function NGOReservationsPage() {
     }
   };
 
+  const cancelReservation = async (reservation: NGOReservationHistoryRow) => {
+    try {
+      setError("");
+      setSuccess("");
+      setCancellingId(reservation.id);
+      await reservationService.cancelReservation(reservation.id);
+      setReservations((current) =>
+        current.map((item) =>
+          String(item.id) === String(reservation.id)
+            ? { ...item, status: "cancelled" }
+            : item
+        )
+      );
+      setSuccess("Reservation cancelled successfully.");
+    } catch (err) {
+      setError(reservationService.getErrorMessage(err));
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   const groupedReservations = useMemo(() => {
     const active = reservations.filter((reservation) => {
       const state = getReservationState(reservation);
@@ -211,6 +248,18 @@ export default function NGOReservationsPage() {
   const renderReviewAction = (reservation: NGOReservationHistoryRow) => {
     return (
       <div className="space-y-2">
+        {canCancelReservation(reservation) && (
+          <button
+            type="button"
+            onClick={() => cancelReservation(reservation)}
+            disabled={String(cancellingId) === String(reservation.id)}
+            className="min-h-10 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+          >
+            {String(cancellingId) === String(reservation.id)
+              ? "Cancelling..."
+              : "Cancel Reservation"}
+          </button>
+        )}
         {reservation.review_id ? (
           <p className="text-sm font-medium text-emerald-700">
             You have already reviewed this reservation.

@@ -1,9 +1,11 @@
 const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
+const notificationQueue = require("../queues/notification.queue");
 const refundQueue = require("../queues/refund.queue");
 const redis = require("../shared/config/redis");
 const crypto = require("crypto");
 const logger = require("../shared/utils/logger");
+const generatePickupCode = require("../utils/codeGenerator");
 const {
   getReservationSnapshot,
   publishListingUpdated,
@@ -11,6 +13,11 @@ const {
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
+const {
+  ensureReservationPaymentContextSchema,
+  hasReservedStock,
+  parsePaymentContext,
+} = require("../shared/services/reservationPaymentContext.service");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
@@ -141,7 +148,7 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
     [reservationId]
   );
 
-  if (!reservationResult.rows.length) return;
+  if (!reservationResult.rows.length) return null;
 
   const reservation = reservationResult.rows[0];
 
@@ -149,27 +156,215 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
     reservation.status !== "payment_pending" ||
     reservation.payment_status !== "pending"
   ) {
-    return;
+    return null;
+  }
+
+  if (hasReservedStock(reservation)) {
+    await client.query(
+      `
+      UPDATE food_listings
+      SET remaining_quantity = remaining_quantity + $1,
+          status = CASE
+            WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
+            ELSE status
+          END
+      WHERE id=$2
+      `,
+      [reservation.quantity_reserved, reservation.listing_id]
+    );
   }
 
   await client.query(
     `
-    UPDATE reservations
-    SET status='cancelled',
-        payment_status=$2
-    WHERE id=$1
+    UPDATE payments
+    SET reservation_id=NULL,
+        status=$2,
+        updated_at=NOW()
+    WHERE reservation_id=$1
+    AND status='pending'
     `,
     [reservationId, paymentStatus]
   );
 
   await client.query(
     `
-    UPDATE food_listings
-    SET remaining_quantity = remaining_quantity + $1
-    WHERE id=$2
+    DELETE FROM reservations
+    WHERE id=$1
+    AND status='payment_pending'
+    AND payment_status='pending'
+    `,
+    [reservationId]
+  );
+
+  return reservation.listing_id;
+}
+
+async function activatePendingReservation(client, reservation) {
+  const context = parsePaymentContext(reservation.payment_context);
+
+  if (hasReservedStock(reservation)) {
+    const activated = await client.query(
+      `
+      UPDATE reservations
+      SET payment_status='paid',
+          status='reserved'
+      WHERE id=$1
+      AND status='payment_pending'
+      AND payment_status='pending'
+      RETURNING *
+      `,
+      [reservation.id]
+    );
+
+    return activated.rowCount > 0 ? activated.rows[0] : null;
+  }
+
+  const listingResult = await client.query(
+    `
+    SELECT *
+    FROM food_listings
+    WHERE id=$1
+    FOR UPDATE
+    `,
+    [reservation.listing_id]
+  );
+
+  const listing = listingResult.rows[0];
+  if (!listing) {
+    throw new Error("Listing not found for paid reservation activation");
+  }
+
+  if (String(listing.status || "active") !== "active") {
+    throw new Error("Listing no longer available for paid reservation activation");
+  }
+
+  if (new Date(listing.pickup_end_time).getTime() <= Date.now()) {
+    throw new Error("Pickup window ended before payment activation");
+  }
+
+  if (Number(listing.remaining_quantity) < Number(reservation.quantity_reserved)) {
+    throw new Error("Insufficient inventory for paid reservation activation");
+  }
+
+  const duplicateReservation = await client.query(
+    `
+    SELECT id
+    FROM reservations
+    WHERE user_id=$1
+    AND listing_id=$2
+    AND id <> $3
+    AND (
+      status IN ('reserved', 'picked_up', 'completed')
+      OR task_status IN ('assigned', 'in_progress', 'picked_from_provider', 'delivered')
+      OR (
+        status='cancelled'
+        AND COALESCE(payment_status, '') IN (
+          'paid',
+          'not_required',
+          'refund_pending',
+          'refunded',
+          'refund_failed'
+        )
+      )
+    )
+    LIMIT 1
+    `,
+    [reservation.user_id, reservation.listing_id, reservation.id]
+  );
+
+  if (duplicateReservation.rows.length) {
+    throw new Error("User already has reservation for this listing");
+  }
+
+  if (context.source === "ngo_request_accept" && context.request_id) {
+    const requestResult = await client.query(
+      `
+      SELECT *
+      FROM ngo_requests
+      WHERE id=$1
+      AND listing_id=$2
+      FOR UPDATE
+      `,
+      [context.request_id, reservation.listing_id]
+    );
+
+    const request = requestResult.rows[0];
+    if (!request || request.status !== "pending") {
+      throw new Error("NGO request no longer available for paid reservation activation");
+    }
+  }
+
+  const stockUpdate = await client.query(
+    context.source === "ngo_request_accept"
+      ? `
+        UPDATE food_listings
+        SET remaining_quantity = remaining_quantity - $1,
+            status = CASE
+              WHEN remaining_quantity - $1 <= 0 THEN 'completed'
+              ELSE status
+            END
+        WHERE id=$2
+        AND remaining_quantity >= $1
+        RETURNING remaining_quantity
+        `
+      : `
+        UPDATE food_listings
+        SET remaining_quantity = remaining_quantity - $1
+        WHERE id=$2
+        AND remaining_quantity >= $1
+        RETURNING remaining_quantity
     `,
     [reservation.quantity_reserved, reservation.listing_id]
   );
+
+  if (!stockUpdate.rows.length) {
+    throw new Error("Inventory update failed during paid reservation activation");
+  }
+
+  if (context.source === "ngo_request_accept" && context.request_id) {
+    await client.query(
+      `
+      UPDATE ngo_requests
+      SET status='accepted', responded_at=NOW()
+      WHERE id=$1
+      `,
+      [context.request_id]
+    );
+
+    await client.query(
+      `
+      UPDATE ngo_requests
+      SET status='expired', responded_at=NOW()
+      WHERE listing_id=$1
+      AND id != $2
+      AND status='pending'
+      `,
+      [reservation.listing_id, context.request_id]
+    );
+  }
+
+  const activated = await client.query(
+    `
+    UPDATE reservations
+    SET payment_status='paid',
+        status='reserved',
+        pickup_code=COALESCE(pickup_code, $2),
+        receive_code=COALESCE(receive_code, $3),
+        payment_context=COALESCE(payment_context, '{}'::jsonb) || $4::jsonb
+    WHERE id=$1
+    AND status='payment_pending'
+    AND payment_status='pending'
+    RETURNING *
+    `,
+    [
+      reservation.id,
+      generatePickupCode(),
+      generatePickupCode(),
+      JSON.stringify({ stock_reserved: true, activated_at: new Date().toISOString() }),
+    ]
+  );
+
+  return activated.rowCount > 0 ? activated.rows[0] : null;
 }
 
 exports.cashfreeWebhook = async (req, res) => {
@@ -224,9 +419,12 @@ exports.cashfreeWebhook = async (req, res) => {
   const client = await pool.connect();
   const refundReservationIds = [];
   const changedReservationIds = new Set();
+  const activatedReservationIds = new Set();
+  const restoredListingIds = new Set();
 
   try {
     await client.query("BEGIN");
+    await ensureReservationPaymentContextSchema(client);
 
     const orderId = data.order_id || data.order?.order_id || data.payment?.order_id;
 
@@ -325,18 +523,49 @@ exports.cashfreeWebhook = async (req, res) => {
             ]
           );
 
-          await client.query(
-            `
-            UPDATE reservations
-            SET payment_status='paid',
-                status='reserved'
-            WHERE id=$1
-            AND status='payment_pending'
-            AND payment_status='pending'
-            `,
-            [payment.reservation_id]
-          );
-          changedReservationIds.add(payment.reservation_id);
+          let activated = null;
+          try {
+            activated = await activatePendingReservation(client, reservation);
+          } catch (err) {
+            logger.error("Paid reservation activation failed", {
+              err,
+              reservationId: payment.reservation_id,
+              orderId,
+            });
+
+            await client.query(
+              `
+              UPDATE payments
+              SET status='refund_pending',
+                  refund_status='refund_pending',
+                  updated_at=NOW()
+              WHERE id=$1
+              AND status <> 'refunded'
+              `,
+              [payment.id]
+            );
+
+            await client.query(
+              `
+              UPDATE reservations
+              SET status='cancelled',
+                  payment_status='refund_pending'
+              WHERE id=$1
+              AND payment_status <> 'refunded'
+              `,
+              [payment.reservation_id]
+            );
+
+            refundReservationIds.push(payment.reservation_id);
+            changedReservationIds.add(payment.reservation_id);
+            continue;
+          }
+
+          if (activated) {
+            changedReservationIds.add(payment.reservation_id);
+            activatedReservationIds.add(payment.reservation_id);
+            restoredListingIds.add(reservation.listing_id);
+          }
         }
       }
 
@@ -350,23 +579,14 @@ exports.cashfreeWebhook = async (req, res) => {
             )
           ) continue;
 
-          await client.query(
-            `
-            UPDATE payments
-            SET status=$1,
-                updated_at=NOW()
-            WHERE id=$2
-            AND status='pending'
-            `,
-            [paymentStatus, payment.id]
-          );
-
-          await restorePendingReservation(
+          const restoredListingId = await restorePendingReservation(
             client,
             payment.reservation_id,
             paymentStatus
           );
-          changedReservationIds.add(payment.reservation_id);
+          if (restoredListingId) {
+            restoredListingIds.add(restoredListingId);
+          }
         }
       }
     }
@@ -468,8 +688,11 @@ exports.cashfreeWebhook = async (req, res) => {
 
     await client.query("COMMIT");
 
-    await Promise.all(
-      [...changedReservationIds].map(async (reservationId) => {
+    await Promise.all([
+      ...[...restoredListingIds].map((listingId) =>
+        publishListingUpdated(listingId, { action: "quantity_updated" })
+      ),
+      ...[...changedReservationIds].map(async (reservationId) => {
         const reservation = await getReservationSnapshot(reservationId);
         await Promise.all([
           publishReservationUpdated(reservationId, {
@@ -493,9 +716,35 @@ exports.cashfreeWebhook = async (req, res) => {
                 action: "quantity_updated",
               })
             : Promise.resolve(),
+          activatedReservationIds.has(reservationId) && reservation?.provider_id
+            ? notificationQueue
+                .add("notify-user", {
+                  userId: reservation.provider_id,
+                  type: "reservation_created",
+                  title:
+                    reservation.pickup_type === "ngo"
+                      ? "New NGO Reservation"
+                      : "New Reservation",
+                  message:
+                    reservation.pickup_type === "ngo"
+                      ? "An NGO reserved food for pickup."
+                      : "A new reservation has been placed.",
+                  data: {
+                    reservation_id: reservationId,
+                    listing_id: reservation.listing_id,
+                  },
+                })
+                .catch((err) => {
+                  logger.warn("Provider paid reservation notification failed", {
+                    err,
+                    reservationId,
+                    providerId: reservation.provider_id,
+                  });
+                })
+            : Promise.resolve(),
         ]);
-      })
-    );
+      }),
+    ]);
 
     try {
       await markWebhookProcessed(idempotencyKey);

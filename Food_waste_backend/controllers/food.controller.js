@@ -3,6 +3,9 @@ const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
 const { ensureFoodListingSoftDeleteSchema } = require("../shared/services/foodListingSchema.service");
 const { resolveProviderDisplayName } = require("../shared/services/providerDisplay.service");
+const {
+  blockingReservationWhere,
+} = require("../shared/services/reservationLock.service");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
 const logger = require("../shared/utils/logger");
 const {
@@ -549,6 +552,7 @@ exports.updateFood = async (req, res) => {
       SELECT COUNT(*)::int AS reservation_count
       FROM reservations
       WHERE listing_id=$1
+      AND ${blockingReservationWhere()}
       `,
       [id],
     );
@@ -677,12 +681,7 @@ exports.deleteFood = async (req, res) => {
       SELECT COUNT(*)::int AS count
       FROM reservations
       WHERE listing_id=$1
-      AND NOT (
-        status IN ('cancelled', 'expired', 'failed', 'picked_up', 'delivered', 'completed')
-        OR payment_status IN ('failed', 'expired', 'refunded')
-        OR task_status = 'delivered'
-        OR completed_at IS NOT NULL
-      )
+      AND ${blockingReservationWhere()}
       `,
       [id],
     );
@@ -854,6 +853,7 @@ exports.getFoodById = async (req, res) => {
              SELECT COUNT(*)::int
              FROM reservations r
              WHERE r.listing_id=f.id
+             AND ${blockingReservationWhere("r")}
            ) AS reservation_count
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
@@ -1021,7 +1021,7 @@ exports.requestNGO = async (req, res) => {
     WHERE listing_id=$1
     AND user_id=$2
     AND pickup_type='ngo'
-    AND status IN ('reserved', 'picked_up')
+    AND ${blockingReservationWhere()}
     `,
     [listingId, ngoUserId]
   );

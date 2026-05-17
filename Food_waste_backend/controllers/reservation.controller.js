@@ -16,6 +16,13 @@ const { getReservationPolicy } = require("../shared/services/restriction.service
 const { applyRecovery } = require("../shared/services/penalty.service");
 const { createProviderReport } = require("../shared/services/moderation.service");
 const {
+  blockingReservationWhere,
+} = require("../shared/services/reservationLock.service");
+const {
+  ensureReservationPaymentContextSchema,
+  hasReservedStock,
+} = require("../shared/services/reservationPaymentContext.service");
+const {
   publishListingUpdated,
   publishPaymentUpdated,
   publishReservationUpdated,
@@ -30,7 +37,7 @@ const withStatus = (message, statusCode) => {
   return error;
 };
 
-const RESERVATION_EXISTS_MESSAGE = "You have already interacted with this listing.";
+const RESERVATION_EXISTS_MESSAGE = "User already has reservation for this listing.";
 
 async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
   const existingReservation = await client.query(
@@ -39,6 +46,19 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
     FROM reservations
     WHERE user_id=$1
     AND listing_id=$2
+    AND (
+      ${blockingReservationWhere()}
+      OR (
+        status='cancelled'
+        AND COALESCE(payment_status, '') IN (
+          'paid',
+          'not_required',
+          'refund_pending',
+          'refunded',
+          'refund_failed'
+        )
+      )
+    )
     LIMIT 1
     `,
     [userId, listingId]
@@ -128,6 +148,7 @@ exports.createReservation = async (req, res) => {
     if (quantityValue > 2) throw withStatus("Max 2 items allowed", 400);
 
     await client.query("BEGIN");
+    await ensureReservationPaymentContextSchema(client);
     await ensureUserPaymentSpamLimit(client, req.user.id);
 
     const foodResult = await client.query(
@@ -173,29 +194,20 @@ exports.createReservation = async (req, res) => {
     const reservationResult = await client.query(
       `
       INSERT INTO reservations
-      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status)
-      VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending')
+      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status, payment_context)
+      VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending',$5::jsonb)
       RETURNING *
       `,
-      [listing_id, req.user.id, quantityValue, generatePickupCode()]
+      [
+        listing_id,
+        req.user.id,
+        quantityValue,
+        null,
+        JSON.stringify({ source: "user_reservation", stock_reserved: false }),
+      ]
     );
 
     const reservation = reservationResult.rows[0];
-
-    const stockUpdate = await client.query(
-      `
-      UPDATE food_listings
-      SET remaining_quantity = remaining_quantity - $1
-      WHERE id=$2
-      AND remaining_quantity >= $1
-      RETURNING remaining_quantity
-      `,
-      [quantityValue, listing_id]
-    );
-
-    if (!stockUpdate.rows.length) {
-      throw withStatus("Not enough quantity", 409);
-    }
 
     /*
     💳 PAYMENT (MANDATORY NOW)
@@ -214,30 +226,6 @@ exports.createReservation = async (req, res) => {
     });
 
     await client.query("COMMIT");
-
-    await Promise.all([
-      publishReservationUpdated(reservation.id, { action: "created" }),
-      publishPaymentUpdated(reservation.id, { action: "created" }),
-      publishListingUpdated(listing_id, { action: "quantity_updated" }),
-      notificationQueue
-        .add("notify-user", {
-          userId: food.provider_id,
-          type: "reservation_created",
-          title: "New Reservation",
-          message: "A new reservation has been placed.",
-          data: {
-            reservation_id: reservation.id,
-            listing_id,
-          },
-        })
-        .catch((err) => {
-          logger.warn("Provider reservation notification failed", {
-            err,
-            reservationId: reservation.id,
-            providerId: food.provider_id,
-          });
-        }),
-    ]);
 
     res.status(201).json({
       reservation,
@@ -387,6 +375,7 @@ exports.getMyReservations = async (req, res) => {
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.user_id = $1
+    AND NOT (r.status='payment_pending' AND r.payment_status='pending')
     ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
     `,
     [req.user.id],
@@ -440,6 +429,7 @@ exports.getProviderReservations = async (req, res) => {
       LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN payments p ON p.reservation_id = r.id
       WHERE f.provider_id = $1
+      AND NOT (r.status='payment_pending' AND r.payment_status='pending')
       ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
       `,
       [req.user.id],
@@ -696,19 +686,87 @@ exports.cancelReservation = async (req, res) => {
       throw withStatus("Cannot cancel this reservation", 400);
     }
 
+    if (
+      reservation.status === "payment_pending" &&
+      reservation.payment_status === "pending"
+    ) {
+      const paymentResult = await client.query(
+        `
+        SELECT order_id
+        FROM payments
+        WHERE reservation_id=$1
+        FOR UPDATE
+        `,
+        [reservation.id]
+      );
+      paymentTimeoutOrderId = paymentResult.rows[0]?.order_id || null;
+
+      await cancelPayment(client, reservation.id);
+
+      if (hasReservedStock(reservation)) {
+        await client.query(
+          `
+          UPDATE food_listings
+          SET remaining_quantity = remaining_quantity + $1,
+              status = CASE
+                WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
+                ELSE status
+              END
+          WHERE id=$2
+          `,
+          [reservation.quantity_reserved, reservation.listing_id]
+        );
+      }
+
+      await client.query(
+        `
+        UPDATE payments
+        SET reservation_id=NULL,
+            updated_at=NOW()
+        WHERE reservation_id=$1
+        AND status='failed'
+        `,
+        [reservation.id]
+      );
+
+      await client.query(
+        `
+        DELETE FROM reservations
+        WHERE id=$1
+        AND status='payment_pending'
+        AND payment_status='pending'
+        `,
+        [reservation.id]
+      );
+
+      await client.query("COMMIT");
+      committed = true;
+
+      await cleanupCancellationQueues(reservation.id, paymentTimeoutOrderId);
+      await publishListingUpdated(reservation.listing_id, {
+        action: "quantity_updated",
+      });
+
+      return res.json({
+        message: "Payment was not completed. Reservation was not created.",
+      });
+    }
+
     if (reservation.pickup_type === "ngo") {
       if (reservation.task_status !== "pending") {
         throw withStatus("Cannot cancel after volunteer started", 400);
       }
 
-      await client.query(
-        `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity + $1
-        WHERE id=$2
-        `,
-        [reservation.quantity_reserved, reservation.listing_id]
-      );
+      if (hasReservedStock(reservation)) {
+        await client.query(
+          `
+          UPDATE food_listings
+          SET remaining_quantity = remaining_quantity + $1
+          WHERE id=$2
+          `,
+          [reservation.quantity_reserved, reservation.listing_id]
+        );
+      }
 
       await client.query(
         `

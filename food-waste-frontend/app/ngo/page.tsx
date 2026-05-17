@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import NGOSummaryCard from "@/components/ngo/NGOSummaryCard";
+import { formatFoodDate } from "@/lib/food";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService, type MyNGOProfile } from "@/services/ngo.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -13,11 +14,38 @@ import type {
   NGOIncomingRequest,
   NGOVolunteerJoinRequest,
 } from "@backend/contracts/api-contracts";
+import { AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 function toCount(value: unknown) {
   const count = Number(value ?? 0);
   return Number.isFinite(count) ? count : 0;
+}
+
+function toMoney(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMoney(value: unknown) {
+  return `Rs. ${toMoney(value).toFixed(2)}`;
+}
+
+function hasActiveDate(value: unknown) {
+  if (!value) return false;
+  const time = new Date(String(value)).getTime();
+  return Number.isFinite(time) && time > Date.now();
+}
+
+function shouldShowRestrictionAlert(ngo: MyNGOProfile | null) {
+  if (!ngo) return false;
+  return (
+    toCount(ngo.restriction_level) > 0 ||
+    Boolean(ngo.requires_reliability_deposit) ||
+    toMoney(ngo.reliability_deposit_amount) > 0 ||
+    hasActiveDate(ngo.cooldown_until) ||
+    hasActiveDate(ngo.banned_until)
+  );
 }
 
 export default function NGODashboardPage() {
@@ -135,6 +163,61 @@ export default function NGODashboardPage() {
         <NGOStateBlock title="Loading NGO operations..." />
       ) : (
         <div className="space-y-5">
+          {shouldShowRestrictionAlert(ngo) && (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+              <div className="flex gap-3">
+                <AlertTriangle
+                  className="mt-0.5 h-5 w-5 shrink-0 text-amber-700"
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <h2 className="text-sm font-semibold text-amber-950">
+                      Operational reliability alert
+                    </h2>
+                    <span className="text-xs font-semibold text-amber-800">
+                      Restriction Level {toCount(ngo?.restriction_level)}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <p className="text-amber-800">Operational Deposit Required</p>
+                      <p className="font-semibold text-zinc-950">
+                        {formatMoney(ngo?.reliability_deposit_amount)} refundable
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-amber-800">Trust Score</p>
+                      <p className="font-semibold text-zinc-950">
+                        {String(ngo?.trust_score ?? "-")}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-amber-800">Operational Status</p>
+                      <p className="font-semibold text-zinc-950">
+                        {hasActiveDate(ngo?.banned_until)
+                          ? `Restricted until ${formatFoodDate(ngo?.banned_until)}`
+                          : hasActiveDate(ngo?.cooldown_until)
+                            ? `Cooldown until ${formatFoodDate(ngo?.cooldown_until)}`
+                            : "Deposit required"}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-amber-900">
+                    Reason:{" "}
+                    {String(
+                      ngo?.restriction_reason ||
+                        "Repeated missed rescue pickups"
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-amber-900">
+                    Successful rescues reduce future deposit requirements.
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <NGOSummaryCard
               label="Pending Requests"

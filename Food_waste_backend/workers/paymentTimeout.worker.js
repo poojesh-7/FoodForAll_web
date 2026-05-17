@@ -5,11 +5,12 @@ const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
 const {
-  getReservationSnapshot,
   publishListingUpdated,
-  publishPaymentUpdated,
-  publishReservationUpdated,
 } = require("../shared/services/realtime.service");
+const {
+  ensureReservationPaymentContextSchema,
+  hasReservedStock,
+} = require("../shared/services/reservationPaymentContext.service");
 
 logger.info("Payment timeout worker started");
 
@@ -19,10 +20,11 @@ const paymentTimeoutWorker = new Worker(
     const { reservationIds } = job.data;
 
     const client = await pool.connect();
-    const changedReservationIds = new Set();
+    const changedListings = [];
 
     try {
       await client.query("BEGIN");
+      await ensureReservationPaymentContextSchema(client);
 
       for (const reservationId of reservationIds) {
         const reservationResult = await client.query(
@@ -66,18 +68,9 @@ const paymentTimeoutWorker = new Worker(
 
         await client.query(
           `
-          UPDATE reservations
-          SET status='cancelled',
-              payment_status='expired'
-          WHERE id=$1
-          `,
-          [reservationId]
-        );
-
-        await client.query(
-          `
           UPDATE payments
-          SET status='expired',
+          SET reservation_id=NULL,
+              status='expired',
               updated_at=NOW()
           WHERE reservation_id=$1
           AND status='pending'
@@ -85,43 +78,40 @@ const paymentTimeoutWorker = new Worker(
           [reservationId]
         );
 
+        if (hasReservedStock(reservation)) {
+          await client.query(
+            `
+            UPDATE food_listings
+            SET remaining_quantity = remaining_quantity + $1,
+                status = CASE
+                  WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
+                  ELSE status
+                END
+            WHERE id=$2
+            `,
+            [reservation.quantity_reserved, reservation.listing_id]
+          );
+        }
+
         await client.query(
           `
-          UPDATE food_listings
-          SET remaining_quantity = remaining_quantity + $1,
-              status = CASE
-                WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
-                ELSE status
-              END
-          WHERE id=$2
+          DELETE FROM reservations
+          WHERE id=$1
+          AND status='payment_pending'
+          AND payment_status='pending'
           `,
-          [reservation.quantity_reserved, reservation.listing_id]
+          [reservationId]
         );
 
-        changedReservationIds.add(reservationId);
+        changedListings.push(reservation.listing_id);
         logger.info("Payment timeout expired reservation", { reservationId });
       }
 
       await client.query("COMMIT");
       await Promise.all(
-        [...changedReservationIds].map(async (reservationId) => {
-          const reservation = await getReservationSnapshot(reservationId);
-          await Promise.all([
-            publishReservationUpdated(reservationId, {
-              action: "expired",
-              reservation,
-            }),
-            publishPaymentUpdated(reservationId, {
-              action: "expired",
-              reservation,
-            }),
-            reservation?.listing_id
-              ? publishListingUpdated(reservation.listing_id, {
-                  action: "quantity_updated",
-                })
-              : Promise.resolve(),
-          ]);
-        })
+        [...new Set(changedListings)].map((listingId) =>
+          publishListingUpdated(listingId, { action: "quantity_updated" })
+        )
       );
     } catch (err) {
       await client.query("ROLLBACK");

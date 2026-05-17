@@ -146,6 +146,15 @@ export interface NGOProfile extends NGORegistration {
   urgent_flag?: boolean | null;
   latitude?: number | string | null;
   longitude?: number | string | null;
+  reliability_deposit_amount?: number | string | null;
+  refundable_deposit?: number | string | null;
+  requires_reliability_deposit?: boolean | null;
+  restriction_level?: number | string | null;
+  restriction_reason?: string | null;
+  restriction_type?: string | null;
+  cooldown_until?: ISODateString | null;
+  banned_until?: ISODateString | null;
+  trust_score?: number | string | null;
   created_at?: ISODateString;
   updated_at?: ISODateString;
 }
@@ -214,6 +223,9 @@ export interface ReservationRow extends DbRow {
   food_amount?: number | string | null;
   reliability_deposit_amount?: number | string | null;
   reliability_deposit_status?: string | null;
+  refundable_deposit?: number | string | null;
+  deposit_status?: string | null;
+  refund_status?: string | null;
 }
 
 export interface PaymentCreateResult {
@@ -678,7 +690,13 @@ export type SetUrgentResponse = ApiResponse<EmptyData>;
 export type NGOIncomingRequestsResponse = ApiResponse<NGOIncomingRequest[]>;
 export type ApproveVolunteerJoinRequestResponse = ApiResponse<EmptyData>;
 export type RejectVolunteerJoinRequestResponse = ApiResponse<EmptyData>;
-export type AcceptNGORequestResponse = ApiResponse<EmptyData>;
+export interface AcceptNGORequestData {
+  message?: string;
+  reservation: ReservationRow;
+  payment: PaymentCreateResult | null;
+  policy?: RestrictionPolicy;
+}
+export type AcceptNGORequestResponse = ApiResponse<AcceptNGORequestData>;
 export type RejectNGORequestResponse = ApiResponse<EmptyData>;
 export type NGOReservationsResponse = ApiResponse<NGOReservationHistoryRow[]>;
 

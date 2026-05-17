@@ -200,7 +200,11 @@ export default function FoodDetailPage() {
     let latest: ReservationDetails | null = null;
 
     for (let attempt = 0; attempt < PAYMENT_POLL_ATTEMPTS; attempt += 1) {
-      latest = await reservationService.getReservationById(reservationId);
+      try {
+        latest = await reservationService.getReservationById(reservationId);
+      } catch {
+        return null;
+      }
       const state = getReservationPaymentState(latest);
 
       if (state === "paid" || state === "failed" || state === "expired") {
@@ -262,16 +266,20 @@ export default function FoodDetailPage() {
         paymentSessionId: result.payment.payment_session_id,
       });
 
-      if (checkoutResult?.error?.message) {
-        setCheckoutMessage(checkoutResult.error.message);
-      } else {
-        setCheckoutMessage("Verifying payment status...");
+      if (!checkoutResult || checkoutResult.error?.message) {
+        await reservationService
+          .cancelReservation(result.reservation.id)
+          .catch(() => undefined);
+        setCheckoutMessage("");
+        setError("Payment was not completed. Reservation was not created.");
+        return;
       }
 
+      setCheckoutMessage("Verifying payment status...");
       const verifiedReservation = await pollReservationPayment(result.reservation.id);
       const paymentState = verifiedReservation
         ? getReservationPaymentState(verifiedReservation)
-        : "payment_pending";
+        : "failed";
 
       if (paymentState === "paid") {
         router.push(
@@ -285,20 +293,13 @@ export default function FoodDetailPage() {
       }
 
       if (paymentState === "failed" || paymentState === "expired") {
-        router.push(
-          getCheckoutRedirect(
-            result.payment.order_id,
-            result.reservation.id,
-            "/payment-failed"
-          )
-        );
+        setCheckoutMessage("");
+        setError("Payment was not completed. Reservation was not created.");
         return;
       }
 
-      setCheckoutMessage(
-        "Payment is still pending. You can continue from your reservation while we wait for confirmation."
-      );
-      router.push(`/reservations/${String(result.reservation.id)}`);
+      setCheckoutMessage("");
+      setError("Payment was not completed. Reservation was not created.");
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
       setCheckoutMessage("");

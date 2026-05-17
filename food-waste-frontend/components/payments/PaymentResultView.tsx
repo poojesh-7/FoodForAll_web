@@ -26,6 +26,10 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function isMissingReservationMessage(message: string) {
+  return /not found|404/i.test(message);
+}
+
 async function pollReservation(
   reservationId: string | number,
   pollPending: boolean,
@@ -112,7 +116,15 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
           setMessage("Payment is still pending. Refresh after a moment.");
         }
       } catch (err) {
-        if (active) setError(reservationService.getErrorMessage(err));
+        if (!active) return;
+        const message = reservationService.getErrorMessage(err);
+        if (expected === "failed" && isMissingReservationMessage(message)) {
+          setReservation(null);
+          setError("");
+          setMessage("Payment did not complete. No reservation was confirmed.");
+          return;
+        }
+        setError(message);
       } finally {
         if (active) setLoading(false);
       }
@@ -151,7 +163,14 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         }
       })
       .catch((err) => {
-        if (active) setError(reservationService.getErrorMessage(err));
+        if (!active) return;
+        const message = reservationService.getErrorMessage(err);
+        if (isMissingReservationMessage(message)) {
+          setReservation(null);
+          setMessage("Payment did not complete. No reservation was confirmed.");
+          return;
+        }
+        setError(message);
       });
 
     return () => {
@@ -181,7 +200,13 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         setReservation
       );
     } catch (err) {
-      setError(reservationService.getErrorMessage(err));
+      const message = reservationService.getErrorMessage(err);
+      if (expected === "failed" && isMissingReservationMessage(message)) {
+        setReservation(null);
+        setMessage("Payment did not complete. No reservation was confirmed.");
+      } else {
+        setError(message);
+      }
       return null;
     } finally {
       setLoading(false);

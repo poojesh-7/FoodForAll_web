@@ -6,10 +6,11 @@ import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import { formatFoodDate } from "@/lib/food";
 import { openCashfreeCheckout } from "@/lib/cashfree";
-import { savePaymentSession } from "@/lib/payment-flow";
+import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
+import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   DbId,
@@ -18,10 +19,17 @@ import type {
 } from "@backend/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
+const PAYMENT_POLL_ATTEMPTS = 8;
+const PAYMENT_POLL_DELAY_MS = 1500;
+
 type LocationForm = {
   lat: string;
   lng: string;
 };
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function getCurrentPosition() {
   return new Promise<GeolocationPosition>((resolve, reject) => {
@@ -54,6 +62,34 @@ function getLocationStatus(form: LocationForm, searched: boolean) {
   if (!form.lat || !form.lng) return "No rescue location selected";
   if (searched) return "Nearby free listings loaded for this location";
   return "Rescue location ready";
+}
+
+async function pollNGOPayment(reservationId: DbId) {
+  for (let attempt = 0; attempt < PAYMENT_POLL_ATTEMPTS; attempt += 1) {
+    const reservations = await ngoService.getReservations();
+    const latest = reservations.find(
+      (reservation) => String(reservation.id) === String(reservationId)
+    );
+
+    if (!latest) {
+      await delay(PAYMENT_POLL_DELAY_MS);
+      continue;
+    }
+
+    const state = getReservationPaymentState(latest);
+    if (state === "paid" || state === "failed" || state === "expired") {
+      return latest;
+    }
+
+    await delay(PAYMENT_POLL_DELAY_MS);
+  }
+
+  const reservations = await ngoService.getReservations();
+  return (
+    reservations.find(
+      (reservation) => String(reservation.id) === String(reservationId)
+    ) ?? null
+  );
 }
 
 export default function NGONearbyListingsPage() {
@@ -209,37 +245,75 @@ export default function NGONearbyListingsPage() {
         selectedReservations.map((item) => [String(item.listing_id), item.quantity])
       );
 
-      setListings((current) =>
-        current
-          .map((listing) => {
-            const reserved = reservedById.get(String(listing.id)) ?? 0;
-            const remaining = getListingQuantity(listing) - reserved;
-            return {
-              ...listing,
-              remaining_quantity: Math.max(remaining, 0),
-            };
-          })
-          .filter((listing) => getListingQuantity(listing) > 0)
-      );
-      setQuantities({});
       if (result.payment && result.reservations[0]?.id) {
+        const reservationId = result.reservations[0].id;
         savePaymentSession({
           orderId: result.payment.order_id,
           paymentSessionId: result.payment.payment_session_id,
-          reservationId: result.reservations[0].id,
+          reservationId,
         });
         const depositAmount = Number(
           result.payment.reliability_deposit_amount ?? result.policy?.depositAmount ?? 0
         );
         setSuccess(
           depositAmount > 0
-            ? `Reservation created. Rs. ${depositAmount.toFixed(2)} refundable reliability deposit added. Deposit will be refunded automatically after successful rescue completion.`
-            : "Reservation created. Opening checkout."
+            ? `Rs. ${depositAmount.toFixed(2)} refundable reliability deposit added. Complete payment to confirm this rescue.`
+            : "Opening checkout to confirm this rescue."
         );
-        await openCashfreeCheckout({
+        const checkoutResult = await openCashfreeCheckout({
           paymentSessionId: result.payment.payment_session_id,
         });
+        if (checkoutResult?.error?.message) {
+          setSuccess("");
+          await reservationService.cancelReservation(reservationId).catch(() => undefined);
+          setError("Payment was not completed. Reservation was not created.");
+          return;
+        }
+
+        setSuccess("Verifying payment status...");
+        const verifiedReservation = await pollNGOPayment(reservationId);
+        const paymentState = verifiedReservation
+          ? getReservationPaymentState(verifiedReservation)
+          : "failed";
+
+        if (paymentState !== "paid") {
+          setSuccess("");
+          setError("Payment was not completed. Reservation was not created.");
+          return;
+        }
+
+        setListings((current) =>
+          current
+            .map((listing) => {
+              const reserved = reservedById.get(String(listing.id)) ?? 0;
+              const remaining = getListingQuantity(listing) - reserved;
+              return {
+                ...listing,
+                remaining_quantity: Math.max(remaining, 0),
+              };
+            })
+            .filter((listing) => getListingQuantity(listing) > 0)
+        );
+        setQuantities({});
+        setSuccess(
+          depositAmount > 0
+            ? `Rescue confirmed. Rs. ${depositAmount.toFixed(2)} refundable reliability deposit added. Deposit will be refunded automatically after successful rescue completion.`
+            : "Rescue reservation confirmed."
+        );
       } else {
+        setListings((current) =>
+          current
+            .map((listing) => {
+              const reserved = reservedById.get(String(listing.id)) ?? 0;
+              const remaining = getListingQuantity(listing) - reserved;
+              return {
+                ...listing,
+                remaining_quantity: Math.max(remaining, 0),
+              };
+            })
+            .filter((listing) => getListingQuantity(listing) > 0)
+        );
+        setQuantities({});
         setSuccess("Reservation created successfully.");
       }
     } catch (err) {

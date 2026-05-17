@@ -13,6 +13,12 @@ const { createReservationPayment } = require("../shared/services/payment.service
 const { getReservationPolicy } = require("../shared/services/restriction.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
+  blockingReservationWhere,
+} = require("../shared/services/reservationLock.service");
+const {
+  ensureReservationPaymentContextSchema,
+} = require("../shared/services/reservationPaymentContext.service");
+const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
 const logger = require("../shared/utils/logger");
@@ -27,7 +33,7 @@ const {
   toNumber,
 } = require("../utils/validation");
 
-const RESERVATION_EXISTS_MESSAGE = "You have already interacted with this listing.";
+const RESERVATION_EXISTS_MESSAGE = "User already has reservation for this listing.";
 
 function withStatus(message, statusCode) {
   const error = new Error(message);
@@ -52,6 +58,19 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
     FROM reservations
     WHERE user_id=$1
     AND listing_id=$2
+    AND (
+      ${blockingReservationWhere()}
+      OR (
+        status='cancelled'
+        AND COALESCE(payment_status, '') IN (
+          'paid',
+          'not_required',
+          'refund_pending',
+          'refunded',
+          'refund_failed'
+        )
+      )
+    )
     LIMIT 1
     `,
     [userId, listingId]
@@ -256,9 +275,26 @@ exports.registerNGO = async (req, res) => {
 };
 
 exports.getMyNGO = async (req, res) => {
-  const result = await pool.query("SELECT * FROM ngos WHERE user_id=$1", [
-    req.user.id,
-  ]);
+  const result = await pool.query(
+    `
+    SELECT
+      n.*,
+      u.reliability_deposit_amount,
+      u.reliability_deposit_amount AS refundable_deposit,
+      u.requires_reliability_deposit,
+      u.restriction_level,
+      u.restriction_reason,
+      u.restriction_type,
+      u.cooldown_until,
+      u.banned_until,
+      u.trust_score
+    FROM ngos n
+    JOIN users u
+      ON u.id = n.user_id
+    WHERE n.user_id=$1
+    `,
+    [req.user.id]
+  );
 
   if (!result.rows.length)
     return res.status(404).json({ error: "NGO profile not found" });
@@ -357,6 +393,7 @@ exports.bulkReserve = async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    await ensureReservationPaymentContextSchema(client);
     const policy = await getReservationPolicy({
       client,
       userId: req.user.id,
@@ -406,18 +443,22 @@ exports.bulkReserve = async (req, res) => {
       const reservation = await client.query(
         `
         INSERT INTO reservations
-        (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-        VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5)
+        (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code, payment_context)
+        VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5,$8::jsonb)
         RETURNING *
         `,
         [
           item.listing_id,
           req.user.id,
           quantity,
-          generatePickupCode(),
-          generatePickupCode(),
+          policy.requiresDeposit ? null : generatePickupCode(),
+          policy.requiresDeposit ? null : generatePickupCode(),
           policy.requiresDeposit ? "payment_pending" : "reserved",
           policy.requiresDeposit ? "pending" : "not_required",
+          JSON.stringify({
+            source: "ngo_bulk_reserve",
+            stock_reserved: !policy.requiresDeposit,
+          }),
         ]
       );
 
@@ -434,21 +475,23 @@ exports.bulkReserve = async (req, res) => {
         listingId: r.listing_id,
       });
 
-      const stockUpdate = await client.query(
-        `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity - $1
-        WHERE id=$2
-        AND remaining_quantity >= $1
-        RETURNING remaining_quantity
-        `,
-        [quantity, item.listing_id]
-      );
+      if (!policy.requiresDeposit) {
+        const stockUpdate = await client.query(
+          `
+          UPDATE food_listings
+          SET remaining_quantity = remaining_quantity - $1
+          WHERE id=$2
+          AND remaining_quantity >= $1
+          RETURNING remaining_quantity
+          `,
+          [quantity, item.listing_id]
+        );
 
-      if (!stockUpdate.rows.length) {
-        const error = new Error("Not enough quantity");
-        error.statusCode = 409;
-        throw error;
+        if (!stockUpdate.rows.length) {
+          const error = new Error("Not enough quantity");
+          error.statusCode = 409;
+          throw error;
+        }
       }
     }
 
@@ -464,36 +507,42 @@ exports.bulkReserve = async (req, res) => {
 
     await Promise.all([
       ...created.map((reservation) =>
-        publishReservationUpdated(reservation.id, { action: "created" })
+        policy.requiresDeposit
+          ? Promise.resolve()
+          : publishReservationUpdated(reservation.id, { action: "created" })
       ),
       ...created.map((reservation) =>
         policy.requiresDeposit
-          ? publishPaymentUpdated(reservation.id, { action: "created" })
+          ? Promise.resolve()
           : publishTaskAvailabilityUpdated(reservation.id, { action: "available" })
       ),
-      ...uniqueListingIds(created).map((listingId) =>
-        publishListingUpdated(listingId, { action: "quantity_updated" })
-      ),
-      ...providerNotifications.map((notification) =>
-        notificationQueue
-          .add("notify-user", {
-            userId: notification.providerId,
-            type: "reservation_created",
-            title: "New NGO Reservation",
-            message: "An NGO reserved food for pickup.",
-            data: {
-              reservation_id: notification.reservationId,
-              listing_id: notification.listingId,
-            },
-          })
-          .catch((err) => {
-            logger.warn("Provider NGO reservation notification failed", {
-              err,
-              reservationId: notification.reservationId,
-              providerId: notification.providerId,
-            });
-          })
-      ),
+      ...(policy.requiresDeposit
+        ? []
+        : uniqueListingIds(created).map((listingId) =>
+            publishListingUpdated(listingId, { action: "quantity_updated" })
+          )),
+      ...(policy.requiresDeposit
+        ? []
+        : providerNotifications.map((notification) =>
+            notificationQueue
+              .add("notify-user", {
+                userId: notification.providerId,
+                type: "reservation_created",
+                title: "New NGO Reservation",
+                message: "An NGO reserved food for pickup.",
+                data: {
+                  reservation_id: notification.reservationId,
+                  listing_id: notification.listingId,
+                },
+              })
+              .catch((err) => {
+                logger.warn("Provider NGO reservation notification failed", {
+                  err,
+                  reservationId: notification.reservationId,
+                  providerId: notification.providerId,
+                });
+              })
+          )),
     ]);
 
     res.json({
@@ -695,7 +744,10 @@ exports.getMyReservations = async (req, res) => {
         f.price,
         p.food_amount,
         p.reliability_deposit_amount,
+        p.reliability_deposit_amount AS refundable_deposit,
         p.reliability_deposit_status,
+        p.reliability_deposit_status AS deposit_status,
+        p.refund_status,
 
         u.id AS provider_id,
         u.name AS provider_name,
@@ -724,6 +776,7 @@ exports.getMyReservations = async (req, res) => {
         ON p.reservation_id = r.id
 
       WHERE r.user_id = $1
+      AND NOT (r.status='payment_pending' AND r.payment_status='pending')
       ORDER BY r.reserved_at DESC;
       `,
       [req.user.id]
@@ -1109,6 +1162,8 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     const ngoId = ngoResult.rows[0].id;
+    await ensureReservationPaymentContextSchema(client);
+
     const policy = await getReservationPolicy({
       client,
       userId: req.user.id,
@@ -1178,26 +1233,30 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     // 4️⃣ Accept THIS request
-    await client.query(
-      `
-      UPDATE ngo_requests
-      SET status='accepted', responded_at=NOW()
-      WHERE id=$1
-      `,
-      [requestId]
-    );
+    if (!policy.requiresDeposit) {
+      await client.query(
+        `
+        UPDATE ngo_requests
+        SET status='accepted', responded_at=NOW()
+        WHERE id=$1
+        `,
+        [requestId]
+      );
+    }
 
     // 🔥 5️⃣ EXPIRE OTHER REQUESTS (ONLY SAME LISTING)
-    await client.query(
-      `
-      UPDATE ngo_requests
-      SET status='expired', responded_at=NOW()
-      WHERE listing_id=$1
-      AND id != $2
-      AND status='pending'
-      `,
-      [listingId, requestId]
-    );
+    if (!policy.requiresDeposit) {
+      await client.query(
+        `
+        UPDATE ngo_requests
+        SET status='expired', responded_at=NOW()
+        WHERE listing_id=$1
+        AND id != $2
+        AND status='pending'
+        `,
+        [listingId, requestId]
+      );
+    }
 
     // 6️⃣ Create reservation
     const pickupCode = generatePickupCode();
@@ -1206,18 +1265,26 @@ exports.acceptNGORequest = async (req, res) => {
     const reservationResult = await client.query(
       `
       INSERT INTO reservations
-      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code)
-      VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5)
+      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, payment_status, pickup_code, receive_code, payment_context)
+      VALUES ($1,$2,$3,'ngo','pending',$6,$7,$4,$5,$8::jsonb)
       RETURNING *
       `,
       [
         listingId,
         req.user.id,
         listing.remaining_quantity,
-        pickupCode,
-        receiveCode,
+        policy.requiresDeposit ? null : pickupCode,
+        policy.requiresDeposit ? null : receiveCode,
         policy.requiresDeposit ? "payment_pending" : "reserved",
         policy.requiresDeposit ? "pending" : "not_required",
+        JSON.stringify({
+          source: "ngo_request_accept",
+          request_id: requestId,
+          ngo_id: ngoId,
+          organization_name: ngoResult.rows[0].organization_name,
+          provider_id: listing.provider_id,
+          stock_reserved: !policy.requiresDeposit,
+        }),
       ]
     );
 
@@ -1237,33 +1304,41 @@ exports.acceptNGORequest = async (req, res) => {
       : null;
 
     // 7️⃣ Mark listing completed
-    await client.query(
-      `
-      UPDATE food_listings
-      SET remaining_quantity=0,
-          status='completed'
-      WHERE id=$1
-      `,
-      [listingId]
-    );
+    if (!policy.requiresDeposit) {
+      await client.query(
+        `
+        UPDATE food_listings
+        SET remaining_quantity=0,
+            status='completed'
+        WHERE id=$1
+        `,
+        [listingId]
+      );
+    }
 
     await client.query("COMMIT");
 
     // 🔔 Notification AFTER commit
     await Promise.all([
-      publishReservationUpdated(createdReservation.id, { action: "created" }),
       policy.requiresDeposit
-        ? publishPaymentUpdated(createdReservation.id, { action: "created" })
+        ? Promise.resolve()
+        : publishReservationUpdated(createdReservation.id, { action: "created" }),
+      policy.requiresDeposit
+        ? Promise.resolve()
         : publishTaskAvailabilityUpdated(createdReservation.id, { action: "available" }),
-      publishListingUpdated(listingId, { action: "completed" }),
+      policy.requiresDeposit
+        ? Promise.resolve()
+        : publishListingUpdated(listingId, { action: "completed" }),
     ]);
 
-    await notificationQueue.add("notify-user", {
-      userId: listing.provider_id,
-      type: "ngo_request_accepted",
-      title: "NGO Accepted Your Request",
-      message: `${ngoResult.rows[0].organization_name} accepted your request`,
-    });
+    if (!policy.requiresDeposit) {
+      await notificationQueue.add("notify-user", {
+        userId: listing.provider_id,
+        type: "ngo_request_accepted",
+        title: "NGO Accepted Your Request",
+        message: `${ngoResult.rows[0].organization_name} accepted your request`,
+      });
+    }
 
     res.json({ message: "Request accepted successfully", reservation: createdReservation, payment, policy });
 

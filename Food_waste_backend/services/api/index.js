@@ -22,6 +22,9 @@ const {
   ensureUserIdentityConstraints,
 } = require("../../shared/services/userIdentityConstraints.service");
 const { ensureRestrictionSchema } = require("../../shared/services/restrictionSchema.service");
+const {
+  ensureReservationInteractionLockSchema,
+} = require("../../shared/services/reservationLock.service");
 
 const app = express();
 const server = http.createServer(app);
@@ -217,6 +220,7 @@ process.on("unhandledRejection", (reason) => {
 async function startServer() {
   await ensureUserIdentityConstraints();
   await ensureRestrictionSchema();
+  await ensureReservationInteractionLockSchema();
 
   server.listen(PORT, () => {
     logger.info("API server running", { port: PORT });

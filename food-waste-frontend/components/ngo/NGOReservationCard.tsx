@@ -1,6 +1,16 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import { formatFoodDate } from "@/lib/food";
-import { Clock3, MapPin, Navigation, Package, Store, Ticket, Truck, UserRound } from "lucide-react";
+import {
+  Clock3,
+  MapPin,
+  Navigation,
+  Package,
+  ShieldCheck,
+  Store,
+  Ticket,
+  Truck,
+  UserRound,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import type { NGOReservationHistoryRow } from "@/services/ngo.service";
 
@@ -28,6 +38,26 @@ function getReservationPrice(reservation: NGOReservationHistoryRow) {
   if (reservation.is_free) return "Free";
   if (reservation.price === null || reservation.price === undefined) return "";
   return `Rs. ${String(reservation.price)}`;
+}
+
+function toMoney(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMoney(value: unknown) {
+  return `Rs. ${toMoney(value).toFixed(2)}`;
+}
+
+function getDepositStatusCopy(status: unknown) {
+  const normalized = String(status ?? "held").toLowerCase();
+
+  if (normalized === "refunded") return "Deposit refunded successfully.";
+  if (normalized === "retained") return "Deposit retained due to failed pickup.";
+  if (normalized === "refund_failed") return "Deposit refund needs attention.";
+  if (normalized === "refund_pending") return "Refund is being processed.";
+
+  return "Refund scheduled after successful rescue completion.";
 }
 
 function toCoordinate(value: unknown) {
@@ -141,6 +171,12 @@ export default function NGOReservationCard({
   const providerLatitude = toCoordinate(reservation.provider_latitude);
   const providerLongitude = toCoordinate(reservation.provider_longitude);
   const showVolunteer = shouldShowVolunteer(reservation, status);
+  const foodAmount = toMoney(reservation.food_amount);
+  const depositAmount = toMoney(
+    reservation.reliability_deposit_amount ?? reservation.refundable_deposit
+  );
+  const totalPaid = foodAmount + depositAmount;
+  const showFinancials = foodAmount > 0 || depositAmount > 0;
   const providerLocation =
     providerLatitude !== null && providerLongitude !== null
       ? {
@@ -208,6 +244,42 @@ export default function NGOReservationCard({
             value={displayValue(reservation.receive_code)}
           />
         </div>
+
+        {showFinancials && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase text-amber-700">
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              Operational Payment
+            </div>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+              <div>
+                <p className="text-zinc-600">Food Amount</p>
+                <p className="font-semibold text-zinc-950">
+                  {formatMoney(foodAmount)}
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-600">Reliability Deposit</p>
+                <p className="font-semibold text-amber-800">
+                  {formatMoney(depositAmount)} refundable
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-600">Total Paid</p>
+                <p className="font-semibold text-zinc-950">
+                  {formatMoney(totalPaid)}
+                </p>
+              </div>
+            </div>
+            {depositAmount > 0 && (
+              <p className="mt-3 text-xs font-medium leading-5 text-amber-900">
+                {getDepositStatusCopy(
+                  reservation.deposit_status ?? reservation.reliability_deposit_status
+                )}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="grid gap-3 text-sm md:grid-cols-2">
           <div className="rounded-md border border-zinc-200 bg-white p-3">

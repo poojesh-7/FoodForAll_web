@@ -2,6 +2,7 @@ import api from "@/lib/axios";
 import { getErrorMessage } from "@/services/auth";
 import type {
   AcceptNGORequestResponse,
+  AcceptNGORequestData,
   BulkReserveData,
   BulkReserveRequest,
   BulkReserveResponse,
@@ -47,7 +48,6 @@ type LegacyNGOReservationsResponse = {
 };
 type MyNGOProfile = NGOProfile & DbRow;
 type LegacyBulkReserveResponse = BulkReserveData;
-
 function getNGOData(body: RegisterNGOResponse | LegacyRegisterNGOResponse): RegisterNGOData {
   if ("data" in body) return body.data;
   return { ngo: body.ngo };
@@ -177,10 +177,14 @@ export async function getReservations(): Promise<NGOReservationHistoryRow[]> {
   return getEnvelopeData<NGOReservationHistoryRow[]>(data);
 }
 
-export async function acceptRequest(requestId: DbId): Promise<void> {
-  await api.put<AcceptNGORequestResponse | MessageResponse>(
+export async function acceptRequest(requestId: DbId): Promise<AcceptNGORequestData> {
+  const { data } = await api.put<
+    AcceptNGORequestResponse | AcceptNGORequestData | MessageResponse
+  >(
     `/ngos/requests/${String(requestId)}/accept`
   );
+
+  return getEnvelopeData<AcceptNGORequestData>(data as AcceptNGORequestData);
 }
 
 export async function rejectRequest(requestId: DbId): Promise<void> {

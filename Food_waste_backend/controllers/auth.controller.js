@@ -34,6 +34,9 @@ const {
   normalizeEmail,
   toNumber,
 } = require("../utils/validation");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../shared/config/runtimeSchema");
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -55,6 +58,11 @@ function getSessionFingerprint(req) {
 }
 
 async function ensureAuthHardeningSchema() {
+  if (shouldSkipRuntimeSchemaMutation()) {
+    authSchemaReady = authSchemaReady || Promise.resolve();
+    return authSchemaReady;
+  }
+
   if (!authSchemaReady) {
     authSchemaReady = pool.query(`
       ALTER TABLE users

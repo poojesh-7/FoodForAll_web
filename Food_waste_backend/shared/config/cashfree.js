@@ -1,7 +1,8 @@
 const { Cashfree, CFEnvironment } = require("cashfree-pg");
 
+const configuredEnvironment = String(process.env.CASHFREE_ENV || "").toLowerCase();
 const environment =
-  process.env.NODE_ENV === "production"
+  configuredEnvironment === "production" || configuredEnvironment === "prod"
     ? CFEnvironment.PRODUCTION
     : CFEnvironment.SANDBOX;
 

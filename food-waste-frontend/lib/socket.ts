@@ -1,17 +1,12 @@
 import { io } from "socket.io-client";
+import { getPublicSocketUrl } from "./env";
 
-const DEFAULT_SOCKET_URL = "http://localhost:5000";
-
-function getSocketUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-
-  if (!configuredUrl) return DEFAULT_SOCKET_URL;
-
-  return configuredUrl.replace(/\/api\/v1\/?$/, "").replace(/\/+$/, "");
-}
-
-export const socket = io(getSocketUrl(), {
+export const socket = io(getPublicSocketUrl(), {
   autoConnect: false,
   reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 500,
+  reconnectionDelayMax: 5000,
+  timeout: 20000,
   withCredentials: true,
 });

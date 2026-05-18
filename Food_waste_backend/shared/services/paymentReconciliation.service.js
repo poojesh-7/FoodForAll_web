@@ -2,6 +2,9 @@ const crypto = require("crypto");
 const pool = require("../config/db");
 const redis = require("../config/redis");
 const cashfree = require("../config/cashfree");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 const notificationQueue = require("../../queues/notification.queue");
 const refundQueue = require("../../queues/refund.queue");
 const logger = require("../utils/logger");
@@ -110,6 +113,11 @@ function verifyCashfreeWebhookSignature({ rawBody, signature, timestamp }) {
 }
 
 async function ensurePaymentHardeningSchema(client = pool) {
+  if (shouldSkipRuntimeSchemaMutation()) {
+    schemaReady = schemaReady || Promise.resolve();
+    return schemaReady;
+  }
+
   if (!schemaReady || client !== pool) {
     const run = async () => {
       await ensureRestrictionSchema(client);

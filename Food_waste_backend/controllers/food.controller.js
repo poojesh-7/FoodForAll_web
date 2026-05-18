@@ -115,11 +115,13 @@ exports.registerRestaurant = async (req, res) => {
     }
 
     const { uploadBuffer } = require("../shared/services/cloudinary.service");
+    const storagePrefix = process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local";
     const uploadedImage = await uploadBuffer(req.file.buffer, {
-      folder: "food-waste/fssai",
+      folder: `food-rescue/${storagePrefix}/fssai`,
       public_id: `provider_${userId}_fssai`,
       overwrite: true,
       invalidate: true,
+      mimetype: req.file.mimetype,
     });
 
     const fssaiImagePath = uploadedImage.secure_url;

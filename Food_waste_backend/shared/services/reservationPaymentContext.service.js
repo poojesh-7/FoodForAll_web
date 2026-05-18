@@ -1,6 +1,11 @@
 const pool = require("../config/db");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 
 async function ensureReservationPaymentContextSchema(client = pool) {
+  if (shouldSkipRuntimeSchemaMutation()) return;
+
   await client.query(
     `
     ALTER TABLE reservations

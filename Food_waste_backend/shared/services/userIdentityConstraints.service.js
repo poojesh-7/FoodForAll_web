@@ -1,4 +1,7 @@
 const pool = require("../config/db");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 const logger = require("../utils/logger");
 const { normalizePhoneNumber } = require("../../utils/phone");
 
@@ -134,6 +137,12 @@ async function ensureUserIdentityConstraints() {
   const client = await pool.connect();
 
   try {
+    if (shouldSkipRuntimeSchemaMutation()) {
+      await assertNoIdentityDuplicates(client);
+      logger.info("User identity uniqueness constraints verified");
+      return;
+    }
+
     await client.query("BEGIN");
     await normalizeExistingEmails(client);
     await normalizeExistingPhones(client);

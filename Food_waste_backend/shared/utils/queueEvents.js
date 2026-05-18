@@ -1,4 +1,5 @@
 const logger = require("./logger");
+const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { runWithContext, contextFromJob } = require("./requestContext");
 const {
   heartbeatWorker,
@@ -49,6 +50,21 @@ function registerWorkerEvents(worker, workerName) {
         },
       });
       if (retryExhausted) {
+        void deadLetterQueue.add(
+          "retry-exhausted",
+          {
+            sourceQueue: workerName,
+            jobId: job?.id,
+            jobName: job?.name,
+            data: job?.data,
+            failedReason: job?.failedReason || err?.message,
+            attemptsMade: job?.attemptsMade,
+            failedAt: new Date().toISOString(),
+          },
+          {
+            jobId: `${workerName}:${job?.id}:retry-exhausted`,
+          }
+        );
         void recordAlert({
           alertKey: `${workerName}:retry_exhausted`,
           category: "queue",

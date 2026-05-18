@@ -1,4 +1,5 @@
 const DEFAULT_QUEUE_OPTIONS = {
+  prefix: process.env.QUEUE_PREFIX || process.env.ENV_RESOURCE_PREFIX || "food-rescue",
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -47,6 +48,8 @@ const DEFAULT_WORKER_OPTIONS = {
 function workerOptions(connection, overrides = {}) {
   return {
     connection,
+    prefix: process.env.QUEUE_PREFIX || process.env.ENV_RESOURCE_PREFIX || "food-rescue",
+    concurrency: Number(process.env.QUEUE_WORKER_CONCURRENCY || 5),
     ...DEFAULT_WORKER_OPTIONS,
     ...overrides,
   };

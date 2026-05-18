@@ -1,10 +1,18 @@
 const pool = require("../config/db");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 const logger = require("../utils/logger");
 const { getContext } = require("../utils/requestContext");
 
 let schemaReady;
 
 async function ensureObservabilitySchema(client = pool) {
+  if (shouldSkipRuntimeSchemaMutation()) {
+    schemaReady = schemaReady || Promise.resolve();
+    return schemaReady;
+  }
+
   if (!schemaReady || client !== pool) {
     const run = async () => {
       await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);

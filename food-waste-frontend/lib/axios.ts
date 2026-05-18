@@ -1,6 +1,6 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { getPublicApiBaseUrl } from "./env";
 
-const DEFAULT_API_BASE_URL = "http://localhost:5000/api/v1";
 const REFRESH_TOKEN_PATH = "/auth/refresh-token";
 const PUBLIC_AUTH_PATHS = [
   "/auth/send-otp",
@@ -21,19 +21,8 @@ export function resetAuthRefreshFailure() {
   refreshTokenFailed = false;
 }
 
-function getApiBaseUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-
-  if (!configuredUrl) {
-    return DEFAULT_API_BASE_URL;
-  }
-
-  const baseUrl = configuredUrl.replace(/\/+$/, "");
-  return baseUrl.endsWith("/api/v1") ? baseUrl : `${baseUrl}/api/v1`;
-}
-
 const api = axios.create({
-  baseURL: getApiBaseUrl(),
+  baseURL: getPublicApiBaseUrl(),
   withCredentials: true,
   headers: {
     Accept: "application/json",

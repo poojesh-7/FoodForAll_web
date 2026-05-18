@@ -1,0 +1,102 @@
+name: production-readiness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Food_waste_backend
+    env:
+      APP_ENV: development
+      NODE_ENV: development
+      ENV_RESOURCE_PREFIX: ci-food-rescue
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/food_rescue_ci
+      REDIS_URL: redis://localhost:6379
+      FRONTEND_URL: http://localhost:3000
+      JWT_SECRET: ci-secret-at-least-32-characters
+      TWILIO_ACCOUNT_SID: AC00000000000000000000000000000000
+      TWILIO_AUTH_TOKEN: ci-twilio-token
+      TWILIO_VERIFY_SERVICE_SID: VA00000000000000000000000000000000
+      CASHFREE_ENV: sandbox
+      CASHFREE_APP_ID: TEST0000000000
+      CASHFREE_SECRET_KEY: ci-cashfree-secret
+      CLOUDINARY_CLOUD_NAME: ci-cloud
+      CLOUDINARY_API_KEY: ci-api-key
+      CLOUDINARY_API_SECRET: ci-api-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Food_waste_backend/package-lock.json
+      - run: npm ci
+      - run: npm run env:validate
+      - run: npm run migrate:lint
+      - run: npm test
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: food-waste-frontend
+    env:
+      NEXT_PUBLIC_APP_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:5000/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: food-waste-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run env:validate
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  production-deploy-gate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    defaults:
+      run:
+        working-directory: Food_waste_backend
+    env:
+      APP_ENV: production
+      NODE_ENV: production
+      ENV_RESOURCE_PREFIX: ${{ secrets.ENV_RESOURCE_PREFIX }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+      FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+      FRONTEND_ORIGINS: ${{ secrets.FRONTEND_ORIGINS }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+      TWILIO_VERIFY_SERVICE_SID: ${{ secrets.TWILIO_VERIFY_SERVICE_SID }}
+      CASHFREE_ENV: production
+      CASHFREE_APP_ID: ${{ secrets.CASHFREE_APP_ID }}
+      CASHFREE_SECRET_KEY: ${{ secrets.CASHFREE_SECRET_KEY }}
+      CASHFREE_WEBHOOK_SECRET: ${{ secrets.CASHFREE_WEBHOOK_SECRET }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+      CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+      CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Food_waste_backend/package-lock.json
+      - run: npm ci --omit=dev
+      - run: npm run env:validate
+      - run: npm run migrate:verify

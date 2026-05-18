@@ -50,7 +50,11 @@ function errorHandler(err, req, res, next) {
     return sendError(res, 400, message);
   }
 
-  if (err?.message === "Only JPG, JPEG, PNG allowed") {
+  if (
+    err?.message === "Only JPG, JPEG, PNG allowed" ||
+    err?.message === "Uploaded file content does not match its image type" ||
+    err?.message === "Uploaded file is empty"
+  ) {
     return sendError(res, 400, err.message);
   }
 

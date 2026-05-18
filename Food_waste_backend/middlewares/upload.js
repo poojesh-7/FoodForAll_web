@@ -2,6 +2,7 @@ const multer = require("multer");
 const path = require("path");
 
 const storage = multer.memoryStorage();
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024);
 
 const fileFilter = (req, file, cb) => {
   const allowed = [
@@ -23,7 +24,10 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: MAX_UPLOAD_BYTES,
+    files: 1,
+    fields: 20,
+    parts: 25,
   },
 });
 

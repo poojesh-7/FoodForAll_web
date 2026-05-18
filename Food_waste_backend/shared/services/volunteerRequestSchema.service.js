@@ -1,8 +1,16 @@
 const pool = require("../config/db");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 
 let schemaReady;
 
 function ensureVolunteerRequestSchema(client = pool) {
+  if (shouldSkipRuntimeSchemaMutation()) {
+    schemaReady = schemaReady || Promise.resolve();
+    return schemaReady;
+  }
+
   if (!schemaReady || client !== pool) {
     const run = async () => {
       await client.query(`

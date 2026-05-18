@@ -7,6 +7,10 @@ if (!process.env.REDIS_URL) {
 
 const redisClient = createClient({
   url: process.env.REDIS_URL,
+  name: `${process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local"}:api`,
+  socket: {
+    reconnectStrategy: (retries) => Math.min(retries * 100, 5000),
+  },
 });
 
 redisClient.on("connect", () => {

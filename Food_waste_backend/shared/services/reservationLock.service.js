@@ -1,4 +1,7 @@
 const pool = require("../config/db");
+const {
+  shouldSkipRuntimeSchemaMutation,
+} = require("../config/runtimeSchema");
 
 const blockingReservationStatuses = [
   "reserved",
@@ -57,6 +60,8 @@ function blockingReservationWhere(alias = "") {
 }
 
 async function ensureReservationInteractionLockSchema(client = pool) {
+  if (shouldSkipRuntimeSchemaMutation()) return;
+
   await client.query(
     `
     ALTER TABLE reservations

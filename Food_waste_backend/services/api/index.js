@@ -1,7 +1,13 @@
-const { validateEnvironment } = require("../../shared/config/env");
+const {
+  isProductionLike,
+  validateEnvironment,
+} = require("../../shared/config/env");
 validateEnvironment();
 require("../../shared/config/db");
 const redis = require("../../shared/config/redis");
+const {
+  assertMigrationsCurrent,
+} = require("../../shared/config/migrationStatus");
 const bullBoardServer = require("../../admin/bullBoard");
 const express = require("express");
 const http = require("http");
@@ -49,8 +55,8 @@ if (process.env.NODE_ENV === "production") {
 
 const io = new Server(server, {
   cors: buildSocketCorsOptions(),
-  pingInterval: 25000,
-  pingTimeout: 20000,
+  pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS || 25000),
+  pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS || 20000),
 });
 const cookieParser = require("cookie-parser");
 const cookie = require("cookie");
@@ -224,11 +230,15 @@ const PORT = process.env.PORT || 5000;
 registerProcessErrorHandlers("api");
 
 async function startServer() {
-  await ensureUserIdentityConstraints();
-  await ensureRestrictionSchema();
-  await ensureReservationInteractionLockSchema();
-  await ensurePaymentHardeningSchema();
-  await ensureObservabilitySchema();
+  if (isProductionLike(process.env.APP_ENV)) {
+    await assertMigrationsCurrent();
+  } else {
+    await ensureUserIdentityConstraints();
+    await ensureRestrictionSchema();
+    await ensureReservationInteractionLockSchema();
+    await ensurePaymentHardeningSchema();
+    await ensureObservabilitySchema();
+  }
 
   server.listen(PORT, () => {
     logger.info("API server running", { port: PORT });

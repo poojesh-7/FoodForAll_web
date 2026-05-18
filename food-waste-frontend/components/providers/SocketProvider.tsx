@@ -22,6 +22,8 @@ import type { NotificationRow } from "@backend/contracts/api-contracts";
 type SocketContextValue = {
   socket: Socket;
   connected: boolean;
+  reconnecting: boolean;
+  offline: boolean;
 };
 
 const SocketContext = createContext<SocketContextValue | null>(null);
@@ -41,6 +43,8 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const isOnboarded = useAuthStore((state) => state.isOnboarded);
   const [connected, setConnected] = useState(socket.connected);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     const applyReservation = useRealtimeStore.getState().applyReservation;
@@ -80,20 +84,49 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleConnect = () => {
       setConnected(true);
+      setReconnecting(false);
       if (user?.id) {
         socket.emit("join", user.id);
       }
     };
-    const handleDisconnect = () => setConnected(false);
+    const handleDisconnect = () => {
+      setConnected(false);
+      setReconnecting(true);
+    };
+    const handleReconnectAttempt = () => setReconnecting(true);
+    const handleConnectError = () => setReconnecting(true);
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
+    socket.io.on("reconnect_attempt", handleReconnectAttempt);
+    socket.on("connect_error", handleConnectError);
 
     return () => {
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
+      socket.io.off("reconnect_attempt", handleReconnectAttempt);
+      socket.off("connect_error", handleConnectError);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    const updateOnlineState = () => {
+      setOffline(!window.navigator.onLine);
+      if (window.navigator.onLine && socket.active && !socket.connected) {
+        setReconnecting(true);
+        socket.connect();
+      }
+    };
+
+    updateOnlineState();
+    window.addEventListener("online", updateOnlineState);
+    window.addEventListener("offline", updateOnlineState);
+
+    return () => {
+      window.removeEventListener("online", updateOnlineState);
+      window.removeEventListener("offline", updateOnlineState);
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -118,9 +151,43 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     }
   }, [initialized, isAuthenticated, isInitializing, isOnboarded, user?.id]);
 
-  const value = useMemo(() => ({ socket, connected }), [connected]);
+  const value = useMemo(
+    () => ({ socket, connected, reconnecting, offline }),
+    [connected, reconnecting, offline]
+  );
 
   return (
-    <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
+    <SocketContext.Provider value={value}>
+      <ConnectionStatusBanner
+        connected={connected}
+        reconnecting={reconnecting}
+        offline={offline}
+      />
+      {children}
+    </SocketContext.Provider>
+  );
+}
+
+function ConnectionStatusBanner({
+  connected,
+  reconnecting,
+  offline,
+}: {
+  connected: boolean;
+  reconnecting: boolean;
+  offline: boolean;
+}) {
+  if (connected && !offline) return null;
+
+  const message = offline
+    ? "You are offline. Changes will need a refresh when your connection returns."
+    : reconnecting
+      ? "Reconnecting live updates..."
+      : "Live updates are disconnected.";
+
+  return (
+    <div className="sticky top-0 z-50 border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm font-medium text-amber-800">
+      {message}
+    </div>
   );
 }

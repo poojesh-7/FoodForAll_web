@@ -72,6 +72,11 @@ function refreshAccessToken() {
 
 api.interceptors.request.use((config) => {
   config.withCredentials = true;
+  const requestId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  config.headers.set("x-request-id", requestId);
   return config;
 });
 

@@ -2,6 +2,11 @@ const cashfree = require("../config/cashfree");
 const paymentQueue = require("../../queues/payment.queue");
 const crypto = require("crypto");
 const logger = require("../utils/logger");
+const { PaymentError } = require("../utils/errors");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("./observability.service");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const {
   ensurePaymentHardeningSchema,
@@ -37,6 +42,12 @@ async function createPayment({
   }
 
   try {
+    logger.payment("Payment order creation initiated", {
+      userId: user?.id,
+      orderId,
+      reservationIds: reservations.map((reservation) => reservation.id),
+      amount: totalAmount,
+    });
     const response = await cashfree.PGCreateOrder({
       order_id: orderId,
       order_amount: roundMoney(totalAmount),
@@ -101,7 +112,12 @@ async function createPayment({
 
     await paymentQueue.add(
       "payment-timeout",
-      { reservationIds: reservations.map((reservation) => reservation.id) },
+      {
+        reservationIds: reservations.map((reservation) => reservation.id),
+        userId: user?.id,
+        orderId,
+        paymentSessionId,
+      },
       {
         delay: 10 * 60 * 1000,
         jobId: `payment-batch-${orderId}`,
@@ -109,6 +125,17 @@ async function createPayment({
         backoff: { type: "exponential", delay: 3000 },
       }
     );
+
+    void recordOperationalEvent({
+      category: "payment",
+      severity: "info",
+      eventName: "payment_initiated",
+      metadata: {
+        orderId,
+        reservationIds: reservations.map((reservation) => reservation.id),
+        amount: roundMoney(totalAmount),
+      },
+    });
 
     return {
       order_id: orderId,
@@ -118,13 +145,28 @@ async function createPayment({
       reliability_deposit_amount: roundMoney(reliabilityDepositAmount),
     };
   } catch (err) {
+    const paymentError = new PaymentError("Cashfree order creation failed", {
+      details: { orderId },
+    });
     logger.error("Cashfree order creation failed", {
       err,
       userId: user?.id,
       reservationIds: reservations.map((reservation) => reservation.id),
       amount: totalAmount,
     });
-    throw err;
+    void recordAlert({
+      alertKey: "payment:order_creation_failure",
+      category: "payment",
+      severity: "error",
+      message: "Cashfree order creation failed",
+      metadata: {
+        orderId,
+        userId: user?.id,
+        reservationIds: reservations.map((reservation) => reservation.id),
+        message: err?.message,
+      },
+    });
+    throw paymentError;
   }
 }
 
@@ -208,7 +250,13 @@ async function cancelPayment(client, reservationId) {
     [payment.id]
   );
 
-  logger.info("Payment cancelled", { reservationId, paymentId: payment.id });
+  logger.payment("Payment cancelled", { reservationId, paymentId: payment.id });
+  void recordOperationalEvent({
+    category: "payment",
+    severity: "warning",
+    eventName: "payment_cancelled",
+    metadata: { reservationId, paymentId: payment.id },
+  });
 }
 
 module.exports = {

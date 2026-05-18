@@ -3,6 +3,7 @@ const connection = require("../shared/config/bullmq");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
+const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
@@ -10,7 +11,7 @@ const { findNearbyNGOs } = require("../services/geo.service");
 
 const expiryAlertWorker = new Worker(
   "expiry-alert-queue",
-  async (job) => {
+  withWorkerBoundary("expiry-alert-queue", async (job) => {
     logger.info("Processing expiry alert", { listingId: job.data.listingId });
     const { listingId } = job.data;
 
@@ -60,7 +61,7 @@ const expiryAlertWorker = new Worker(
     }
 
     logger.info("Expiry alert sent", { listingId });
-  },
+  }),
   workerOptions(connection, {
     attempts: 5,
     backoff: {

@@ -1,28 +1,20 @@
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 const { isValidId } = require("../utils/validation");
-const expiryQueue = require("../queues/expiry.queue");
-const expiryAlertQueue = require("../queues/expiryAlert.queue");
-const pickupQueue = require("../queues/pickup.queue");
-const deliveryQueue = require("../queues/delivery.queue");
-const notificationQueue = require("../queues/notification.queue");
-const paymentQueue = require("../queues/payment.queue");
-const refundQueue = require("../queues/refund.queue");
+const {
+  ensureObservabilitySchema,
+  recordOperationalEvent,
+} = require("../shared/services/observability.service");
+const {
+  getQueueHealth,
+  retryFailedJob,
+} = require("../shared/services/queueObservability.service");
+const { getPaymentHealth } = require("../shared/services/paymentMonitoring.service");
 const {
   dismissProviderReport,
   listProviderReports,
   validateProviderReport,
 } = require("../shared/services/moderation.service");
-
-const monitoredQueues = [
-  expiryQueue,
-  expiryAlertQueue,
-  pickupQueue,
-  deliveryQueue,
-  notificationQueue,
-  paymentQueue,
-  refundQueue,
-];
 
 //
 // 📌 GET PENDING NGOS
@@ -68,6 +60,14 @@ exports.approveNGO = async (req, res) => {
       return res.status(409).json({ error: "NGO not found or already approved" });
     }
 
+    logger.security("Admin approved NGO", { adminId: req.user?.id, ngoId: id });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "admin_approved_ngo",
+      metadata: { adminId: req.user?.id, ngoId: id },
+    });
+
     res.json({ message: "NGO approved" });
 
   } catch (err) {
@@ -97,6 +97,14 @@ exports.rejectNGO = async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "NGO not found" });
     }
+
+    logger.security("Admin rejected NGO", { adminId: req.user?.id, ngoId: id });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "admin_rejected_ngo",
+      metadata: { adminId: req.user?.id, ngoId: id },
+    });
 
     res.json({ message: "NGO rejected" });
 
@@ -150,6 +158,17 @@ exports.approveRestaurant = async (req, res) => {
       return res.status(409).json({ error: "Restaurant not found or already approved" });
     }
 
+    logger.security("Admin approved restaurant", {
+      adminId: req.user?.id,
+      restaurantId: id,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "admin_approved_restaurant",
+      metadata: { adminId: req.user?.id, restaurantId: id },
+    });
+
     res.json({ message: "Restaurant approved" });
 
   } catch (err) {
@@ -183,6 +202,17 @@ exports.rejectRestaurant = async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Restaurant not found" });
     }
+
+    logger.security("Admin rejected restaurant", {
+      adminId: req.user?.id,
+      restaurantId: id,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "admin_rejected_restaurant",
+      metadata: { adminId: req.user?.id, restaurantId: id },
+    });
 
     res.json({ message: "Restaurant rejected" });
 
@@ -234,27 +264,7 @@ exports.getOperationalSummary = async (req, res) => {
 //
 exports.getQueueHealth = async (req, res) => {
   try {
-    const queues = await Promise.all(
-      monitoredQueues.map(async (queue) => {
-        const [counts, isPaused] = await Promise.all([
-          queue.getJobCounts(
-            "active",
-            "waiting",
-            "delayed",
-            "failed",
-            "completed",
-            "paused"
-          ),
-          queue.isPaused(),
-        ]);
-
-        return {
-          name: queue.name,
-          is_paused: isPaused,
-          counts,
-        };
-      })
-    );
+    const queues = await getQueueHealth({ includeJobs: true });
 
     res.json({ queues });
   } catch (err) {
@@ -265,6 +275,82 @@ exports.getQueueHealth = async (req, res) => {
       error: "Failed to fetch queue health",
       data: null,
     });
+  }
+};
+
+exports.retryFailedQueueJob = async (req, res) => {
+  try {
+    const job = await retryFailedJob(req.params.queueName, req.params.jobId);
+    logger.security("Admin retried failed queue job", {
+      adminId: req.user?.id,
+      queueName: req.params.queueName,
+      jobId: req.params.jobId,
+    });
+    void recordOperationalEvent({
+      category: "queue",
+      severity: "warning",
+      eventName: "failed_queue_job_retried",
+      metadata: {
+        adminId: req.user?.id,
+        queueName: req.params.queueName,
+        jobId: req.params.jobId,
+      },
+    });
+    res.json({ job });
+  } catch (err) {
+    logger.error("Failed to retry queue job", {
+      err,
+      adminId: req.user?.id,
+      queueName: req.params.queueName,
+      jobId: req.params.jobId,
+    });
+    res.status(err.statusCode || 500).json({ error: err.message || "Retry failed" });
+  }
+};
+
+exports.getPaymentHealth = async (req, res) => {
+  try {
+    const payments = await getPaymentHealth();
+    res.json({ payments });
+  } catch (err) {
+    logger.error("Failed to fetch payment health", { err, adminId: req.user?.id });
+    res.status(500).json({ error: "Failed to fetch payment health" });
+  }
+};
+
+exports.getOperationalAlerts = async (req, res) => {
+  try {
+    await ensureObservabilitySchema();
+    const result = await pool.query(`
+      SELECT id, alert_key, category, severity, message, metadata, status,
+             first_seen_at, last_seen_at, occurrences
+      FROM operational_alerts
+      WHERE status='open'
+      ORDER BY severity DESC, last_seen_at DESC
+      LIMIT 50
+    `);
+    res.json({ alerts: result.rows });
+  } catch (err) {
+    logger.error("Failed to fetch operational alerts", { err, adminId: req.user?.id });
+    res.status(500).json({ error: "Failed to fetch operational alerts" });
+  }
+};
+
+exports.getSecurityEvents = async (req, res) => {
+  try {
+    await ensureObservabilitySchema();
+    const result = await pool.query(`
+      SELECT id, severity, event_name, request_id, user_id, role,
+             reservation_id, metadata, created_at
+      FROM operational_events
+      WHERE category='security'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
+    res.json({ events: result.rows });
+  } catch (err) {
+    logger.error("Failed to fetch security events", { err, adminId: req.user?.id });
+    res.status(500).json({ error: "Failed to fetch security events" });
   }
 };
 
@@ -302,6 +388,17 @@ async function reviewProviderReport(req, res, action) {
     }
 
     await client.query("COMMIT");
+    logger.security("Provider report reviewed", {
+      adminId: req.user?.id,
+      reportId: id,
+      action,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "provider_report_reviewed",
+      metadata: { adminId: req.user?.id, reportId: id, action },
+    });
     res.json({ message: `Provider report ${action}d`, report });
   } catch (err) {
     await client.query("ROLLBACK");

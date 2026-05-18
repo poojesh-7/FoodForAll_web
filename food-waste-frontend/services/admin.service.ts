@@ -3,8 +3,14 @@ import { getErrorMessage } from "@/services/auth";
 import type {
   AdminOperationalSummary,
   AdminOperationalSummaryResponse,
+  AdminOperationalAlert,
+  AdminOperationalAlertsResponse,
+  AdminPaymentHealth,
+  AdminPaymentHealthResponse,
   AdminQueueHealth,
   AdminQueueHealthResponse,
+  AdminSecurityEvent,
+  AdminSecurityEventsResponse,
   DbId,
   PendingNGORow,
   PendingNGOsResponse,
@@ -146,6 +152,41 @@ export async function getQueueHealth(): Promise<AdminQueueHealth[]> {
   return getEnvelopeData<{ queues: AdminQueueHealth[] }>(data).queues;
 }
 
+export async function retryFailedQueueJob(
+  queueName: string,
+  jobId: string | number
+): Promise<void> {
+  await api.post(
+    `/admin/queues/${encodeURIComponent(queueName)}/jobs/${encodeURIComponent(
+      String(jobId)
+    )}/retry`
+  );
+}
+
+export async function getPaymentHealth(): Promise<AdminPaymentHealth> {
+  const { data } = await api.get<
+    AdminPaymentHealthResponse | { payments: AdminPaymentHealth }
+  >("/admin/payments/health");
+
+  return getEnvelopeData<{ payments: AdminPaymentHealth }>(data).payments;
+}
+
+export async function getOperationalAlerts(): Promise<AdminOperationalAlert[]> {
+  const { data } = await api.get<
+    AdminOperationalAlertsResponse | { alerts: AdminOperationalAlert[] }
+  >("/admin/operations/alerts");
+
+  return getEnvelopeData<{ alerts: AdminOperationalAlert[] }>(data).alerts;
+}
+
+export async function getSecurityEvents(): Promise<AdminSecurityEvent[]> {
+  const { data } = await api.get<
+    AdminSecurityEventsResponse | { events: AdminSecurityEvent[] }
+  >("/admin/operations/security-events");
+
+  return getEnvelopeData<{ events: AdminSecurityEvent[] }>(data).events;
+}
+
 export async function getProviderReports(
   status: "pending" | "all" = "pending"
 ): Promise<AdminProviderReport[]> {
@@ -173,6 +214,10 @@ export const adminService = {
   rejectRestaurant,
   getOperationalSummary,
   getQueueHealth,
+  retryFailedQueueJob,
+  getPaymentHealth,
+  getOperationalAlerts,
+  getSecurityEvents,
   getProviderReports,
   validateProviderReport,
   dismissProviderReport,

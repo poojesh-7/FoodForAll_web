@@ -1,4 +1,5 @@
 const logger = require("../shared/utils/logger");
+const { captureError } = require("../shared/services/errorTracking.service");
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -68,6 +69,18 @@ function errorHandler(err, req, res, next) {
       role: req.user?.role,
       ip: req.ip,
     },
+  });
+  void captureError(err, {
+    category: err?.category,
+    eventName: "api_request_failed",
+    severity: statusCode >= 500 ? "error" : "warning",
+    method: req.method,
+    path: req.originalUrl,
+    statusCode,
+    userId: req.user?.id,
+    role: req.user?.role,
+    alert: statusCode >= 500,
+    alertKey: statusCode >= 500 ? `api:${req.method}:${req.route?.path || req.path}` : undefined,
   });
 
   return sendError(res, statusCode, publicMessage, err?.message);

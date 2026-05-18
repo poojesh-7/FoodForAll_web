@@ -19,6 +19,11 @@ const {
 const { globalLimiter } = require("../../middlewares/rateLimit.middleware");
 const { isValidId } = require("../../utils/validation");
 const logger = require("../../shared/utils/logger");
+const requestContextMiddleware = require("../../middlewares/requestContext.middleware");
+const healthRoutes = require("../../routes/health.routes");
+const {
+  registerProcessErrorHandlers,
+} = require("../../shared/services/errorTracking.service");
 const {
   ensureUserIdentityConstraints,
 } = require("../../shared/services/userIdentityConstraints.service");
@@ -29,6 +34,9 @@ const {
 const {
   ensurePaymentHardeningSchema,
 } = require("../../shared/services/paymentReconciliation.service");
+const {
+  ensureObservabilitySchema,
+} = require("../../shared/services/observability.service");
 
 const app = express();
 const server = http.createServer(app);
@@ -50,7 +58,9 @@ const cookie = require("cookie");
 app.use(cookieParser());
 app.use(buildHelmetMiddleware());
 app.use(cors(corsOptions));
+app.use(requestContextMiddleware);
 app.use("/api/v1", globalLimiter);
+app.use("/health", healthRoutes);
 // require("../../admin/cleanup");
 const jwt = require("jsonwebtoken");
 
@@ -60,7 +70,7 @@ io.use((socket, next) => {
     const token = socket.handshake.auth?.token || cookies.accessToken;
 
     if (!token) {
-      logger.warn("Socket authentication failed", {
+      logger.security("Socket authentication failed", {
         reason: "missing_token",
         socketId: socket.id,
         ip: socket.handshake.address,
@@ -71,7 +81,7 @@ io.use((socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     if (!decoded?.id || !isValidId(decoded.id)) {
-      logger.warn("Socket authentication failed", {
+      logger.security("Socket authentication failed", {
         reason: "invalid_user_id",
         socketId: socket.id,
         ip: socket.handshake.address,
@@ -84,7 +94,7 @@ io.use((socket, next) => {
 
     next();
   } catch (err) {
-    logger.warn("Socket authentication failed", {
+    logger.security("Socket authentication failed", {
       reason: "invalid_token",
       socketId: socket.id,
       ip: socket.handshake.address,
@@ -211,22 +221,14 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-process.on("uncaughtException", (err) => {
-  logger.error("Uncaught exception", { err });
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled promise rejection", {
-    err: reason instanceof Error ? reason : new Error(String(reason)),
-  });
-});
+registerProcessErrorHandlers("api");
 
 async function startServer() {
   await ensureUserIdentityConstraints();
   await ensureRestrictionSchema();
   await ensureReservationInteractionLockSchema();
   await ensurePaymentHardeningSchema();
+  await ensureObservabilitySchema();
 
   server.listen(PORT, () => {
     logger.info("API server running", { port: PORT });

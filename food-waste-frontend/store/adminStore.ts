@@ -5,8 +5,11 @@ import {
   type AdminRestaurant,
 } from "@/services/admin.service";
 import type {
+  AdminOperationalAlert,
   AdminOperationalSummary,
+  AdminPaymentHealth,
   AdminQueueHealth,
+  AdminSecurityEvent,
   DbId,
 } from "@backend/contracts/api-contracts";
 
@@ -15,12 +18,16 @@ interface AdminState {
   restaurants: AdminRestaurant[];
   summary: AdminOperationalSummary | null;
   queues: AdminQueueHealth[];
+  payments: AdminPaymentHealth | null;
+  alerts: AdminOperationalAlert[];
+  securityEvents: AdminSecurityEvent[];
   loading: boolean;
   actionLoading: boolean;
   error: string | null;
   loadModeration: () => Promise<void>;
   loadOperations: () => Promise<void>;
   loadQueues: () => Promise<void>;
+  loadMonitoring: () => Promise<void>;
   approveNGO: (id: DbId) => Promise<void>;
   rejectNGO: (id: DbId, reason: string) => Promise<void>;
   approveRestaurant: (id: DbId) => Promise<void>;
@@ -32,6 +39,9 @@ export const useAdminStore = create<AdminState>((set, get) => ({
   restaurants: [],
   summary: null,
   queues: [],
+  payments: null,
+  alerts: [],
+  securityEvents: [],
   loading: false,
   actionLoading: false,
   error: null,
@@ -54,8 +64,13 @@ export const useAdminStore = create<AdminState>((set, get) => ({
   loadOperations: async () => {
     try {
       set({ loading: true, error: null });
-      const summary = await adminService.getOperationalSummary();
-      set({ summary });
+      const [summary, payments, alerts, securityEvents] = await Promise.all([
+        adminService.getOperationalSummary(),
+        adminService.getPaymentHealth(),
+        adminService.getOperationalAlerts(),
+        adminService.getSecurityEvents(),
+      ]);
+      set({ summary, payments, alerts, securityEvents });
     } catch (error) {
       set({ error: adminService.getErrorMessage(error) });
     } finally {
@@ -68,6 +83,23 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       set({ loading: true, error: null });
       const queues = await adminService.getQueueHealth();
       set({ queues });
+    } catch (error) {
+      set({ error: adminService.getErrorMessage(error) });
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  loadMonitoring: async () => {
+    try {
+      set({ loading: true, error: null });
+      const [queues, payments, alerts, securityEvents] = await Promise.all([
+        adminService.getQueueHealth(),
+        adminService.getPaymentHealth(),
+        adminService.getOperationalAlerts(),
+        adminService.getSecurityEvents(),
+      ]);
+      set({ queues, payments, alerts, securityEvents });
     } catch (error) {
       set({ error: adminService.getErrorMessage(error) });
     } finally {

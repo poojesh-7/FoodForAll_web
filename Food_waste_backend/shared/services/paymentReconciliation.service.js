@@ -5,6 +5,14 @@ const cashfree = require("../config/cashfree");
 const notificationQueue = require("../../queues/notification.queue");
 const refundQueue = require("../../queues/refund.queue");
 const logger = require("../utils/logger");
+const {
+  PaymentError,
+  WebhookVerificationError,
+} = require("../utils/errors");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("./observability.service");
 const generatePickupCode = require("../../utils/codeGenerator");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const {
@@ -73,21 +81,17 @@ function timingSafeEqualString(left, right) {
 
 function verifyCashfreeWebhookSignature({ rawBody, signature, timestamp }) {
   if (!signature || !timestamp) {
-    const error = new Error("Missing Cashfree webhook signature headers");
-    error.statusCode = 401;
-    throw error;
+    throw new WebhookVerificationError("Missing Cashfree webhook signature headers");
   }
 
   if (!process.env.CASHFREE_SECRET_KEY) {
-    const error = new Error("Cashfree webhook secret is not configured");
-    error.statusCode = 500;
-    throw error;
+    throw new PaymentError("Cashfree webhook secret is not configured", {
+      statusCode: 500,
+    });
   }
 
   if (!isFreshWebhookTimestamp(timestamp)) {
-    const error = new Error("Stale Cashfree webhook timestamp");
-    error.statusCode = 401;
-    throw error;
+    throw new WebhookVerificationError("Stale Cashfree webhook timestamp");
   }
 
   const rawBuffer = toRawBody(rawBody);
@@ -101,9 +105,7 @@ function verifyCashfreeWebhookSignature({ rawBody, signature, timestamp }) {
     .digest("base64");
 
   if (!timingSafeEqualString(expectedSignature, signature)) {
-    const error = new Error("Invalid Cashfree webhook signature");
-    error.statusCode = 401;
-    throw error;
+    throw new WebhookVerificationError("Invalid Cashfree webhook signature");
   }
 }
 
@@ -122,6 +124,8 @@ async function ensurePaymentHardeningSchema(client = pool) {
 
       await client.query(`
         ALTER TABLE payments
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         ADD COLUMN IF NOT EXISTS transaction_id TEXT NULL,
         ADD COLUMN IF NOT EXISTS payment_method TEXT NULL,
         ADD COLUMN IF NOT EXISTS refund_id TEXT NULL,
@@ -1119,6 +1123,10 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
   const rawBuffer = toRawBody(rawBody);
 
   verifyCashfreeWebhookSignature({ rawBody: rawBuffer, signature, timestamp });
+  logger.payment("Cashfree webhook signature verified", {
+    hasSignature: Boolean(signature),
+    hasTimestamp: Boolean(timestamp),
+  });
 
   let body;
   try {
@@ -1171,16 +1179,46 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
     await markWebhookProcessedInRedis(idempotencyKey);
     await publishSideEffects(sideEffects);
 
-    logger.info("Cashfree webhook processed", {
+    logger.payment("Cashfree webhook processed", {
       idempotencyKey,
       orderId: fields.orderId,
       refundId: fields.refundId,
       status: fields.status,
     });
+    void recordOperationalEvent({
+      category: "payment",
+      severity: "info",
+      eventName: "cashfree_webhook_processed",
+      metadata: {
+        idempotencyKey,
+        orderId: fields.orderId,
+        refundId: fields.refundId,
+        status: fields.status,
+      },
+    });
 
     return { duplicate: false };
   } catch (err) {
     await client.query("ROLLBACK");
+    void recordOperationalEvent({
+      category: "payment",
+      severity: "error",
+      eventName: "cashfree_webhook_failed",
+      metadata: {
+        idempotencyKey,
+        orderId: fields.orderId,
+        refundId: fields.refundId,
+        status: fields.status,
+        message: err?.message,
+      },
+    });
+    void recordAlert({
+      alertKey: "payment:webhook_failure",
+      category: "payment",
+      severity: "error",
+      message: "Cashfree webhook failure",
+      metadata: { orderId: fields.orderId, message: err?.message },
+    });
     await markWebhookEventFailed(eventRecord, err).catch((markErr) => {
       logger.warn("Cashfree webhook failure mark failed", { err: markErr });
     });
@@ -1280,11 +1318,22 @@ async function reconcileOrder({ orderId, source = "manual" }) {
     await client.query("COMMIT");
     await publishSideEffects(sideEffects, "payment_reconciled");
 
-    logger.info("Payment order reconciled", {
+    logger.payment("Payment order reconciled", {
       orderId,
       source,
       gatewayStatus: gateway.status,
       changedReservations: sideEffects.changedReservationIds.size,
+    });
+    void recordOperationalEvent({
+      category: "payment",
+      severity: "info",
+      eventName: "payment_order_reconciled",
+      metadata: {
+        orderId,
+        source,
+        gatewayStatus: gateway.status,
+        changedReservations: sideEffects.changedReservationIds.size,
+      },
     });
 
     return {
@@ -1295,6 +1344,13 @@ async function reconcileOrder({ orderId, source = "manual" }) {
   } catch (err) {
     await client.query("ROLLBACK");
     logger.error("Payment order reconciliation failed", { err, orderId, source });
+    void recordAlert({
+      alertKey: "payment:reconciliation_failure",
+      category: "payment",
+      severity: "error",
+      message: "Payment reconciliation failed",
+      metadata: { orderId, source, message: err?.message },
+    });
     throw err;
   } finally {
     client.release();

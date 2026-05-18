@@ -1,6 +1,10 @@
 const crypto = require("crypto");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("./observability.service");
 const { normalizePhoneNumber } = require("../../utils/phone");
 
 const SEND_COOLDOWN_MS = Number(process.env.OTP_RESEND_COOLDOWN_MS || 45 * 1000);
@@ -112,11 +116,25 @@ async function recordOtpSend({ phone, ip, deviceId }) {
     const result = await store.increment(key(check.scope, check.value), SEND_WINDOW_MS);
     if (result.count > check.limit && check.lockScope) {
       await store.set(key(check.lockScope, check.value), "send-limit", 5 * 60 * 1000);
-      logger.warn("OTP send abuse lock applied", {
+      const event = {
         scope: check.scope,
         ip: context.ip,
         limit: check.limit,
         resetMs: result.resetMs,
+      };
+      logger.security("OTP send abuse lock applied", event);
+      void recordOperationalEvent({
+        category: "security",
+        severity: "warning",
+        eventName: "otp_send_abuse_lock",
+        metadata: event,
+      });
+      void recordAlert({
+        alertKey: "security:otp_send_abuse",
+        category: "security",
+        severity: "warning",
+        message: "OTP send abuse lock applied",
+        metadata: event,
       });
     }
   }
@@ -166,18 +184,38 @@ async function recordOtpVerifyFailure({ phone, ip, deviceId, reason }) {
     if (result.count >= check.limit && check.lockScope) {
       const lockoutMs = await getLockoutMs(context);
       await store.set(key(check.lockScope, check.value), reason || "verify-failed", lockoutMs);
-      logger.warn("OTP verification lock applied", {
+      const event = {
         scope: check.scope,
         ip: context.ip,
         limit: check.limit,
         lockoutMs,
+      };
+      logger.security("OTP verification lock applied", event);
+      void recordOperationalEvent({
+        category: "security",
+        severity: "warning",
+        eventName: "otp_verify_abuse_lock",
+        metadata: event,
+      });
+      void recordAlert({
+        alertKey: "security:otp_verify_abuse",
+        category: "security",
+        severity: "warning",
+        message: "OTP verification abuse lock applied",
+        metadata: event,
       });
     }
   }
 
-  logger.warn("OTP verification failed", {
+  logger.security("OTP verification failed", {
     ip: context.ip,
     reason,
+  });
+  void recordOperationalEvent({
+    category: "security",
+    severity: "warning",
+    eventName: "otp_verification_failed",
+    metadata: { ip: context.ip, reason },
   });
 }
 

@@ -1,6 +1,9 @@
 const { validateEnvironment } = require("../../shared/config/env");
 validateEnvironment();
 const logger = require("../../shared/utils/logger");
+const {
+  registerProcessErrorHandlers,
+} = require("../../shared/services/errorTracking.service");
 require("../../shared/config/db");
 require("../../shared/config/redis");
 
@@ -12,21 +15,13 @@ require("../../workers/StartDeliveryTimeout.worker");
 require("../../workers/StartPickupTimeout.worker")
 require("../../workers/paymentTimeout.worker");
 require("../../workers/refund.worker");
+require("../../workers/operationalCleanup.worker");
 const ngolocationSync=require("../../workers/ngoLocationSync.worker");
 const notificationCleanup=require("../../workers/notificationCleanup.worker");
 ngolocationSync();
 notificationCleanup();
 
-process.on("uncaughtException", (err) => {
-  logger.error("Worker process uncaught exception", { err });
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason) => {
-  logger.error("Worker process unhandled promise rejection", {
-    err: reason instanceof Error ? reason : new Error(String(reason)),
-  });
-});
+registerProcessErrorHandlers("workers");
 // const startExpiryWorker = require("../../workers/expiry.worker");
 // // const startTaskTimeoutWorker = require("../../workers/taskTimeout.worker");
 // const startNotificationCleanupWorker = require("../../workers/notificationCleanup.worker");

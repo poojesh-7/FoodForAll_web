@@ -6,6 +6,7 @@ const cashfree = require("../shared/config/cashfree");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
+const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const {
   publishPaymentUpdated,
   publishReservationUpdated,
@@ -457,7 +458,7 @@ async function prepareRefund(reservationId) {
 
 const refundWorker = new Worker(
   "refund-queue",
-  async (job) => {
+  withWorkerBoundary("refund-queue", async (job) => {
     const { reservationId, refundType } = job.data;
     if (refundType === "reliability_deposit") {
       const refund = await prepareDepositRefund(reservationId);
@@ -538,7 +539,7 @@ const refundWorker = new Worker(
 
       throw err;
     }
-  },
+  }),
   workerOptions(connection, {
     attempts: 5,
     backoff: {

@@ -4,6 +4,7 @@ const paymentQueue = require("../queues/payment.queue");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
+const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const {
   reconcileStalePaymentSessions,
 } = require("../shared/services/paymentReconciliation.service");
@@ -27,7 +28,7 @@ paymentQueue
 
 const paymentTimeoutWorker = new Worker(
   "payment-queue",
-  async (job) => {
+  withWorkerBoundary("payment-queue", async (job) => {
     if (job.name === "payment-reconciliation-sweep") {
       const results = await reconcileStalePaymentSessions();
       logger.info("Payment reconciliation sweep completed", {
@@ -51,7 +52,7 @@ const paymentTimeoutWorker = new Worker(
       reservationCount: reservationIds.length,
       reconciledOrders: results.length,
     });
-  },
+  }),
   workerOptions(connection, {
     attempts: 5,
     backoff: { type: "exponential", delay: 3000 },

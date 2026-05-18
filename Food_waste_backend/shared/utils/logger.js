@@ -3,6 +3,11 @@ const SENSITIVE_KEY_PATTERN =
 
 const MAX_STRING_LENGTH = 500;
 const MAX_DEPTH = 5;
+const {
+  EMPTY_CONTEXT,
+  getContext,
+  normalizeContext,
+} = require("./requestContext");
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -59,13 +64,32 @@ function serializeError(err) {
 }
 
 function buildEntry(level, message, meta) {
-  return {
+  const normalizedMeta = redact(meta || {});
+  const context = normalizeContext({
+    ...getContext(),
+    ...(normalizedMeta.context || {}),
+    requestId: normalizedMeta.requestId ?? getContext().requestId,
+    userId: normalizedMeta.userId ?? getContext().userId,
+    role: normalizedMeta.role ?? getContext().role,
+    reservationId: normalizedMeta.reservationId ?? getContext().reservationId,
+    paymentSessionId:
+      normalizedMeta.paymentSessionId ?? getContext().paymentSessionId,
+    queueJobId: normalizedMeta.queueJobId ?? getContext().queueJobId,
+    workerName: normalizedMeta.workerName ?? getContext().workerName,
+  });
+
+  const entry = {
     level,
     message,
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-    ...redact(meta || {}),
+    ...EMPTY_CONTEXT,
+    ...context,
+    ...normalizedMeta,
   };
+
+  delete entry.context;
+  return entry;
 }
 
 function write(level, message, meta) {
@@ -104,7 +128,24 @@ module.exports = {
   },
   error: (message, meta) => write("error", message, meta),
   info: (message, meta) => write("info", message, meta),
+  payment: (message, meta) => write("info", message, { eventCategory: "payment", ...meta }),
+  queue: (message, meta) => write("info", message, { eventCategory: "queue", ...meta }),
   redact,
+  security: (message, meta) => write("warn", message, { eventCategory: "security", ...meta }),
   serializeError,
   warn: (message, meta) => write("warn", message, meta),
+  withContext: (context) => ({
+    debug: (message, meta) => {
+      if (!isProduction()) write("debug", message, { ...meta, context });
+    },
+    error: (message, meta) => write("error", message, { ...meta, context }),
+    info: (message, meta) => write("info", message, { ...meta, context }),
+    payment: (message, meta) =>
+      write("info", message, { eventCategory: "payment", ...meta, context }),
+    queue: (message, meta) =>
+      write("info", message, { eventCategory: "queue", ...meta, context }),
+    security: (message, meta) =>
+      write("warn", message, { eventCategory: "security", ...meta, context }),
+    warn: (message, meta) => write("warn", message, { ...meta, context }),
+  }),
 };

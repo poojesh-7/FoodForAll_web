@@ -829,17 +829,81 @@ export interface AdminQueueCounts {
   failed?: number;
   completed?: number;
   paused?: number;
+  "waiting-children"?: number;
+}
+export interface AdminQueueJob {
+  id?: string | number;
+  name?: string;
+  attemptsMade?: number;
+  attempts?: number;
+  failedReason?: string | null;
+  timestamp?: number;
+  processedOn?: number | null;
+  finishedOn?: number | null;
+  delay?: number;
+  data?: {
+    reservationId?: DbId | null;
+    reservationIds?: DbId[];
+    userId?: DbId | null;
+    orderId?: string | null;
+  };
+}
+export interface AdminWorkerHeartbeat {
+  worker_name?: string;
+  queue_name?: string | null;
+  status?: string;
+  last_job_id?: string | null;
+  last_seen_at?: ISODateString;
+  metadata?: DbRow;
 }
 export interface AdminQueueHealth {
   name: string;
+  status?: "healthy" | "degraded" | string;
   is_paused: boolean;
   counts: AdminQueueCounts;
+  retry_exhausted_count?: number;
+  stuck_active_count?: number;
+  worker?: AdminWorkerHeartbeat | null;
+  failed_jobs?: AdminQueueJob[];
+  active_jobs?: AdminQueueJob[];
+  delayed_jobs?: AdminQueueJob[];
 }
 export interface AdminQueueHealthData {
   queues: AdminQueueHealth[];
 }
+export interface AdminPaymentHealth {
+  summary?: DbRow;
+  webhooks?: DbRow;
+  stale_sessions?: DbRow[];
+}
+export interface AdminOperationalAlert {
+  id: DbId;
+  alert_key: string;
+  category: string;
+  severity: string;
+  message: string;
+  metadata?: DbRow;
+  status: string;
+  first_seen_at?: ISODateString;
+  last_seen_at?: ISODateString;
+  occurrences?: number;
+}
+export interface AdminSecurityEvent {
+  id: DbId;
+  severity: string;
+  event_name: string;
+  request_id?: string | null;
+  user_id?: DbId | null;
+  role?: string | null;
+  reservation_id?: DbId | null;
+  metadata?: DbRow;
+  created_at?: ISODateString;
+}
 export type AdminOperationalSummaryResponse = ApiResponse<AdminOperationalSummary>;
 export type AdminQueueHealthResponse = ApiResponse<AdminQueueHealthData>;
+export type AdminPaymentHealthResponse = ApiResponse<{ payments: AdminPaymentHealth }>;
+export type AdminOperationalAlertsResponse = ApiResponse<{ alerts: AdminOperationalAlert[] }>;
+export type AdminSecurityEventsResponse = ApiResponse<{ events: AdminSecurityEvent[] }>;
 
 // Payment webhook response is documented as strict target contract.
 // Current backend sends bare 200 with no JSON body.

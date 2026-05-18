@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
@@ -17,13 +17,34 @@ export default function AdminQueuesPage() {
   const loading = useAdminStore((state) => state.loading);
   const error = useAdminStore((state) => state.error);
   const loadQueues = useAdminStore((state) => state.loadQueues);
+  const [retryingJob, setRetryingJob] = useState<string | null>(null);
 
   useEffect(() => {
     void loadQueues();
   }, [loadQueues]);
 
+  async function retryJob(queueName: string, jobId: string | number | undefined) {
+    if (jobId === undefined) return;
+    const retryKey = `${queueName}:${String(jobId)}`;
+    try {
+      setRetryingJob(retryKey);
+      await adminService.retryFailedQueueJob(queueName, jobId);
+      await loadQueues();
+    } finally {
+      setRetryingJob(null);
+    }
+  }
+
   const active = queues.reduce((sum, queue) => sum + queueTotal(queue.counts.active), 0);
   const failed = queues.reduce((sum, queue) => sum + queueTotal(queue.counts.failed), 0);
+  const retryExhausted = queues.reduce(
+    (sum, queue) => sum + queueTotal(queue.retry_exhausted_count),
+    0
+  );
+  const stuck = queues.reduce(
+    (sum, queue) => sum + queueTotal(queue.stuck_active_count),
+    0
+  );
   const completed = queues.reduce(
     (sum, queue) => sum + queueTotal(queue.counts.completed),
     0
@@ -36,9 +57,11 @@ export default function AdminQueuesPage() {
     >
       {error && <AdminStateBlock title={error} tone="error" />}
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <AdminMetricCard label="Active Jobs" value={active} detail="Currently processing" />
         <AdminMetricCard label="Failed Jobs" value={failed} detail="Needs operational review" />
+        <AdminMetricCard label="Retry Exhausted" value={retryExhausted} detail="Dead-letter candidates" />
+        <AdminMetricCard label="Stuck Jobs" value={stuck} detail="Active longer than 15 minutes" />
         <AdminMetricCard label="Completed Jobs" value={completed} detail="Completed job history" />
       </section>
 
@@ -83,10 +106,13 @@ export default function AdminQueuesPage() {
                 <tr>
                   <th className="px-4 py-3">Queue</th>
                   <th className="px-4 py-3">State</th>
+                  <th className="px-4 py-3">Worker</th>
                   <th className="px-4 py-3">Active</th>
                   <th className="px-4 py-3">Waiting</th>
                   <th className="px-4 py-3">Delayed</th>
                   <th className="px-4 py-3">Failed</th>
+                  <th className="px-4 py-3">Retry Exhausted</th>
+                  <th className="px-4 py-3">Stuck</th>
                   <th className="px-4 py-3">Completed</th>
                 </tr>
               </thead>
@@ -95,9 +121,9 @@ export default function AdminQueuesPage() {
                   <tr key={queue.name} className="text-zinc-700">
                     <td className="px-4 py-3 font-medium text-zinc-950">{queue.name}</td>
                     <td className="px-4 py-3">
-                      {queue.is_paused ? (
+                      {queue.is_paused || queue.status === "degraded" ? (
                         <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
-                          Paused
+                          {queue.is_paused ? "Paused" : "Degraded"}
                         </span>
                       ) : (
                         <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
@@ -105,10 +131,21 @@ export default function AdminQueuesPage() {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-3">
+                      {queue.worker?.status ? (
+                        <span className="text-xs text-zinc-600">
+                          {queue.worker.status}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-zinc-400">No heartbeat</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.active)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.waiting)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.delayed)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.failed)}</td>
+                    <td className="px-4 py-3">{queueTotal(queue.retry_exhausted_count)}</td>
+                    <td className="px-4 py-3">{queueTotal(queue.stuck_active_count)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.completed)}</td>
                   </tr>
                 ))}
@@ -116,6 +153,54 @@ export default function AdminQueuesPage() {
             </table>
           </div>
         )}
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        {queues
+          .filter((queue) => queue.failed_jobs?.length)
+          .map((queue) => (
+            <div
+              key={`${queue.name}-failed`}
+              className="rounded-lg border border-zinc-200 bg-white shadow-sm"
+            >
+              <div className="border-b border-zinc-200 px-4 py-3">
+                <h2 className="text-base font-semibold text-zinc-950">
+                  Failed Jobs: {queue.name}
+                </h2>
+              </div>
+              <ul className="divide-y divide-zinc-100 text-sm">
+                {queue.failed_jobs?.slice(0, 5).map((job) => (
+                  <li key={String(job.id)} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-zinc-950">
+                        {job.name || "job"} #{String(job.id)}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
+                          {queueTotal(job.attemptsMade)}/{queueTotal(job.attempts)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => retryJob(queue.name, job.id)}
+                          disabled={retryingJob === `${queue.name}:${String(job.id)}`}
+                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-950 disabled:opacity-50"
+                        >
+                          {retryingJob === `${queue.name}:${String(job.id)}`
+                            ? "Retrying"
+                            : "Retry"}
+                        </button>
+                      </div>
+                    </div>
+                    {job.failedReason && (
+                      <p className="mt-1 line-clamp-2 text-xs text-zinc-500">
+                        {job.failedReason}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
       </section>
     </AdminShell>
   );

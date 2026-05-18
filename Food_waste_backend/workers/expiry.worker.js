@@ -4,6 +4,7 @@ const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
+const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 
 const notificationQueue = require("../queues/notification.queue");
 const { applyPenalty } = require("../shared/services/penalty.service");
@@ -17,7 +18,7 @@ const {
 logger.info("Expiry worker started");
 const expiryWorker = new Worker(
   "expiry-queue",
-  async (job) => {
+  withWorkerBoundary("expiry-queue", async (job) => {
     const { listingId } = job.data;
 
     logger.info("Processing listing expiry", { listingId });
@@ -160,7 +161,7 @@ const expiryWorker = new Worker(
     } finally {
       client.release();
     }
-  },
+  }),
   workerOptions(connection, {
     attempts: 5,
     backoff: { type: "exponential", delay: 3000 },

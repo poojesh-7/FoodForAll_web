@@ -1,5 +1,10 @@
 const pool = require("../config/db");
+const logger = require("../utils/logger");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("./observability.service");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_STREAK = 3;
@@ -215,6 +220,32 @@ async function recordViolation({
       escalation.reliability_deposit_amount,
     ]
   );
+
+  const event = {
+    userId,
+    role: effectiveRole,
+    reservationId,
+    reason,
+    restrictionLevel: escalation.restriction_level,
+    bannedUntil: escalation.banned_until,
+    cooldownUntil: escalation.cooldown_until,
+  };
+  logger.security("Restriction violation recorded", event);
+  void recordOperationalEvent({
+    category: "security",
+    severity: escalation.banned_until ? "warning" : "info",
+    eventName: "restriction_violation",
+    metadata: event,
+  });
+  if (escalation.banned_until || escalation.restriction_level >= 5) {
+    void recordAlert({
+      alertKey: `security:restriction:${effectiveRole}`,
+      category: "security",
+      severity: "warning",
+      message: `Restriction escalation for ${effectiveRole}`,
+      metadata: event,
+    });
+  }
 
   return escalation;
 }

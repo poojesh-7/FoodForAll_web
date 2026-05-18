@@ -7,6 +7,7 @@ const notificationQueue = require("../queues/notification.queue");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
+const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const {
   publishListingUpdated,
   publishReservationUpdated,
@@ -58,7 +59,7 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
 */
 const pickupTimeoutWorker = new Worker(
   "pickup-queue",
-  async (job) => {
+  withWorkerBoundary("pickup-queue", async (job) => {
     const { reservationId } = job.data;
 
     logger.info("Pickup timeout triggered", { reservationId });
@@ -163,7 +164,7 @@ const pickupTimeoutWorker = new Worker(
     } finally {
       client.release();
     }
-  },
+  }),
   workerOptions(connection, {
     attempts: 5,
     backoff: {

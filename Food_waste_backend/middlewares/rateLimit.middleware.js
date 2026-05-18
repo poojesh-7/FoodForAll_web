@@ -1,6 +1,10 @@
 const crypto = require("crypto");
 const logger = require("../shared/utils/logger");
 const store = require("../shared/services/rateLimitStore.service");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("../shared/services/observability.service");
 const { normalizePhoneNumber } = require("../utils/phone");
 
 function hash(value) {
@@ -81,16 +85,34 @@ function createRateLimiter({ name, rules, message, code }) {
             message: rule.message || message,
           };
 
-          logger.warn("Rate limit violation", {
+          const event = {
             limiter: name,
             rule: rule.name,
             ip: getClientIp(req),
             userId: req.user?.id,
             route: getRouteKey(req),
             limit: rule.limit,
+            count: result.count,
             resetMs: result.resetMs,
             backend: result.backend,
+          };
+
+          logger.security("Rate limit violation", event);
+          void recordOperationalEvent({
+            category: "security",
+            severity: "warning",
+            eventName: "rate_limit_violation",
+            metadata: event,
           });
+          if (name.includes("otp") || result.count >= rule.limit * 2) {
+            void recordAlert({
+              alertKey: `security:${name}:${rule.name}`,
+              category: "security",
+              severity: "warning",
+              message: `Rate limit spike on ${name}`,
+              metadata: event,
+            });
+          }
 
           return rateLimitResponse(req, res, violation);
         }

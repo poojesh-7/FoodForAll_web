@@ -4,6 +4,10 @@ const { providerDisplaySelect } = require("./providerDisplay.service");
 const { recordViolation } = require("./restriction.service");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
+const {
+  recordAlert,
+  recordOperationalEvent,
+} = require("./observability.service");
 
 const REPORT_REASONS = new Set([
   "fake_listing",
@@ -82,10 +86,24 @@ async function createProviderReport({
   );
 
   if (Number(recentReporterActivity.rows[0]?.report_count || 0) >= 8) {
-    logger.warn("Suspicious provider report volume", {
+    const event = {
       reportedBy,
       providerId,
       reservationId,
+    };
+    logger.security("Suspicious provider report volume", event);
+    void recordOperationalEvent({
+      category: "security",
+      severity: "warning",
+      eventName: "suspicious_provider_report_volume",
+      metadata: event,
+    });
+    void recordAlert({
+      alertKey: "security:provider_report_volume",
+      category: "security",
+      severity: "warning",
+      message: "Suspicious provider report volume",
+      metadata: event,
     });
   }
 
@@ -107,6 +125,23 @@ async function createProviderReport({
     );
 
     await store.set(cooldownKey, "1", REPORT_COOLDOWN_MS);
+    logger.security("Provider report submitted", {
+      reportedBy,
+      providerId,
+      reservationId,
+      reason: normalizedReason,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "provider_report_submitted",
+      metadata: {
+        reportedBy,
+        providerId,
+        reservationId,
+        reason: normalizedReason,
+      },
+    });
     return report.rows[0];
   } catch (err) {
     if (

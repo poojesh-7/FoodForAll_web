@@ -13,7 +13,7 @@ type LoginFormValues = {
 
 const phonePattern = /^(?:[6-9]\d{9}|\+[1-9]\d{7,14}|91[6-9]\d{9})$/;
 const otpPattern = /^\d{4,6}$/;
-const resendCooldownSeconds = 30;
+const resendCooldownSeconds = 45;
 
 function sanitizePhoneInput(value: string) {
   const compact = value.replace(/[^\d+]/g, "");
@@ -130,13 +130,17 @@ export default function LoginPage() {
     if (!isValid) return;
 
     setSendingOtp(true);
-    const sent = await sendOtp(getValues("phone")).finally(() => {
+    const result = await sendOtp(getValues("phone")).finally(() => {
       setSendingOtp(false);
     });
 
-    if (sent) {
+    if (result.retryAfter && result.retryAfter > 0) {
+      setResendSeconds((seconds) => Math.max(seconds, result.retryAfter ?? 0));
+    }
+
+    if (result.sent) {
       setOtpSent(true);
-      setResendSeconds(resendCooldownSeconds);
+      setResendSeconds(result.retryAfter ?? resendCooldownSeconds);
       setValue("otp", "", { shouldDirty: false, shouldValidate: false });
       setOtpValue("");
     }

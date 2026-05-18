@@ -2,6 +2,7 @@ const helmet = require("helmet");
 
 const LOCAL_DEVELOPMENT_ORIGINS = [
   "http://localhost:3000",
+  "http://localhost:5000",
   "http://localhost:3001",
   "http://127.0.0.1:3000",
   "http://127.0.0.1:3001",
@@ -86,7 +87,12 @@ function buildHelmetMiddleware() {
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
     frameguard: { action: "deny" },
+    hsts: isProduction()
+      ? { maxAge: 15552000, includeSubDomains: true, preload: false }
+      : false,
     noSniff: true,
+    permittedCrossDomainPolicies: { permittedPolicies: "none" },
+    referrerPolicy: { policy: "no-referrer" },
     xXssProtection: true,
   });
 }

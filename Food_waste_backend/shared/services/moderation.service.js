@@ -2,6 +2,8 @@ const pool = require("../config/db");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const { providerDisplaySelect } = require("./providerDisplay.service");
 const { recordViolation } = require("./restriction.service");
+const store = require("./rateLimitStore.service");
+const logger = require("../utils/logger");
 
 const REPORT_REASONS = new Set([
   "fake_listing",
@@ -15,6 +17,7 @@ const REPORT_REASONS = new Set([
 
 const DUPLICATE_REPORT_MESSAGE =
   "You already reported this provider for this reservation.";
+const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 function normalizeReason(reason) {
   return String(reason || "").trim().toLowerCase();
@@ -37,6 +40,15 @@ async function createProviderReport({
     throw error;
   }
 
+  const cooldownKey = `report:cooldown:${reportedBy}`;
+  const cooldown = await store.get(cooldownKey);
+  if (cooldown.value) {
+    const error = new Error("Please wait before submitting another report.");
+    error.statusCode = 429;
+    error.retryAfter = Math.max(1, Math.ceil(cooldown.ttlMs / 1000));
+    throw error;
+  }
+
   const existing = await client.query(
     `
     SELECT id
@@ -44,7 +56,10 @@ async function createProviderReport({
     WHERE provider_id=$1
     AND reported_by=$2
     AND reservation_id=$3
-    AND status='pending'
+    AND (
+      status='pending'
+      OR created_at > NOW() - INTERVAL '30 days'
+    )
     LIMIT 1
     `,
     [providerId, reportedBy, reservationId]
@@ -54,6 +69,24 @@ async function createProviderReport({
     const error = new Error(DUPLICATE_REPORT_MESSAGE);
     error.statusCode = 409;
     throw error;
+  }
+
+  const recentReporterActivity = await client.query(
+    `
+    SELECT COUNT(*)::int AS report_count
+    FROM provider_reports
+    WHERE reported_by=$1
+    AND created_at > NOW() - INTERVAL '24 hours'
+    `,
+    [reportedBy]
+  );
+
+  if (Number(recentReporterActivity.rows[0]?.report_count || 0) >= 8) {
+    logger.warn("Suspicious provider report volume", {
+      reportedBy,
+      providerId,
+      reservationId,
+    });
   }
 
   try {
@@ -73,6 +106,7 @@ async function createProviderReport({
       ]
     );
 
+    await store.set(cooldownKey, "1", REPORT_COOLDOWN_MS);
     return report.rows[0];
   } catch (err) {
     if (

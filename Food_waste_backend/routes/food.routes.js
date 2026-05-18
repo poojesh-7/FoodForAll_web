@@ -3,7 +3,11 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const foodCtrl = require("../controllers/food.controller");
 const upload = require("../middlewares/upload");
 const { requireVerified } = require("../middlewares/verification");
-const { registrationLimiter } = require("../middlewares/rateLimit.middleware");
+const {
+  listingCreateLimiter,
+  ngoRequestLimiter,
+  registrationLimiter,
+} = require("../middlewares/rateLimit.middleware");
 const {
   providerRestrictionMiddleware,
 } = require("../middlewares/restriction.middleware");
@@ -16,13 +20,14 @@ router.post(
   foodCtrl.registerRestaurant,
 );
 router.get("/me", authMiddleware, requireVerified, foodCtrl.getMyRestaurant);
-router.post("/", authMiddleware, requireVerified, providerRestrictionMiddleware, foodCtrl.createFood);
-router.put("/:id", authMiddleware, requireVerified, providerRestrictionMiddleware, foodCtrl.updateFood);
+router.post("/", authMiddleware, listingCreateLimiter, requireVerified, providerRestrictionMiddleware, foodCtrl.createFood);
+router.put("/:id", authMiddleware, listingCreateLimiter, requireVerified, providerRestrictionMiddleware, foodCtrl.updateFood);
 router.delete("/:id", authMiddleware, requireVerified, foodCtrl.deleteFood);
 router.get("/ngos", authMiddleware, requireVerified, foodCtrl.viewNGOs);
 router.post(
   "/:id/request-ngo",
   authMiddleware,
+  ngoRequestLimiter,
   requireVerified,
   providerRestrictionMiddleware,
   foodCtrl.requestNGO,

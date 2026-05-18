@@ -16,6 +16,7 @@ const {
   errorHandler,
   notFoundHandler,
 } = require("../../middlewares/error.middleware");
+const { globalLimiter } = require("../../middlewares/rateLimit.middleware");
 const { isValidId } = require("../../utils/validation");
 const logger = require("../../shared/utils/logger");
 const {
@@ -49,6 +50,7 @@ const cookie = require("cookie");
 app.use(cookieParser());
 app.use(buildHelmetMiddleware());
 app.use(cors(corsOptions));
+app.use("/api/v1", globalLimiter);
 // require("../../admin/cleanup");
 const jwt = require("jsonwebtoken");
 

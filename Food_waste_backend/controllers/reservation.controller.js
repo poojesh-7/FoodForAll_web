@@ -1228,7 +1228,13 @@ exports.reportProvider = async (req, res) => {
     });
   } catch (err) {
     await client.query("ROLLBACK");
-    res.status(err.statusCode || 400).json({ error: err.message });
+    if (err.retryAfter) {
+      res.set("Retry-After", String(err.retryAfter));
+    }
+    res.status(err.statusCode || 400).json({
+      error: err.message,
+      retryAfter: err.retryAfter,
+    });
   } finally {
     client.release();
   }

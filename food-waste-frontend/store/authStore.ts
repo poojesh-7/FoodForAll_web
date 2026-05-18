@@ -5,6 +5,10 @@ import * as authApi from "@/services/auth";
 import type { AuthMeUser, AuthUser } from "@backend/contracts/api-contracts";
 
 type AuthStoreUser = AuthMeUser | AuthUser;
+type SendOtpOutcome = {
+  sent: boolean;
+  retryAfter?: number | null;
+};
 
 const AUTH_HYDRATION_ATTEMPTS = 2;
 const AUTH_HYDRATION_RETRY_DELAY_MS = 350;
@@ -73,11 +77,12 @@ interface AuthState {
   loading: boolean;
   authError: string | null;
   authSuccess: string | null;
+  authRetryAfter: number | null;
   setUser: (user: AuthStoreUser | null) => void;
   clearMessages: () => void;
   bootstrapAuth: () => Promise<AuthMeUser | null>;
   fetchMe: () => Promise<AuthMeUser | null>;
-  sendOtp: (phone: string) => Promise<boolean>;
+  sendOtp: (phone: string) => Promise<SendOtpOutcome>;
   verifyOtp: (
     params: authApi.VerifyOtpPayload
   ) => Promise<{ user: AuthStoreUser; isNewUser: boolean } | null>;
@@ -98,6 +103,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loading: false,
   authError: null,
   authSuccess: null,
+  authRetryAfter: null,
 
   setUser: (user) => {
     claimAuthOperation();
@@ -113,7 +119,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
   },
 
-  clearMessages: () => set({ authError: null, authSuccess: null }),
+  clearMessages: () => set({ authError: null, authSuccess: null, authRetryAfter: null }),
 
   bootstrapAuth: async () => {
     const state = get();
@@ -226,21 +232,34 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   sendOtp: async (phone) => {
     try {
-      set({ loading: true, authError: null, authSuccess: null });
+      set({ loading: true, authError: null, authSuccess: null, authRetryAfter: null });
       const response = await authApi.sendOtp({ phone });
+      const resendAfter = Number(
+        (response.data as { resendAfter?: unknown } | null)?.resendAfter
+      );
 
       set({
         authError: null,
         authSuccess: response.message || "OTP sent successfully.",
+        authRetryAfter: Number.isFinite(resendAfter) && resendAfter > 0
+          ? Math.ceil(resendAfter)
+          : null,
       });
 
-      return true;
+      return {
+        sent: true,
+        retryAfter: Number.isFinite(resendAfter) && resendAfter > 0
+          ? Math.ceil(resendAfter)
+          : null,
+      };
     } catch (error) {
+      const retryAfter = authApi.getRetryAfter(error);
       set({
         authError: authApi.getErrorMessage(error),
         authSuccess: null,
+        authRetryAfter: retryAfter,
       });
-      return false;
+      return { sent: false, retryAfter };
     } finally {
       set({ loading: false });
     }

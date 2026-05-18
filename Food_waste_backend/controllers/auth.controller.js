@@ -18,6 +18,15 @@ const {
   sendVerification,
 } = require("../shared/services/twilioVerify.service");
 const {
+  assertCanSendOtp,
+  assertCanVerifyOtp,
+  getFingerprint,
+  recordOtpSend,
+  recordOtpVerifyFailure,
+  recordOtpVerifySuccess,
+} = require("../shared/services/otpAbuse.service");
+const { getClientIp } = require("../middlewares/rateLimit.middleware");
+const {
   isProvided,
   isValidEmail,
   isValidLatitude,
@@ -28,7 +37,36 @@ const {
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const REFRESH_REUSE_GRACE_SECONDS = 30;
+const REFRESH_REUSE_GRACE_SECONDS = 10;
+let authSchemaReady = null;
+
+function hashRefreshToken(refreshToken) {
+  return crypto
+    .createHash("sha256")
+    .update(String(refreshToken || ""))
+    .digest("hex");
+}
+
+function getSessionFingerprint(req) {
+  return crypto
+    .createHash("sha256")
+    .update(`${getFingerprint(req)}:${getClientIp(req)}`)
+    .digest("hex");
+}
+
+async function ensureAuthHardeningSchema() {
+  if (!authSchemaReady) {
+    authSchemaReady = pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS refresh_token_family TEXT NULL,
+      ADD COLUMN IF NOT EXISTS refresh_token_device TEXT NULL,
+      ADD COLUMN IF NOT EXISTS refresh_token_last_used_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS last_auth_activity_at TIMESTAMP NULL
+    `);
+  }
+
+  return authSchemaReady;
+}
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -113,11 +151,17 @@ function getRefreshExpiry() {
   return expiry;
 }
 
-function jsonError(res, status, message) {
+function jsonError(res, status, message, extra = {}) {
+  if (extra.retryAfter) {
+    res.set("Retry-After", String(extra.retryAfter));
+  }
+
   return res.status(status).json({
     success: false,
     message,
     error: message,
+    code: extra.code,
+    retryAfter: extra.retryAfter,
     data: null,
   });
 }
@@ -206,20 +250,39 @@ exports.sendOTP = async (req, res) => {
   try {
     const { phone } = req.body;
     const normalizedPhone = normalizePhoneNumber(phone);
+    const ip = getClientIp(req);
+    const deviceId = getFingerprint(req);
 
     if (!normalizedPhone) {
       return jsonError(res, 400, "Valid phone number required");
     }
 
+    await assertCanSendOtp({ phone: normalizedPhone, ip, deviceId });
     await sendVerification(normalizedPhone);
+    await recordOtpSend({ phone: normalizedPhone, ip, deviceId });
 
     res.json({
       success: true,
       message: "OTP sent successfully",
-      data: null,
+      data: {
+        resendAfter: Math.ceil(
+          Number(process.env.OTP_RESEND_COOLDOWN_MS || 45 * 1000) / 1000
+        ),
+      },
     });
 
   } catch (err) {
+    if (err.statusCode === 429) {
+      logger.warn("OTP send blocked", {
+        err,
+        ip: getClientIp(req),
+      });
+      return jsonError(res, err.statusCode, err.message, {
+        code: err.code,
+        retryAfter: err.retryAfter,
+      });
+    }
+
     const safeError = getSafeTwilioError(err, "Failed to send OTP");
     logger.error("Failed to send OTP", {
       err,
@@ -235,14 +298,24 @@ exports.verifyOTP = async (req, res) => {
   try {
     const { phone, otp } = req.body;
     const normalizedPhone = normalizePhoneNumber(phone);
+    const ip = getClientIp(req);
+    const deviceId = getFingerprint(req);
 
     if (!normalizedPhone) {
       return jsonError(res, 400, "Valid phone required");
     }
 
     if (!isValidOtpCode(otp)) {
+      await recordOtpVerifyFailure({
+        phone: normalizedPhone,
+        ip,
+        deviceId,
+        reason: "invalid_format",
+      });
       return jsonError(res, 400, "Valid OTP required");
     }
+
+    await assertCanVerifyOtp({ phone: normalizedPhone, ip, deviceId });
 
     const verificationCheck = await checkVerification(
       normalizedPhone,
@@ -250,13 +323,22 @@ exports.verifyOTP = async (req, res) => {
     );
 
     if (verificationCheck.status !== "approved") {
+      await recordOtpVerifyFailure({
+        phone: normalizedPhone,
+        ip,
+        deviceId,
+        reason: "twilio_not_approved",
+      });
       return jsonError(res, 401, "Invalid or expired OTP");
     }
 
+    await ensureAuthHardeningSchema();
     const { user, isNewUser } = await findOrCreateUserByPhone(normalizedPhone);
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
+    const refreshTokenHash = hashRefreshToken(refreshToken);
+    const refreshTokenFamily = crypto.randomUUID();
 
     const expiry = getRefreshExpiry();
 
@@ -264,12 +346,23 @@ exports.verifyOTP = async (req, res) => {
       `
       UPDATE users
       SET refresh_token=$1,
-          refresh_token_expiry=$2
-      WHERE id=$3
+          refresh_token_expiry=$2,
+          refresh_token_family=$3,
+          refresh_token_device=$4,
+          refresh_token_last_used_at=NOW(),
+          last_auth_activity_at=NOW()
+      WHERE id=$5
       `,
-      [refreshToken, expiry, user.id]
+      [
+        refreshTokenHash,
+        expiry,
+        refreshTokenFamily,
+        getSessionFingerprint(req),
+        user.id,
+      ]
     );
 
+    await recordOtpVerifySuccess({ phone: normalizedPhone, ip, deviceId });
     setAuthCookies(res, { accessToken, refreshToken });
 
     return res.json({
@@ -282,6 +375,17 @@ exports.verifyOTP = async (req, res) => {
     });
 
   } catch (err) {
+    if (err.statusCode === 429) {
+      logger.warn("OTP verification blocked", {
+        err,
+        ip: getClientIp(req),
+      });
+      return jsonError(res, err.statusCode, err.message, {
+        code: err.code,
+        retryAfter: err.retryAfter,
+      });
+    }
+
     const safeError = getSafeTwilioError(err, "OTP verification failed");
     logger.error("OTP verification failed", {
       err,
@@ -350,6 +454,7 @@ exports.setRole = async (req, res) => {
 
 exports.refreshToken = async (req, res) => {
   try {
+    await ensureAuthHardeningSchema();
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
@@ -358,13 +463,16 @@ exports.refreshToken = async (req, res) => {
       });
     }
 
+    const refreshTokenHash = hashRefreshToken(refreshToken);
+    const fingerprint = getSessionFingerprint(req);
+
     const result = await pool.query(
       `
-      SELECT id, role, refresh_token, refresh_token_expiry
+      SELECT id, role, refresh_token, refresh_token_expiry, refresh_token_device
       FROM users
-      WHERE refresh_token=$1
+      WHERE refresh_token=$1 OR refresh_token=$2
       `,
-      [refreshToken]
+      [refreshToken, refreshTokenHash]
     );
 
     if (!result.rows.length) {
@@ -372,10 +480,28 @@ exports.refreshToken = async (req, res) => {
         refreshToken
       );
 
-      if (reusedSession) {
+      if (reusedSession?.fingerprint === fingerprint) {
         setAuthCookies(res, reusedSession);
         return res.json({ success: true });
       }
+
+      if (reusedSession?.userId) {
+        await pool.query(
+          `
+          UPDATE users
+          SET refresh_token=NULL,
+              refresh_token_expiry=NULL,
+              refresh_token_device=NULL,
+              refresh_token_family=NULL
+          WHERE id=$1
+          `,
+          [reusedSession.userId]
+        );
+      }
+
+      logger.warn("Refresh token replay blocked", {
+        ip: getClientIp(req),
+      });
 
       return res.status(401).json({
         error: "Invalid refresh token",
@@ -392,18 +518,29 @@ exports.refreshToken = async (req, res) => {
 
     // 🔁 Rotate refresh token
     const newRefreshToken = generateRefreshToken();
+    const newRefreshTokenHash = hashRefreshToken(newRefreshToken);
     const expiry = getRefreshExpiry();
 
     const updateResult = await pool.query(
       `
       UPDATE users
       SET refresh_token=$1,
-          refresh_token_expiry=$2
+          refresh_token_expiry=$2,
+          refresh_token_device=$5,
+          refresh_token_last_used_at=NOW(),
+          last_auth_activity_at=NOW()
       WHERE id=$3
-        AND refresh_token=$4
+        AND (refresh_token=$4 OR refresh_token=$6)
       RETURNING id
       `,
-      [newRefreshToken, expiry, user.id, refreshToken]
+      [
+        newRefreshTokenHash,
+        expiry,
+        user.id,
+        refreshToken,
+        fingerprint,
+        refreshTokenHash,
+      ]
     );
 
     // 🔐 Generate new access token
@@ -412,9 +549,23 @@ exports.refreshToken = async (req, res) => {
         refreshToken
       );
 
-      if (reusedSession) {
+      if (reusedSession?.fingerprint === fingerprint) {
         setAuthCookies(res, reusedSession);
         return res.json({ success: true });
+      }
+
+      if (reusedSession?.userId) {
+        await pool.query(
+          `
+          UPDATE users
+          SET refresh_token=NULL,
+              refresh_token_expiry=NULL,
+              refresh_token_device=NULL,
+              refresh_token_family=NULL
+          WHERE id=$1
+          `,
+          [reusedSession.userId]
+        );
       }
 
       return res.status(401).json({
@@ -423,7 +574,12 @@ exports.refreshToken = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user);
-    const session = { accessToken, refreshToken: newRefreshToken };
+    const session = {
+      accessToken,
+      refreshToken: newRefreshToken,
+      fingerprint,
+      userId: user.id,
+    };
 
     try {
       await rememberRotatedRefreshToken(refreshToken, session);
@@ -447,6 +603,7 @@ exports.refreshToken = async (req, res) => {
 
 exports.completeProfile = async (req, res) => {
   try {
+    await ensureAuthHardeningSchema();
     const {
       phone,
       name,
@@ -592,6 +749,7 @@ exports.completeProfile = async (req, res) => {
 
     const refreshToken =
       generateRefreshToken();
+    const refreshTokenHash = hashRefreshToken(refreshToken);
 
     const expiry = getRefreshExpiry();
 
@@ -599,10 +757,20 @@ exports.completeProfile = async (req, res) => {
       `
       UPDATE users
       SET refresh_token=$1,
-          refresh_token_expiry=$2
-      WHERE id=$3
+          refresh_token_expiry=$2,
+          refresh_token_family=$3,
+          refresh_token_device=$4,
+          refresh_token_last_used_at=NOW(),
+          last_auth_activity_at=NOW()
+      WHERE id=$5
       `,
-      [refreshToken, expiry, user.id]
+      [
+        refreshTokenHash,
+        expiry,
+        crypto.randomUUID(),
+        getSessionFingerprint(req),
+        user.id,
+      ]
     );
 
     // 🍪 SET COOKIES (FIX)
@@ -867,16 +1035,31 @@ exports.getMe = async (req, res) => {
 // LOGOUT
 exports.logout = async (req, res) => {
   try {
+    const refreshToken = req.cookies.refreshToken;
     // 🔒 Optional DB cleanup only if user exists
     if (req.user?.id) {
       await pool.query(
         `
         UPDATE users
         SET refresh_token=NULL,
-            refresh_token_expiry=NULL
+            refresh_token_expiry=NULL,
+            refresh_token_device=NULL,
+            refresh_token_family=NULL
         WHERE id=$1
+      `,
+      [req.user.id]
+    );
+    } else if (refreshToken) {
+      await pool.query(
+        `
+        UPDATE users
+        SET refresh_token=NULL,
+            refresh_token_expiry=NULL,
+            refresh_token_device=NULL,
+            refresh_token_family=NULL
+        WHERE refresh_token=$1 OR refresh_token=$2
         `,
-        [req.user.id]
+        [refreshToken, hashRefreshToken(refreshToken)]
       );
     }
 

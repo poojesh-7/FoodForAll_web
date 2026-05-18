@@ -20,7 +20,11 @@ import type {
 } from "@backend/contracts/api-contracts";
 
 type ApiBody<TContract, TLegacy> = TContract | TLegacy;
-type BackendErrorResponse = ApiErrorResponse | { error?: string; message?: string };
+type BackendErrorResponse = ApiErrorResponse | {
+  error?: string;
+  message?: string;
+  retryAfter?: number;
+};
 
 export type SendOtpPayload = SendOTPRequest;
 export type SendOtpResult = SendOTPResponse;
@@ -95,6 +99,24 @@ export function getErrorMessage(error: unknown): string {
   }
 
   return axiosError.message || "Something went wrong. Please try again.";
+}
+
+export function getRetryAfter(error: unknown): number | null {
+  const axiosError = error as AxiosError<BackendErrorResponse | string | unknown>;
+  const headerValue = axiosError.response?.headers?.["retry-after"];
+  const parsedHeader = Number(Array.isArray(headerValue) ? headerValue[0] : headerValue);
+
+  if (Number.isFinite(parsedHeader) && parsedHeader > 0) {
+    return Math.ceil(parsedHeader);
+  }
+
+  const responseData = axiosError.response?.data;
+  if (responseData && typeof responseData === "object" && "retryAfter" in responseData) {
+    const retryAfter = Number(responseData.retryAfter);
+    return Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : null;
+  }
+
+  return null;
 }
 
 export async function sendOtp(payload: SendOtpPayload): Promise<SendOtpResult> {
@@ -195,6 +217,7 @@ export const authService = {
   me: fetchMe,
   logout,
   getErrorMessage,
+  getRetryAfter,
 };
 
 export type { AuthMeUser, AuthUser };

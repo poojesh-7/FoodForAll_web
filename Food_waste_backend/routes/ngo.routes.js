@@ -3,8 +3,9 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const ngoCtrl = require("../controllers/ngo.controller");
 const { requireVerified } = require("../middlewares/verification");
 const {
+  ngoBulkReserveLimiter,
+  ngoRequestLimiter,
   registrationLimiter,
-  reservationCreateLimiter,
 } = require("../middlewares/rateLimit.middleware");
 const {
   reservationRestrictionMiddleware,
@@ -21,7 +22,7 @@ router.get(
 router.post(
   "/bulk-reserve",
   authMiddleware,
-  reservationCreateLimiter,
+  ngoBulkReserveLimiter,
   requireVerified,
   reservationRestrictionMiddleware,
   ngoCtrl.bulkReserve,
@@ -53,6 +54,7 @@ router.get(
 router.post(
   "/request-volunteer",
   authMiddleware,
+  ngoRequestLimiter,
   requireVerified,
   ngoCtrl.requestVolunteer,
 );
@@ -84,6 +86,7 @@ router.get(
 router.put(
   "/requests/:requestID/accept",
   authMiddleware,
+  ngoRequestLimiter,
   requireVerified,
   reservationRestrictionMiddleware,
   ngoCtrl.acceptNGORequest,
@@ -91,6 +94,7 @@ router.put(
 router.put(
   "/requests/:requestID/reject",
   authMiddleware,
+  ngoRequestLimiter,
   requireVerified,
   ngoCtrl.rejectRequest,
 );

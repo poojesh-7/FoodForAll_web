@@ -1339,7 +1339,7 @@ async function reconcileStalePaymentSessions(options = {}) {
         WHERE r.status='payment_pending'
         AND r.payment_status='pending'
         AND p.status='pending'
-        AND COALESCE(r.payment_expires_at, r.created_at + INTERVAL '10 minutes') <= NOW()
+        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
         ORDER BY p.order_id
         LIMIT $1
         FOR UPDATE OF r SKIP LOCKED

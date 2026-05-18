@@ -26,9 +26,11 @@ const nonBlockingReservationStatuses = [
   "failed",
   "payment_failed",
   "abandoned_payment",
+  "expired_payment",
+  "cancelled_before_confirmation",
 ];
 
-const nonBlockingPaymentStatuses = ["failed", "expired"];
+const nonBlockingPaymentStatuses = ["failed", "expired", "abandoned", "cancelled"];
 
 function sqlList(values) {
   return values.map((value) => `'${value}'`).join(", ");

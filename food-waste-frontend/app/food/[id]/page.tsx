@@ -24,7 +24,7 @@ import { foodService } from "@/services/food.service";
 import { impactService } from "@/services/impact.service";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
-import { formatFoodDate, getListingPrice } from "@/lib/food";
+import { formatFoodDate, getListingPrice, getRestaurantDisplayName } from "@/lib/food";
 import {
   getReservationPaymentState,
   savePaymentSession,
@@ -57,11 +57,7 @@ function displayValue(value: unknown) {
 }
 
 function getProviderDisplayName(listing: FoodListingRow) {
-  return (
-    displayValue(listing.restaurant_name) !== "-"
-      ? displayValue(listing.restaurant_name)
-      : displayValue(listing.provider_name)
-  );
+  return getRestaurantDisplayName(listing);
 }
 
 function getStatusClasses(status?: string) {

@@ -5,6 +5,7 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { openCashfreeCheckout } from "@/lib/cashfree";
+import { getRestaurantDisplayName } from "@/lib/food";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { ngoService } from "@/services/ngo.service";
 import { reservationService } from "@/services/reservation.service";
@@ -247,10 +248,10 @@ export default function NGOIncomingRequestsPage() {
                 <div className="grid gap-3 text-sm sm:grid-cols-2">
                   <div className="min-w-0 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                     <p className="text-xs font-medium uppercase text-zinc-500">
-                      Provider
+                      Restaurant
                     </p>
                     <p className="mt-1 truncate font-semibold text-zinc-950">
-                      {displayValue(request.provider_name)}
+                      {getRestaurantDisplayName(request)}
                     </p>
                     {request.provider_phone && (
                       <p className="mt-1 truncate text-zinc-600">

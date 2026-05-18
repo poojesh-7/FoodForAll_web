@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
-import { formatFoodDate } from "@/lib/food";
+import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { mergeListingRows } from "@/lib/realtimeMerge";
@@ -480,10 +480,10 @@ export default function NGONearbyListingsPage() {
                     </div>
                     <div>
                       <p className="text-xs font-medium uppercase text-zinc-500">
-                        Provider
+                        Restaurant
                       </p>
                       <p className="mt-1 text-zinc-950">
-                        {listing.provider_name ?? "-"}
+                        {getRestaurantDisplayName(listing)}
                       </p>
                     </div>
                   </div>

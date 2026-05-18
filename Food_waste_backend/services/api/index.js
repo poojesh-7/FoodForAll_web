@@ -25,6 +25,9 @@ const { ensureRestrictionSchema } = require("../../shared/services/restrictionSc
 const {
   ensureReservationInteractionLockSchema,
 } = require("../../shared/services/reservationLock.service");
+const {
+  ensurePaymentHardeningSchema,
+} = require("../../shared/services/paymentReconciliation.service");
 
 const app = express();
 const server = http.createServer(app);
@@ -221,6 +224,7 @@ async function startServer() {
   await ensureUserIdentityConstraints();
   await ensureRestrictionSchema();
   await ensureReservationInteractionLockSchema();
+  await ensurePaymentHardeningSchema();
 
   server.listen(PORT, () => {
     logger.info("API server running", { port: PORT });

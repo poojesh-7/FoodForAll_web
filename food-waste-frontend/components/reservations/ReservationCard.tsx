@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
-import { formatFoodDate } from "@/lib/food";
+import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
 import { getReservationPaymentState } from "@/lib/payment-flow";
 import type {
   DbId,
@@ -216,6 +216,7 @@ export default function ReservationCard({
   const depositAmount = toMoney(reservation.reliability_deposit_amount);
   const foodAmount = toMoney(reservation.food_amount);
   const showDeposit = depositAmount > 0;
+  const restaurantName = getRestaurantDisplayName(reservation);
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -309,12 +310,12 @@ export default function ReservationCard({
               ) : (
                 <Store className="h-3.5 w-3.5" aria-hidden="true" />
               )}
-              {providerView ? "Requester" : "Provider"}
+              {providerView ? "Requester" : "Restaurant"}
             </div>
             <p className="mt-2 font-semibold text-zinc-950">
               {providerView && "requester_name" in reservation
                 ? displayValue(reservation.requester_name)
-                : displayValue(reservation.provider_name)}
+                : restaurantName}
             </p>
             <p className="mt-1 text-zinc-600">
               {providerView && "requester_phone" in reservation

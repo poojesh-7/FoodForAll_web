@@ -333,9 +333,18 @@ exports.getNearbyListings = async (req, res) => {
       f.pickup_end_time,
       f.status,
       f.is_free,
-      u.name AS provider_name
+      ${providerDisplaySelect("restaurant", "u")} AS provider_name,
+      restaurant.restaurant_name
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id=f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     WHERE f.status='active'
     AND f.is_free = true
     AND f.remaining_quantity > 0
@@ -750,7 +759,8 @@ exports.getMyReservations = async (req, res) => {
         p.refund_status,
 
         u.id AS provider_id,
-        u.name AS provider_name,
+        ${providerDisplaySelect("restaurant", "u")} AS provider_name,
+        restaurant.restaurant_name,
         u.phone AS provider_phone,
         u.address AS provider_address,
         f.latitude AS provider_latitude,
@@ -768,6 +778,14 @@ exports.getMyReservations = async (req, res) => {
         ON f.id = r.listing_id
       JOIN users u
         ON u.id = f.provider_id
+      LEFT JOIN LATERAL (
+        SELECT restaurant_name,
+               NULL::text AS business_name
+        FROM restaurants
+        WHERE user_id=f.provider_id
+        ORDER BY is_verified DESC, id DESC
+        LIMIT 1
+      ) restaurant ON true
       LEFT JOIN users volunteer
         ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN ratings rating

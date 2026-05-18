@@ -82,6 +82,21 @@ export function getPaymentSessionByReservationId(reservationId?: DbId | null) {
   );
 }
 
+export function removePaymentSession(session: {
+  orderId?: string | null;
+  reservationId?: DbId | null;
+}) {
+  writeSessions(
+    readSessions().filter(
+      (item) =>
+        (session.orderId ? item.orderId !== session.orderId : true) &&
+        (session.reservationId !== null && session.reservationId !== undefined
+          ? String(item.reservationId) !== String(session.reservationId)
+          : true)
+    )
+  );
+}
+
 export function getReservationPaymentState(
   reservation: Pick<ReservationRow | ReservationDetails, "status" | "payment_status">
 ): ReservationPaymentState {

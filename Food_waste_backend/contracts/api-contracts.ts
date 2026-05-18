@@ -282,6 +282,7 @@ export interface ReservationDetails extends ReservationRow {
   is_free?: boolean;
   price?: number | string | null;
   provider_name?: string | null;
+  restaurant_name?: string | null;
   provider_phone?: string | null;
   provider_address?: string | null;
   provider_latitude?: number | string | null;
@@ -304,6 +305,7 @@ export interface ReservationHistoryRow extends ReservationRow {
   price?: number | string | null;
   provider_id?: DbId;
   provider_name?: string | null;
+  restaurant_name?: string | null;
   provider_phone?: string | null;
   provider_address?: string | null;
   provider_latitude?: number | string | null;
@@ -410,6 +412,7 @@ export interface NGOIncomingRequest {
   title: string;
   remaining_quantity: number | string;
   provider_name: string | null;
+  restaurant_name?: string | null;
   provider_id?: DbId;
   provider_phone?: string | null;
   pickup_end_time?: ISODateString | null;
@@ -434,6 +437,7 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   price: number | string | null;
   provider_id: DbId;
   provider_name: string | null;
+  restaurant_name?: string | null;
   provider_phone: string | null;
   provider_address?: string | null;
   provider_latitude?: number | string | null;

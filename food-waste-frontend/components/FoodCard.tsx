@@ -4,6 +4,7 @@ import {
   formatFoodDate,
   getListingId,
   getListingPrice,
+  getRestaurantDisplayName,
   type FoodCardListing,
 } from "@/lib/food";
 import type { ReactNode } from "react";
@@ -41,8 +42,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
   const id = getListingId(listing);
   const status = String(listing.status ?? "active").toLowerCase();
   const price = getListingPrice(listing);
-  const providerName =
-    "provider_name" in listing ? displayValue(listing.provider_name) : "Restaurant";
+  const providerName = getRestaurantDisplayName(listing);
   const content = (
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md">
       <div className="flex flex-1 flex-col gap-4 p-5">
@@ -109,7 +109,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
           </div>
           <div className="min-w-0 py-2 pr-3">
             <p className="truncate font-medium text-zinc-950">{providerName}</p>
-            <p className="text-xs text-zinc-500">Provider</p>
+            <p className="text-xs text-zinc-500">Restaurant</p>
           </div>
         </div>
 

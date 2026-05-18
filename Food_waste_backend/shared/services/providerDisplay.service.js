@@ -3,7 +3,7 @@ function resolveProviderDisplayName(provider = {}) {
     String(provider.restaurant_name || "").trim() ||
     String(provider.business_name || "").trim() ||
     String(provider.provider_name || provider.name || "").trim() ||
-    "Unknown provider"
+    "Restaurant unavailable"
   );
 }
 
@@ -13,7 +13,7 @@ function providerDisplaySelect(alias = "provider_restaurant", userAlias = "provi
       NULLIF(TRIM(${alias}.restaurant_name), ''),
       NULLIF(TRIM(${alias}.business_name), ''),
       NULLIF(TRIM(${userAlias}.name), ''),
-      'Unknown provider'
+      'Restaurant unavailable'
     )
   `;
 }

@@ -3,6 +3,9 @@ const paymentQueue = require("../../queues/payment.queue");
 const crypto = require("crypto");
 const logger = require("../utils/logger");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
+const {
+  ensurePaymentHardeningSchema,
+} = require("./paymentReconciliation.service");
 
 function roundMoney(value) {
   const number = Number(value);
@@ -22,7 +25,7 @@ async function createPayment({
   totalFoodAmount,
   reliabilityDepositAmount,
 }) {
-  await ensureRestrictionSchema(client);
+  await ensurePaymentHardeningSchema(client);
   const orderId = `order_${crypto.randomUUID()}`;
   const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:3000")
     .replace(/\/+$/, "");

@@ -18,6 +18,7 @@ const { createProviderReport } = require("../shared/services/moderation.service"
 const {
   blockingReservationWhere,
 } = require("../shared/services/reservationLock.service");
+const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   ensureReservationPaymentContextSchema,
   hasReservedStock,
@@ -288,7 +289,8 @@ exports.getReservationById = async (req, res) => {
             p.food_amount,
             p.reliability_deposit_amount,
             p.reliability_deposit_status,
-            provider.name AS provider_name,
+            ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+            restaurant.restaurant_name,
             provider.phone AS provider_phone,
             provider.address AS provider_address,
             f.latitude AS provider_latitude,
@@ -303,6 +305,14 @@ exports.getReservationById = async (req, res) => {
     FROM reservations r
     JOIN food_listings f ON r.listing_id = f.id
     JOIN users provider ON provider.id = f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id = f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     LEFT JOIN ratings rating ON rating.reservation_id = r.id
@@ -354,7 +364,8 @@ exports.getMyReservations = async (req, res) => {
           p.food_amount,
           p.reliability_deposit_amount,
           p.reliability_deposit_status,
-          provider.name AS provider_name,
+          ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+          restaurant.restaurant_name,
           provider.phone AS provider_phone,
           provider.address AS provider_address,
           f.latitude AS provider_latitude,
@@ -371,6 +382,14 @@ exports.getMyReservations = async (req, res) => {
     FROM reservations r
     JOIN food_listings f ON f.id = r.listing_id
     JOIN users provider ON provider.id = f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id = f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
     LEFT JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     LEFT JOIN payments p ON p.reservation_id = r.id

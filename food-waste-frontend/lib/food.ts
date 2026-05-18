@@ -106,6 +106,32 @@ export function getListingPrice(listing: FoodCardListing) {
   return `Rs. ${String("price" in listing ? listing.price ?? 0 : 0)}`;
 }
 
+function isUsableRestaurantName(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "-" || text.toLowerCase() === "unknown provider") {
+    return false;
+  }
+
+  return !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    text
+  );
+}
+
+export function getRestaurantDisplayName(
+  source: { restaurant_name?: unknown; provider_name?: unknown },
+  fallback = "Restaurant unavailable"
+) {
+  if (isUsableRestaurantName(source.restaurant_name)) {
+    return String(source.restaurant_name).trim();
+  }
+
+  if (isUsableRestaurantName(source.provider_name)) {
+    return String(source.provider_name).trim();
+  }
+
+  return fallback;
+}
+
 export function isFreeRescueListing(listing: FoodCardListing) {
   return (
     Boolean("is_free" in listing && listing.is_free) ||

@@ -10,6 +10,7 @@ import {
   getPaymentSessionByOrderId,
   getReservationPaymentState,
   isRetryablePaymentState,
+  removePaymentSession,
 } from "@/lib/payment-flow";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -110,8 +111,10 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         const state = getReservationPaymentState(latest);
         if (state === "paid") {
           setMessage("Payment confirmed by the backend.");
+          removePaymentSession({ orderId, reservationId: latest.id });
         } else if (state === "failed" || state === "expired") {
           setMessage("Payment did not complete. The backend state is shown below.");
+          removePaymentSession({ orderId, reservationId: latest.id });
         } else {
           setMessage("Payment is still pending. Refresh after a moment.");
         }
@@ -158,8 +161,10 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         const state = getReservationPaymentState(latest);
         if (state === "paid") {
           setMessage("Payment confirmed by the backend.");
+          removePaymentSession({ orderId, reservationId: latest.id });
         } else if (state === "failed" || state === "expired") {
           setMessage("Payment did not complete. The backend state is shown below.");
+          removePaymentSession({ orderId, reservationId: latest.id });
         }
       })
       .catch((err) => {
@@ -176,7 +181,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
     return () => {
       active = false;
     };
-  }, [lookupReservationId, reservationVersion, reservationsById]);
+  }, [lookupReservationId, orderId, reservationVersion, reservationsById]);
 
   const loadReservation = async (pollPending: boolean) => {
     if (!orderId && !reservationIdParam) {

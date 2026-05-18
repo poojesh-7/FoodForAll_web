@@ -10,7 +10,9 @@ const {
   publishPaymentUpdated,
   publishReservationUpdated,
 } = require("../shared/services/realtime.service");
-const { ensureRestrictionSchema } = require("../shared/services/restrictionSchema.service");
+const {
+  ensurePaymentHardeningSchema,
+} = require("../shared/services/paymentReconciliation.service");
 
 logger.info("Refund worker started");
 
@@ -212,7 +214,7 @@ async function markDepositRefundFailed(reservationId) {
   const client = await pool.connect();
 
   try {
-    await ensureRestrictionSchema(client);
+    await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
     await client.query(
       `
@@ -242,7 +244,7 @@ async function persistDepositRefundStatus(reservationId, refundStatus) {
   const client = await pool.connect();
 
   try {
-    await ensureRestrictionSchema(client);
+    await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
     if (refundStatus === "refunded") {
@@ -300,7 +302,7 @@ async function prepareDepositRefund(reservationId) {
   const client = await pool.connect();
 
   try {
-    await ensureRestrictionSchema(client);
+    await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
     const paymentResult = await client.query(
@@ -333,13 +335,14 @@ async function prepareDepositRefund(reservationId) {
 
     const refundId = payment.reliability_deposit_refund_id || crypto.randomUUID();
 
-    await client.query(
-      `
-      UPDATE payments
-      SET reliability_deposit_status='refund_pending',
-          reliability_deposit_refund_id=$1,
-          updated_at=NOW()
-      WHERE id=$2
+      await client.query(
+        `
+        UPDATE payments
+        SET reliability_deposit_status='refund_pending',
+            reliability_deposit_refund_id=$1,
+            reliability_deposit_refund_attempts=COALESCE(reliability_deposit_refund_attempts, 0) + 1,
+            updated_at=NOW()
+        WHERE id=$2
       `,
       [refundId, payment.id]
     );
@@ -367,7 +370,7 @@ async function prepareRefund(reservationId) {
   const client = await pool.connect();
 
   try {
-    await ensureRestrictionSchema(client);
+    await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
     const paymentResult = await client.query(
@@ -416,6 +419,7 @@ async function prepareRefund(reservationId) {
       SET status='refund_pending',
           refund_status='refund_pending',
           refund_id=$1,
+          refund_attempts=COALESCE(refund_attempts, 0) + 1,
           updated_at=NOW()
       WHERE id=$2
       `,

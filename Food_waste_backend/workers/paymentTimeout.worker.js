@@ -1,124 +1,56 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
-const pool = require("../shared/config/db");
+const paymentQueue = require("../queues/payment.queue");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
 const {
-  publishListingUpdated,
-} = require("../shared/services/realtime.service");
-const {
-  ensureReservationPaymentContextSchema,
-  hasReservedStock,
-} = require("../shared/services/reservationPaymentContext.service");
+  reconcileStalePaymentSessions,
+} = require("../shared/services/paymentReconciliation.service");
 
 logger.info("Payment timeout worker started");
+
+paymentQueue
+  .add(
+    "payment-reconciliation-sweep",
+    {},
+    {
+      jobId: "payment-reconciliation-sweep",
+      repeat: { every: 5 * 60 * 1000 },
+      removeOnComplete: { age: 60 * 60, count: 24 },
+      removeOnFail: { age: 24 * 60 * 60, count: 100 },
+    }
+  )
+  .catch((err) => {
+    logger.warn("Payment reconciliation sweep scheduling failed", { err });
+  });
 
 const paymentTimeoutWorker = new Worker(
   "payment-queue",
   async (job) => {
+    if (job.name === "payment-reconciliation-sweep") {
+      const results = await reconcileStalePaymentSessions();
+      logger.info("Payment reconciliation sweep completed", {
+        count: results.length,
+      });
+      return;
+    }
+
     const { reservationIds } = job.data;
 
-    const client = await pool.connect();
-    const changedListings = [];
-
-    try {
-      await client.query("BEGIN");
-      await ensureReservationPaymentContextSchema(client);
-
-      for (const reservationId of reservationIds) {
-        const reservationResult = await client.query(
-          `
-          SELECT *
-          FROM reservations
-          WHERE id=$1
-          FOR UPDATE
-          `,
-          [reservationId]
-        );
-
-        if (!reservationResult.rows.length) continue;
-
-        const reservation = reservationResult.rows[0];
-
-        if (
-          reservation.status !== "payment_pending" ||
-          reservation.payment_status !== "pending"
-        ) {
-          continue;
-        }
-
-        const paymentResult = await client.query(
-          `
-          SELECT *
-          FROM payments
-          WHERE reservation_id=$1
-          FOR UPDATE
-          `,
-          [reservationId]
-        );
-
-        if (
-          paymentResult.rows.some((payment) =>
-            ["paid", "success", "refunded"].includes(payment.status)
-          )
-        ) {
-          continue;
-        }
-
-        await client.query(
-          `
-          UPDATE payments
-          SET reservation_id=NULL,
-              status='expired',
-              updated_at=NOW()
-          WHERE reservation_id=$1
-          AND status='pending'
-          `,
-          [reservationId]
-        );
-
-        if (hasReservedStock(reservation)) {
-          await client.query(
-            `
-            UPDATE food_listings
-            SET remaining_quantity = remaining_quantity + $1,
-                status = CASE
-                  WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
-                  ELSE status
-                END
-            WHERE id=$2
-            `,
-            [reservation.quantity_reserved, reservation.listing_id]
-          );
-        }
-
-        await client.query(
-          `
-          DELETE FROM reservations
-          WHERE id=$1
-          AND status='payment_pending'
-          AND payment_status='pending'
-          `,
-          [reservationId]
-        );
-
-        changedListings.push(reservation.listing_id);
-        logger.info("Payment timeout expired reservation", { reservationId });
-      }
-
-      await client.query("COMMIT");
-      await Promise.all(
-        [...new Set(changedListings)].map((listingId) =>
-          publishListingUpdated(listingId, { action: "quantity_updated" })
-        )
-      );
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
+    if (!Array.isArray(reservationIds) || reservationIds.length === 0) {
+      logger.warn("Payment timeout job ignored without reservation ids", {
+        jobId: job.id,
+      });
+      return;
     }
+
+    const results = await reconcileStalePaymentSessions({ reservationIds });
+    logger.info("Payment timeout reconciliation completed", {
+      jobId: job.id,
+      reservationCount: reservationIds.length,
+      reconciledOrders: results.length,
+    });
   },
   workerOptions(connection, {
     attempts: 5,

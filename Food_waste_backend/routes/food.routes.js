@@ -2,7 +2,10 @@ const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const foodCtrl = require("../controllers/food.controller");
 const upload = require("../middlewares/upload");
-const { requireVerified } = require("../middlewares/verification");
+const {
+  requireActiveAccount,
+  requireVerifiedProvider,
+} = require("../middlewares/verification");
 const {
   listingCreateLimiter,
   ngoRequestLimiter,
@@ -15,20 +18,21 @@ const {
 router.post(
   "/register",
   authMiddleware,
+  requireActiveAccount,
   registrationLimiter,
   upload.single("fssai_certificate"),
   foodCtrl.registerRestaurant,
 );
-router.get("/me", authMiddleware, requireVerified, foodCtrl.getMyRestaurant);
-router.post("/", authMiddleware, listingCreateLimiter, requireVerified, providerRestrictionMiddleware, foodCtrl.createFood);
-router.put("/:id", authMiddleware, listingCreateLimiter, requireVerified, providerRestrictionMiddleware, foodCtrl.updateFood);
-router.delete("/:id", authMiddleware, requireVerified, foodCtrl.deleteFood);
-router.get("/ngos", authMiddleware, requireVerified, foodCtrl.viewNGOs);
+router.get("/me", authMiddleware, requireVerifiedProvider, foodCtrl.getMyRestaurant);
+router.post("/", authMiddleware, listingCreateLimiter, requireVerifiedProvider, providerRestrictionMiddleware, foodCtrl.createFood);
+router.put("/:id", authMiddleware, listingCreateLimiter, requireVerifiedProvider, providerRestrictionMiddleware, foodCtrl.updateFood);
+router.delete("/:id", authMiddleware, requireVerifiedProvider, foodCtrl.deleteFood);
+router.get("/ngos", authMiddleware, requireVerifiedProvider, foodCtrl.viewNGOs);
 router.post(
   "/:id/request-ngo",
   authMiddleware,
   ngoRequestLimiter,
-  requireVerified,
+  requireVerifiedProvider,
   providerRestrictionMiddleware,
   foodCtrl.requestNGO,
 );

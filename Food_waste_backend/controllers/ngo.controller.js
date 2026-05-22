@@ -86,9 +86,28 @@ exports.registerNGO = async (req, res) => {
     const userId = req.user.id;
 
     // 🔹 Role check
-    if (req.user.role !== "ngo") {
+    const userResult = await pool.query(
+      "SELECT id, role FROM users WHERE id=$1",
+      [userId]
+    );
+
+    if (!userResult.rows.length) {
+      return res.status(404).json({
+        error: "User not found",
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!["user", "volunteer", "ngo"].includes(user.role)) {
+      logger.security("Blocked NGO onboarding application", {
+        reason: "ineligible_current_role",
+        userId,
+        role: user.role,
+      });
+
       return res.status(403).json({
-        error: "Only NGO users can register",
+        error: "This account cannot apply for NGO verification",
       });
     }
 
@@ -348,6 +367,12 @@ exports.getNearbyListings = async (req, res) => {
     WHERE f.status='active'
     AND f.is_free = true
     AND f.remaining_quantity > 0
+    AND EXISTS (
+      SELECT 1
+      FROM restaurants approved_restaurant
+      WHERE approved_restaurant.user_id=f.provider_id
+      AND approved_restaurant.is_verified=true
+    )
     AND ST_DWithin(
         f.location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
@@ -419,7 +444,18 @@ exports.bulkReserve = async (req, res) => {
     for (const item of reservations) {
       const quantity = toNumber(item.quantity);
       const foodResult = await client.query(
-        `SELECT * FROM food_listings WHERE id=$1 FOR UPDATE`,
+        `
+        SELECT f.*
+        FROM food_listings f
+        WHERE f.id=$1
+        AND EXISTS (
+          SELECT 1
+          FROM restaurants approved_restaurant
+          WHERE approved_restaurant.user_id=f.provider_id
+          AND approved_restaurant.is_verified=true
+        )
+        FOR UPDATE
+        `,
         [item.listing_id]
       );
 
@@ -656,9 +692,15 @@ exports.previewBulkReserve = async (req, res) => {
       const quantity = toNumber(item.quantity);
       const foodResult = await pool.query(
         `
-        SELECT id, is_free, remaining_quantity, status, pickup_end_time
-        FROM food_listings
-        WHERE id=$1
+        SELECT f.id, f.is_free, f.remaining_quantity, f.status, f.pickup_end_time
+        FROM food_listings f
+        WHERE f.id=$1
+        AND EXISTS (
+          SELECT 1
+          FROM restaurants approved_restaurant
+          WHERE approved_restaurant.user_id=f.provider_id
+          AND approved_restaurant.is_verified=true
+        )
         `,
         [item.listing_id]
       );
@@ -828,6 +870,25 @@ exports.requestVolunteer = async (req, res) => {
   }
 
   await ensureVolunteerRequestSchema();
+
+  const volunteerUser = await pool.query(
+    `
+    SELECT id
+    FROM users
+    WHERE id=$1
+    AND role='volunteer'
+    AND (banned_until IS NULL OR banned_until <= NOW())
+    `,
+    [volunteer_id],
+  );
+
+  if (!volunteerUser.rows.length) {
+    logger.security("Blocked NGO invite to ineligible volunteer", {
+      ngoUserId: req.user?.id,
+      volunteerId: volunteer_id,
+    });
+    return res.status(403).json({ error: "Verified volunteer not found" });
+  }
 
   // 1️⃣ Get NGO table ID using user_id
   const ngo = await pool.query(
@@ -1220,6 +1281,12 @@ exports.acceptNGORequest = async (req, res) => {
       `
       SELECT * FROM food_listings
       WHERE id=$1
+      AND EXISTS (
+        SELECT 1
+        FROM restaurants approved_restaurant
+        WHERE approved_restaurant.user_id=food_listings.provider_id
+        AND approved_restaurant.is_verified=true
+      )
       FOR UPDATE
       `,
       [listingId]

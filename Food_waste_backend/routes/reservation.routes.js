@@ -8,20 +8,26 @@ const {
 const {
   reservationRestrictionMiddleware,
 } = require("../middlewares/restriction.middleware");
+const {
+  requireActiveAccount,
+  requireVerifiedProvider,
+  requireUser,
+} = require("../middlewares/verification");
 
 router.post(
   "/",
   reservationCreateLimiter,
   authMiddleware,
+  requireUser,
   reservationRestrictionMiddleware,
   reservationCtrl.createReservation
 );
-router.post("/preview", authMiddleware, reservationCtrl.previewReservation);
-router.get("/my", authMiddleware, reservationCtrl.getMyReservations);
-router.get("/provider", authMiddleware, reservationCtrl.getProviderReservations);
-router.get("/:id", authMiddleware, reservationCtrl.getReservationById);
-router.put("/:id/cancel", authMiddleware, reservationCtrl.cancelReservation);
-router.put("/:id/pickup", authMiddleware, reservationCtrl.markAsPickedUp);
-router.post("/:id/report-provider", reportLimiter, authMiddleware, reservationCtrl.reportProvider);
+router.post("/preview", authMiddleware, requireUser, reservationCtrl.previewReservation);
+router.get("/my", authMiddleware, requireActiveAccount, reservationCtrl.getMyReservations);
+router.get("/provider", authMiddleware, requireVerifiedProvider, reservationCtrl.getProviderReservations);
+router.get("/:id", authMiddleware, requireActiveAccount, reservationCtrl.getReservationById);
+router.put("/:id/cancel", authMiddleware, requireActiveAccount, reservationCtrl.cancelReservation);
+router.put("/:id/pickup", authMiddleware, requireVerifiedProvider, reservationCtrl.markAsPickedUp);
+router.post("/:id/report-provider", reportLimiter, authMiddleware, requireActiveAccount, reservationCtrl.reportProvider);
 
 module.exports = router;

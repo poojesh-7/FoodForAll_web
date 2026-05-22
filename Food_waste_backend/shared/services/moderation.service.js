@@ -8,6 +8,7 @@ const {
   recordAlert,
   recordOperationalEvent,
 } = require("./observability.service");
+const { assertAdmin } = require("./authorization.service");
 
 const REPORT_REASONS = new Set([
   "fake_listing",
@@ -159,6 +160,7 @@ async function createProviderReport({
 
 async function validateProviderReport({ client = pool, reportId, adminId }) {
   await ensureRestrictionSchema(client);
+  await assertAdmin({ client, userId: adminId });
 
   const reportResult = await client.query(
     `
@@ -189,6 +191,8 @@ async function validateProviderReport({ client = pool, reportId, adminId }) {
 
 async function dismissProviderReport({ client = pool, reportId, adminId }) {
   await ensureRestrictionSchema(client);
+  await assertAdmin({ client, userId: adminId });
+
   const result = await client.query(
     `
     UPDATE provider_reports

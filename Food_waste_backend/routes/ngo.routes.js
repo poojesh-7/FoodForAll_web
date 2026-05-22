@@ -1,7 +1,10 @@
 const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const ngoCtrl = require("../controllers/ngo.controller");
-const { requireVerified } = require("../middlewares/verification");
+const {
+  requireActiveAccount,
+  requireVerifiedNGO,
+} = require("../middlewares/verification");
 const {
   ngoBulkReserveLimiter,
   ngoRequestLimiter,
@@ -11,83 +14,83 @@ const {
   reservationRestrictionMiddleware,
 } = require("../middlewares/restriction.middleware");
 
-router.post("/register", authMiddleware, registrationLimiter, ngoCtrl.registerNGO);
-router.get("/me", authMiddleware, requireVerified, ngoCtrl.getMyNGO);
+router.post("/register", authMiddleware, requireActiveAccount, registrationLimiter, ngoCtrl.registerNGO);
+router.get("/me", authMiddleware, ngoCtrl.getMyNGO);
 router.get(
   "/listings/nearby",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.getNearbyListings,
 );
 router.post(
   "/bulk-reserve",
   authMiddleware,
   ngoBulkReserveLimiter,
-  requireVerified,
+  requireVerifiedNGO,
   reservationRestrictionMiddleware,
   ngoCtrl.bulkReserve,
 );
 router.post(
   "/bulk-reserve/preview",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.previewBulkReserve,
 );
 router.get(
   "/reservations",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.getMyReservations
 );
 router.get(
   "/volunteers/assigned",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.viewVolunteers,
 );
 router.get(
   "/volunteers",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.viewUnassignedVolunteers,
 );
 router.post(
   "/request-volunteer",
   authMiddleware,
   ngoRequestLimiter,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.requestVolunteer,
 );
 router.get(
   "/volunteer-join-requests",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.viewVolunteerJoinRequests,
 );
 router.put(
   "/volunteer-join-requests/:requestID/approve",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.approveVolunteerJoinRequest,
 );
 router.put(
   "/volunteer-join-requests/:requestID/reject",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.rejectVolunteerJoinRequest,
 );
-router.put("/urgent", authMiddleware, requireVerified, ngoCtrl.setUrgent);
+router.put("/urgent", authMiddleware, requireVerifiedNGO, ngoCtrl.setUrgent);
 router.get(
   "/requests",
   authMiddleware,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.viewIncomingRequests,
 );
 router.put(
   "/requests/:requestID/accept",
   authMiddleware,
   ngoRequestLimiter,
-  requireVerified,
+  requireVerifiedNGO,
   reservationRestrictionMiddleware,
   ngoCtrl.acceptNGORequest,
 );
@@ -95,7 +98,7 @@ router.put(
   "/requests/:requestID/reject",
   authMiddleware,
   ngoRequestLimiter,
-  requireVerified,
+  requireVerifiedNGO,
   ngoCtrl.rejectRequest,
 );
 

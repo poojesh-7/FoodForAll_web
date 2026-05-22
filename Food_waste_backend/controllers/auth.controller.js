@@ -36,6 +36,7 @@ const {
   normalizeEmail,
   toNumber,
 } = require("../utils/validation");
+const { validateSelfServiceRole } = require("../utils/roles");
 const {
   shouldSkipRuntimeSchemaMutation,
 } = require("../shared/config/runtimeSchema");
@@ -420,13 +421,25 @@ exports.setRole = async (req, res) => {
       });
     }
 
-    const normalizedRole = String(role).trim();
-    const allowedRoles = ["user", "volunteer", "ngo", "provider"];
+    const {
+      allowed: roleAllowed,
+      privileged: privilegedRole,
+      role: normalizedRole,
+    } = validateSelfServiceRole(role);
 
-    if (!allowedRoles.includes(normalizedRole)) {
+    if (!roleAllowed) {
+      if (privilegedRole) {
+        logger.security("Blocked self-service privileged role assignment", {
+          userId,
+          requestedRole: normalizedRole,
+          currentRole: req.user?.role,
+          ip: getClientIp(req),
+        });
+      }
+
       return res.status(400).json({
         success: false,
-        message: "Invalid role",
+        message: "Invalid self-service role",
         data: null,
       });
     }
@@ -437,6 +450,14 @@ exports.setRole = async (req, res) => {
     );
 
     const updatedUser = result.rows[0];
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+        data: null,
+      });
+    }
 
     // 🔥 Regenerate access token with updated role
     const accessToken = generateAccessToken(updatedUser);
@@ -678,12 +699,23 @@ exports.completeProfile = async (req, res) => {
       });
     }
 
-    const normalizedRole = String(role).trim();
-    const allowedRoles = ["user", "volunteer", "ngo", "provider"];
+    const {
+      allowed: roleAllowed,
+      privileged: privilegedRole,
+      role: normalizedRole,
+    } = validateSelfServiceRole(role);
 
-    if (!allowedRoles.includes(normalizedRole)) {
+    if (!roleAllowed) {
+      if (privilegedRole) {
+        logger.security("Blocked privileged role during profile completion", {
+          requestedRole: normalizedRole,
+          phone: normalizedPhone,
+          ip: getClientIp(req),
+        });
+      }
+
       return res.status(400).json({
-        error: "Invalid role",
+        error: "Invalid self-service role",
       });
     }
 

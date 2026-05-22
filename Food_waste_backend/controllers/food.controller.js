@@ -40,9 +40,15 @@ exports.registerRestaurant = async (req, res) => {
 
     const user = userResult.rows[0];
 
-    if (user.role !== "provider") {
+    if (!["user", "volunteer", "provider"].includes(user.role)) {
+      logger.security("Blocked provider onboarding application", {
+        reason: "ineligible_current_role",
+        userId,
+        role: user.role,
+      });
+
       return res.status(403).json({
-        error: "Only providers can register restaurants",
+        error: "This account cannot apply for provider verification",
       });
     }
 
@@ -943,6 +949,7 @@ exports.viewNGOs = async (req, res) => {
   const result = await pool.query(`
     SELECT id, organization_name, urgent_flag
     FROM ngos
+    WHERE is_verified = true
     ORDER BY urgent_flag DESC
   `);
 
@@ -1006,12 +1013,12 @@ exports.requestNGO = async (req, res) => {
 
   // 🔥 Get NGO user
   const ngoUser = await pool.query(
-    `SELECT user_id FROM ngos WHERE id=$1`,
+    `SELECT user_id FROM ngos WHERE id=$1 AND is_verified=true`,
     [ngo_id]
   );
 
   if (!ngoUser.rows.length)
-    return res.status(404).json({ error: "NGO not found" });
+    return res.status(404).json({ error: "Verified NGO not found" });
 
   const ngoUserId = ngoUser.rows[0].user_id;
 

@@ -1,57 +1,86 @@
-const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
+const {
+  assertActiveUserAccount,
+  assertUser,
+  assertVerifiedNGO,
+  assertVerifiedProvider,
+  assertVolunteer,
+} = require("../shared/services/authorization.service");
 
-exports.requireVerified = async (req, res, next) => {
-  try {
-    const { id, role } = req.user;
-    const allowedRoles = ["user", "volunteer", "ngo", "provider"];
+function deny(req, res, err, gate) {
+  const statusCode = err.statusCode || 403;
 
-    if (!allowedRoles.includes(role)) {
-      return res.status(403).json({
-        error: "Invalid user role",
+  logger.security("Privileged authorization failed", {
+    gate,
+    reason: err.reason || "authorization_failed",
+    userId: req.user?.id,
+    role: req.user?.role,
+    path: req.originalUrl,
+    ip: req.ip,
+  });
+
+  return res.status(statusCode).json({
+    error: err.message || "Access denied",
+  });
+}
+
+function createGate(gate, check) {
+  return async (req, res, next) => {
+    try {
+      const context = await check({
+        userId: req.user.id,
       });
+
+      req.authorization = context;
+      req.user.role = context.role;
+      next();
+    } catch (err) {
+      return deny(req, res, err, gate);
     }
+  };
+}
 
-    // ✅ Users & Volunteers → always allowed
-    if (role === "user" || role === "volunteer") {
-      return next();
-    }
+const requireActiveAccount = createGate(
+  "active_account",
+  assertActiveUserAccount
+);
 
-    let query;
-    let errorMessage;
+const requireUser = createGate("user", assertUser);
 
-    // 🔹 NGO check
-    if (role === "ngo") {
-      query = `SELECT is_verified FROM ngos WHERE user_id = $1`;
-      errorMessage = "NGO not verified yet";
-    }
+const requireVolunteer = createGate("volunteer", assertVolunteer);
 
-    // 🔹 Provider (Restaurant) check
-    if (role === "provider") {
-      query = `SELECT is_verified FROM restaurants WHERE user_id = $1`;
-      errorMessage = "Restaurant not verified yet";
-    }
+const requireVerifiedNGO = createGate("verified_ngo", assertVerifiedNGO);
 
-    const result = await pool.query(query, [id]);
+const requireVerifiedProvider = createGate(
+  "verified_provider",
+  assertVerifiedProvider
+);
 
-    // ❌ Not onboarded OR not verified
-    if (!result.rows.length || !result.rows[0].is_verified) {
-      return res.status(403).json({
-        error: errorMessage,
-      });
-    }
+const requireVerified = createGate("verified_role", async ({ userId }) => {
+  const context = await assertActiveUserAccount({ userId });
 
-    // ✅ Verified
-    next();
-
-  } catch (err) {
-    logger.error("Verification check failed", {
-      err,
-      userId: req.user?.id,
-      role: req.user?.role,
-    });
-    res.status(500).json({
-      error: "Verification check failed",
-    });
+  if (context.role === "provider") {
+    return assertVerifiedProvider({ userId });
   }
+
+  if (context.role === "ngo") {
+    return assertVerifiedNGO({ userId });
+  }
+
+  if (context.role === "volunteer") {
+    return assertVolunteer({ userId });
+  }
+
+  return assertUser({ userId });
+});
+
+module.exports = {
+  requireActiveAccount,
+  requireUser,
+  requireVerified,
+  requireVerifiedNGO,
+  requireVerifiedProvider,
+  requireVerifiedUser: requireUser,
+  requireVerifiedVolunteer: requireVolunteer,
+  requireVolunteer,
 };

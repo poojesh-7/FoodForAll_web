@@ -153,7 +153,18 @@ exports.createReservation = async (req, res) => {
     await ensureUserPaymentSpamLimit(client, req.user.id);
 
     const foodResult = await client.query(
-      `SELECT * FROM food_listings WHERE id=$1 FOR UPDATE`,
+      `
+      SELECT f.*
+      FROM food_listings f
+      WHERE f.id=$1
+      AND EXISTS (
+        SELECT 1
+        FROM restaurants approved_restaurant
+        WHERE approved_restaurant.user_id=f.provider_id
+        AND approved_restaurant.is_verified=true
+      )
+      FOR UPDATE
+      `,
       [listing_id]
     );
 
@@ -1121,9 +1132,15 @@ exports.previewReservation = async (req, res) => {
   try {
     const foodResult = await pool.query(
       `
-      SELECT id, price, is_free, remaining_quantity, status, pickup_end_time
-      FROM food_listings
-      WHERE id=$1
+      SELECT f.id, f.price, f.is_free, f.remaining_quantity, f.status, f.pickup_end_time
+      FROM food_listings f
+      WHERE f.id=$1
+      AND EXISTS (
+        SELECT 1
+        FROM restaurants approved_restaurant
+        WHERE approved_restaurant.user_id=f.provider_id
+        AND approved_restaurant.is_verified=true
+      )
       `,
       [listing_id]
     );

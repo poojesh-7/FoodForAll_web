@@ -40,39 +40,74 @@ exports.getPendingNGOs = async (req, res) => {
 // 📌 APPROVE NGO
 //
 exports.approveNGO = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { id } = req.params;
-
     if (!isValidId(id)) {
       return res.status(400).json({ error: "NGO id is required" });
     }
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `
       UPDATE ngos
       SET is_verified=true, rejection_reason=NULL
       WHERE id=$1 AND is_verified=false
+      RETURNING id, user_id
       `,
       [id]
     );
 
     if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
       return res.status(409).json({ error: "NGO not found or already approved" });
     }
 
-    logger.security("Admin approved NGO", { adminId: req.user?.id, ngoId: id });
+    const userUpdate = await client.query(
+      `
+      UPDATE users
+      SET role='ngo'
+      WHERE id=$1
+      AND role IN ('user', 'volunteer', 'ngo')
+      `,
+      [result.rows[0].user_id]
+    );
+
+    if (userUpdate.rowCount === 0) {
+      await client.query("ROLLBACK");
+      logger.security("Admin NGO approval blocked", {
+        reason: "applicant_role_not_promotable",
+        adminId: req.user?.id,
+        ngoId: id,
+        userId: result.rows[0].user_id,
+      });
+      return res.status(409).json({ error: "Applicant cannot be promoted to NGO" });
+    }
+
+    await client.query("COMMIT");
+
+    logger.security("Admin approved NGO", {
+      adminId: req.user?.id,
+      ngoId: id,
+      userId: result.rows[0].user_id,
+    });
     void recordOperationalEvent({
       category: "security",
       severity: "info",
       eventName: "admin_approved_ngo",
-      metadata: { adminId: req.user?.id, ngoId: id },
+      metadata: { adminId: req.user?.id, ngoId: id, userId: result.rows[0].user_id },
     });
 
     res.json({ message: "NGO approved" });
 
   } catch (err) {
+    await client.query("ROLLBACK");
     logger.error("NGO approval failed", { err, adminId: req.user?.id, ngoId: req.params.id });
     res.status(500).json({ error: "Approval failed" });
+  } finally {
+    client.release();
   }
 };
 
@@ -138,46 +173,78 @@ exports.getPendingRestaurants = async (req, res) => {
 // 📌 APPROVE RESTAURANT
 //
 exports.approveRestaurant = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { id } = req.params;
-
     if (!isValidId(id)) {
       return res.status(400).json({ error: "Restaurant id is required" });
     }
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `
       UPDATE restaurants
       SET is_verified=true, rejection_reason=NULL
       WHERE id=$1 AND is_verified=false
+      RETURNING id, user_id
       `,
       [id]
     );
 
     if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
       return res.status(409).json({ error: "Restaurant not found or already approved" });
     }
+
+    const userUpdate = await client.query(
+      `
+      UPDATE users
+      SET role='provider'
+      WHERE id=$1
+      AND role IN ('user', 'volunteer', 'provider')
+      `,
+      [result.rows[0].user_id]
+    );
+
+    if (userUpdate.rowCount === 0) {
+      await client.query("ROLLBACK");
+      logger.security("Admin restaurant approval blocked", {
+        reason: "applicant_role_not_promotable",
+        adminId: req.user?.id,
+        restaurantId: id,
+        userId: result.rows[0].user_id,
+      });
+      return res.status(409).json({ error: "Applicant cannot be promoted to provider" });
+    }
+
+    await client.query("COMMIT");
 
     logger.security("Admin approved restaurant", {
       adminId: req.user?.id,
       restaurantId: id,
+      userId: result.rows[0].user_id,
     });
     void recordOperationalEvent({
       category: "security",
       severity: "info",
       eventName: "admin_approved_restaurant",
-      metadata: { adminId: req.user?.id, restaurantId: id },
+      metadata: { adminId: req.user?.id, restaurantId: id, userId: result.rows[0].user_id },
     });
 
     res.json({ message: "Restaurant approved" });
 
   } catch (err) {
+    await client.query("ROLLBACK");
     logger.error("Restaurant approval failed", {
       err,
       adminId: req.user?.id,
       restaurantId: req.params.id,
     });
     res.status(500).json({ error: "Approval failed" });
+  } finally {
+    client.release();
   }
 };
 

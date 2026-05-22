@@ -11,6 +11,7 @@ const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const {
   ensurePaymentHardeningSchema,
 } = require("./paymentReconciliation.service");
+const { assertPaymentAuthorization } = require("./authorization.service");
 
 function roundMoney(value) {
   const number = Number(value);
@@ -176,6 +177,12 @@ async function createReservationPayment(options) {
     food_amount: roundMoney(reservation.food_amount),
     reliability_deposit_amount: roundMoney(reservation.reliability_deposit_amount),
   }));
+
+  assertPaymentAuthorization({
+    user: options.user,
+    reservations,
+  });
+
   const totalFoodAmount = reservations.reduce(
     (sum, reservation) => sum + roundMoney(reservation.food_amount),
     0

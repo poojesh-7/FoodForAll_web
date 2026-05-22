@@ -65,6 +65,7 @@ exports.viewAvailableNGOs = async (req, res) => {
         ORDER BY latest_vr.requested_at DESC NULLS LAST, latest_vr.id DESC
         LIMIT 1
       )
+    WHERE n.is_verified = true
     GROUP BY n.id
     ORDER BY n.urgent_flag DESC, active_listings DESC
   `,
@@ -410,11 +411,11 @@ exports.joinNGO = async (req, res) => {
     await ensureVolunteerRequestSchema(client);
 
     const ngo = await client.query(
-      `SELECT id, user_id, organization_name FROM ngos WHERE id=$1`,
+      `SELECT id, user_id, organization_name FROM ngos WHERE id=$1 AND is_verified=true`,
       [ngo_id],
     );
 
-    if (!ngo.rows.length) throw withStatus("NGO not found", 404);
+    if (!ngo.rows.length) throw withStatus("Verified NGO not found", 404);
 
     const existing = await client.query(
       `

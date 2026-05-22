@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import ReservationCancelModal from "@/components/modals/ReservationCancelModal";
 import ReservationCard from "@/components/reservations/ReservationCard";
+import { openCashfreeCheckout } from "@/lib/cashfree";
+import {
+  getPaymentRemainingMs,
+  getPaymentSessionByReservationId,
+  getPaymentSessionFromReservation,
+  getReservationPaymentState,
+  savePaymentSession,
+} from "@/lib/payment-flow";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { ReservationHistoryRow } from "@backend/contracts/api-contracts";
+import type { DbId, ReservationHistoryRow } from "@backend/contracts/api-contracts";
 
 type ReservationBucket = "active" | "completed" | "archived";
 type ReservationTab = ReservationBucket;
@@ -65,9 +74,11 @@ const tabMeta: Record<
 function ReservationPanel({
   tab,
   reservations,
+  renderActions,
 }: {
   tab: ReservationTab;
   reservations: ReservationHistoryRow[];
+  renderActions: (reservation: ReservationHistoryRow) => ReactNode;
 }) {
   const meta = tabMeta[tab];
 
@@ -93,6 +104,7 @@ function ReservationPanel({
               key={String(reservation.id)}
               reservation={reservation}
               href={`/reservations/${String(reservation.id)}`}
+              actions={renderActions(reservation)}
             />
           ))}
         </div>
@@ -106,6 +118,10 @@ export default function ReservationsPage() {
   const [selectedTab, setSelectedTab] = useState<ReservationTab>("active");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [paymentProcessingId, setPaymentProcessingId] = useState<DbId | null>(null);
+  const [cancellingId, setCancellingId] = useState<DbId | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<ReservationHistoryRow | null>(null);
   const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
   const reservationsById = useRealtimeStore((state) => state.reservations);
 
@@ -155,6 +171,114 @@ export default function ReservationsPage() {
       active = false;
     };
   }, [reservationVersion, reservationsById]);
+
+  const reloadReservations = async () => {
+    const result = await reservationService.getMyReservations();
+    setReservations(result);
+    return result;
+  };
+
+  const resumePayment = async (reservation: ReservationHistoryRow) => {
+    if (!reservation.id) return;
+
+    const session =
+      getPaymentSessionFromReservation(reservation) ??
+      getPaymentSessionByReservationId(reservation.id);
+
+    if (!session) {
+      setError("Payment session is unavailable. Cancel this hold or wait for it to expire, then reserve again.");
+      return;
+    }
+
+    if (getPaymentRemainingMs(reservation) === 0) {
+      setError("This payment hold has expired. Refresh after cleanup or cancel it to restore stock now.");
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccess("Opening secure Cashfree checkout...");
+      setPaymentProcessingId(reservation.id);
+      savePaymentSession({
+        orderId: session.orderId,
+        paymentSessionId: session.paymentSessionId,
+        reservationId: session.reservationId,
+        listingId: session.listingId,
+      });
+
+      const checkoutResult = await openCashfreeCheckout({
+        paymentSessionId: session.paymentSessionId,
+      });
+
+      setSuccess(
+        checkoutResult?.error?.message || "Refreshing reservation payment state..."
+      );
+      await reloadReservations();
+    } catch (err) {
+      setError(reservationService.getErrorMessage(err));
+      setSuccess("");
+    } finally {
+      setPaymentProcessingId(null);
+    }
+  };
+
+  const cancelReservation = async () => {
+    if (!cancelTarget?.id || cancellingId) return;
+
+    try {
+      setError("");
+      setSuccess("");
+      setCancellingId(cancelTarget.id);
+      await reservationService.cancelReservation(cancelTarget.id);
+      await reloadReservations();
+      setSuccess("Payment hold cancelled. Reserved stock has been released.");
+      setCancelTarget(null);
+    } catch (err) {
+      setError(reservationService.getErrorMessage(err));
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const renderReservationActions = (reservation: ReservationHistoryRow) => {
+    const paymentState = getReservationPaymentState(reservation);
+
+    if (paymentState !== "payment_pending") return null;
+
+    const session =
+      getPaymentSessionFromReservation(reservation) ??
+      getPaymentSessionByReservationId(reservation.id);
+    const expired = getPaymentRemainingMs(reservation) === 0;
+
+    return (
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => resumePayment(reservation)}
+          disabled={
+            !session ||
+            expired ||
+            String(paymentProcessingId) === String(reservation.id)
+          }
+          className="min-h-10 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {String(paymentProcessingId) === String(reservation.id)
+            ? "Opening..."
+            : "Resume Payment"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setCancelTarget(reservation)}
+          disabled={String(cancellingId) === String(reservation.id)}
+          className="min-h-10 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+        >
+          {String(cancellingId) === String(reservation.id)
+            ? "Cancelling..."
+            : "Cancel Hold"}
+        </button>
+      </div>
+    );
+  };
 
   const activeReservations = useMemo(
     () =>
@@ -209,6 +333,11 @@ export default function ReservationsPage() {
             {error}
           </p>
         )}
+        {success && (
+          <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {success}
+          </p>
+        )}
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
@@ -245,9 +374,21 @@ export default function ReservationsPage() {
             <ReservationPanel
               tab={selectedTab}
               reservations={selectedReservations}
+              renderActions={renderReservationActions}
             />
           </div>
         )}
+        <ReservationCancelModal
+          open={Boolean(cancelTarget)}
+          onClose={() => {
+            if (!cancellingId) setCancelTarget(null);
+          }}
+          onConfirm={cancelReservation}
+          loading={Boolean(cancellingId)}
+          reservationType="user"
+          reservationId={cancelTarget?.id ?? null}
+          paymentPending={getReservationPaymentState(cancelTarget ?? {}) === "payment_pending"}
+        />
       </div>
     </main>
   );

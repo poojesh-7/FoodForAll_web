@@ -12,6 +12,7 @@ type ReservationCancelModalProps = {
   loading?: boolean;
   reservationType?: "user" | "ngo";
   reservationId?: DbId | null;
+  paymentPending?: boolean;
 };
 
 export default function ReservationCancelModal({
@@ -21,6 +22,7 @@ export default function ReservationCancelModal({
   loading = false,
   reservationType = "user",
   reservationId,
+  paymentPending = false,
 }: ReservationCancelModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -84,7 +86,7 @@ export default function ReservationCancelModal({
                     id="reservation-cancel-title"
                     className="text-lg font-semibold text-zinc-950"
                   >
-                    Cancel Reservation?
+                    {paymentPending ? "Cancel Payment Hold?" : "Cancel Reservation?"}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-600">
                     {displayReservationId
@@ -109,24 +111,35 @@ export default function ReservationCancelModal({
                 id="reservation-cancel-description"
                 className="text-sm leading-6 text-zinc-700"
               >
-                Cancelling this reservation will block reserving this listing
-                again for this reservation lifecycle.
+                {paymentPending
+                  ? "Cancelling this payment hold releases the temporarily reserved food quantity so you can reserve again."
+                  : "Cancelling this reservation will block reserving this listing again for this reservation lifecycle."}
               </p>
 
               <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-900">
                 <p className="font-semibold text-red-950">
-                  Important cancellation effects
+                  {paymentPending
+                    ? "Payment hold cancellation effects"
+                    : "Important cancellation effects"}
                 </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  <li>
-                    Reliability deposits may not be refunded depending on
-                    workflow state.
-                  </li>
-                  <li>
-                    Volunteer or provider operations may already be active.
-                  </li>
-                  <li>This action cannot be instantly reversed.</li>
-                </ul>
+                {paymentPending ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>The pending Cashfree session is invalidated locally.</li>
+                    <li>Reserved stock is restored atomically.</li>
+                    <li>You can retry this listing after cancellation completes.</li>
+                  </ul>
+                ) : (
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>
+                      Reliability deposits may not be refunded depending on
+                      workflow state.
+                    </li>
+                    <li>
+                      Volunteer or provider operations may already be active.
+                    </li>
+                    <li>This action cannot be instantly reversed.</li>
+                  </ul>
+                )}
               </div>
             </div>
 
@@ -137,7 +150,7 @@ export default function ReservationCancelModal({
                 disabled={loading}
                 className="inline-flex min-h-11 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 disabled:opacity-50"
               >
-                Keep Reservation
+                {paymentPending ? "Keep Hold" : "Keep Reservation"}
               </button>
               <button
                 type="button"
@@ -148,7 +161,11 @@ export default function ReservationCancelModal({
                 {loading && (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                 )}
-                {loading ? "Cancelling..." : "Cancel Reservation"}
+                {loading
+                  ? "Cancelling..."
+                  : paymentPending
+                    ? "Cancel Hold"
+                    : "Cancel Reservation"}
               </button>
             </div>
           </motion.div>

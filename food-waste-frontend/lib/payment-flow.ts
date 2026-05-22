@@ -19,6 +19,11 @@ export type StoredPaymentSession = {
   createdAt: string;
 };
 
+type PaymentRecoverableReservation = Pick<
+  ReservationRow | ReservationDetails,
+  "id" | "listing_id" | "order_id" | "payment_session_id" | "payment_expires_at" | "reserved_at"
+>;
+
 const STORAGE_KEY = "food-waste.payment.sessions";
 
 function readSessions(): StoredPaymentSession[] {
@@ -80,6 +85,60 @@ export function getPaymentSessionByReservationId(reservationId?: DbId | null) {
       (session) => String(session.reservationId) === String(reservationId)
     ) ?? null
   );
+}
+
+export function getPaymentSessionFromReservation(
+  reservation?: PaymentRecoverableReservation | null
+): StoredPaymentSession | null {
+  if (!reservation?.id || !reservation.order_id || !reservation.payment_session_id) {
+    return null;
+  }
+
+  return {
+    orderId: reservation.order_id,
+    paymentSessionId: reservation.payment_session_id,
+    reservationId: reservation.id,
+    listingId: reservation.listing_id,
+    createdAt: String(reservation.reserved_at ?? new Date().toISOString()),
+  };
+}
+
+export function getPaymentExpirationAt(
+  reservation?: Pick<
+    ReservationRow | ReservationDetails,
+    "payment_expires_at" | "reserved_at" | "created_at"
+  > | null
+) {
+  const explicitExpiry = reservation?.payment_expires_at
+    ? new Date(reservation.payment_expires_at).getTime()
+    : NaN;
+
+  if (Number.isFinite(explicitExpiry)) return explicitExpiry;
+
+  const holdStart = reservation?.reserved_at ?? reservation?.created_at;
+  const holdStartMs = holdStart ? new Date(holdStart).getTime() : NaN;
+
+  return Number.isFinite(holdStartMs) ? holdStartMs + 10 * 60 * 1000 : null;
+}
+
+export function getPaymentRemainingMs(
+  reservation?: Pick<
+    ReservationRow | ReservationDetails,
+    "payment_expires_at" | "reserved_at" | "created_at"
+  > | null
+) {
+  const expiresAt = getPaymentExpirationAt(reservation);
+  return expiresAt ? Math.max(0, expiresAt - Date.now()) : null;
+}
+
+export function formatPaymentCountdown(ms: number | null) {
+  if (ms === null) return "--:--";
+
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function removePaymentSession(session: {

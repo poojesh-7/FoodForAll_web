@@ -798,6 +798,7 @@ exports.getMyReservations = async (req, res) => {
         r.task_status,
         r.status,
         r.payment_status,
+        r.payment_expires_at,
         r.assigned_volunteer_id,
         r.receive_code,
         r.completed_at,
@@ -816,6 +817,20 @@ exports.getMyReservations = async (req, res) => {
         p.reliability_deposit_status,
         p.reliability_deposit_status AS deposit_status,
         p.refund_status,
+        CASE
+          WHEN r.status='payment_pending'
+          AND r.payment_status='pending'
+          AND p.status='pending'
+          THEN p.order_id
+          ELSE NULL
+        END AS order_id,
+        CASE
+          WHEN r.status='payment_pending'
+          AND r.payment_status='pending'
+          AND p.status='pending'
+          THEN p.payment_session_id
+          ELSE NULL
+        END AS payment_session_id,
 
         u.id AS provider_id,
         ${providerDisplaySelect("restaurant", "u")} AS provider_name,
@@ -853,7 +868,6 @@ exports.getMyReservations = async (req, res) => {
         ON p.reservation_id = r.id
 
       WHERE r.user_id = $1
-      AND NOT (r.status='payment_pending' AND r.payment_status='pending')
       ORDER BY r.reserved_at DESC;
       `,
       [req.user.id]

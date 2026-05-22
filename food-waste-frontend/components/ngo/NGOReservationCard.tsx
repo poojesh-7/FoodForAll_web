@@ -1,6 +1,15 @@
+"use client";
+
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
+import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
 import {
+  formatPaymentCountdown,
+  getPaymentRemainingMs,
+  getReservationPaymentState,
+} from "@/lib/payment-flow";
+import {
+  AlertTriangle,
   Clock3,
   MapPin,
   Navigation,
@@ -11,7 +20,7 @@ import {
   Truck,
   UserRound,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { NGOReservationHistoryRow } from "@/services/ngo.service";
 
 type NGOReservationCardProps = {
@@ -20,6 +29,7 @@ type NGOReservationCardProps = {
 };
 
 type ReservationStatus =
+  | "payment_pending"
   | "reserved"
   | "pending"
   | "volunteer_started"
@@ -82,6 +92,9 @@ function getReservationStatus(reservation: NGOReservationHistoryRow): Reservatio
   if (status === "cancelled") return "cancelled";
   if (status === "expired" || paymentStatus === "expired") return "expired";
   if (status === "failed" || paymentStatus === "failed") return "failed";
+  if (status === "payment_pending" || paymentStatus === "pending") {
+    return "payment_pending";
+  }
   if (
     taskStatus === "delivered" ||
     status === "picked_up" ||
@@ -98,6 +111,7 @@ function getReservationStatus(reservation: NGOReservationHistoryRow): Reservatio
 function getStatusLabel(status: ReservationStatus) {
   const labels: Record<ReservationStatus, string> = {
     reserved: "Reserved",
+    payment_pending: "Payment Pending",
     pending: "Pending",
     volunteer_started: "Volunteer Started",
     picked_from_provider: "Picked From Provider",
@@ -113,6 +127,9 @@ function getStatusLabel(status: ReservationStatus) {
 function getStatusClasses(status: ReservationStatus) {
   if (status === "completed") {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "payment_pending") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
   }
   if (status === "volunteer_started" || status === "picked_from_provider") {
     return "border-amber-200 bg-amber-50 text-amber-800";
@@ -162,12 +179,71 @@ function DetailItem({
   );
 }
 
+function usePaymentCountdown(
+  reservation: NGOReservationHistoryRow,
+  enabled: boolean
+) {
+  const [remainingMs, setRemainingMs] = useState(() =>
+    enabled ? getPaymentRemainingMs(reservation) : null
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const updateRemaining = () => setRemainingMs(getPaymentRemainingMs(reservation));
+    const initialTimer = window.setTimeout(updateRemaining, 0);
+    const timer = window.setInterval(updateRemaining, 1000);
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [enabled, reservation]);
+
+  return enabled ? remainingMs ?? getPaymentRemainingMs(reservation) : null;
+}
+
+function PaymentPendingNotice({ remainingMs }: { remainingMs: number | null }) {
+  const expired = remainingMs !== null && remainingMs <= 0;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+          <div>
+            <p className="font-semibold">
+              Your reservation is temporarily held while payment is pending.
+            </p>
+            <p className="mt-1 leading-6 text-amber-900">
+              Food quantity is temporarily reserved for your NGO. If payment is
+              not completed within 10 minutes, the reservation will expire
+              automatically and stock will be restored.
+            </p>
+          </div>
+        </div>
+        <div className="rounded-md border border-amber-300 bg-white px-3 py-2 text-center">
+          <p className="text-xs font-medium uppercase text-amber-700">
+            {expired ? "Expiring" : "Expires In"}
+          </p>
+          <p className="mt-1 font-mono text-lg font-semibold text-zinc-950">
+            {formatPaymentCountdown(remainingMs)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function NGOReservationCard({
   reservation,
   actions,
 }: NGOReservationCardProps) {
   const price = getReservationPrice(reservation);
   const status = getReservationStatus(reservation);
+  const paymentState = getReservationPaymentState(reservation);
+  const paymentPending = paymentState === "payment_pending";
+  const paymentRemainingMs = usePaymentCountdown(reservation, paymentPending);
   const providerLatitude = toCoordinate(reservation.provider_latitude);
   const providerLongitude = toCoordinate(reservation.provider_longitude);
   const showVolunteer = shouldShowVolunteer(reservation, status);
@@ -221,7 +297,12 @@ export default function NGOReservationCard({
               </p>
             )}
           </div>
+          <PaymentStatusBadge state={paymentState} />
         </div>
+
+        {paymentPending && (
+          <PaymentPendingNotice remainingMs={paymentRemainingMs} />
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <DetailItem

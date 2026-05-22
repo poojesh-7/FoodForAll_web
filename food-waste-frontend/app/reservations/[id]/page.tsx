@@ -12,8 +12,11 @@ import ReservationTimeline from "@/components/reservations/ReservationTimeline";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import {
   getPaymentSessionByReservationId,
+  getPaymentSessionFromReservation,
+  getPaymentRemainingMs,
   getReservationPaymentState,
   isRetryablePaymentState,
+  savePaymentSession,
 } from "@/lib/payment-flow";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
@@ -25,6 +28,13 @@ import type {
 import { useParams, useRouter } from "next/navigation";
 
 function canCancel(reservation: ReservationDetails) {
+  if (
+    reservation.status === "payment_pending" &&
+    reservation.payment_status === "pending"
+  ) {
+    return true;
+  }
+
   if (reservation.pickup_type === "ngo") {
     return reservation.status === "reserved" && reservation.task_status === "pending";
   }
@@ -208,7 +218,14 @@ export default function ReservationDetailPage() {
       setCancelling(true);
       setError("");
       setSuccess("");
+      const paymentPending =
+        getReservationPaymentState(reservation) === "payment_pending";
       await reservationService.cancelReservation(reservation.id);
+      if (paymentPending) {
+        setCancelModalOpen(false);
+        router.push("/reservations");
+        return;
+      }
       const latest = await loadReservation(false);
       setSuccess(
         latest?.payment_status === "refund_pending"
@@ -263,9 +280,16 @@ export default function ReservationDetailPage() {
   const continuePayment = async () => {
     if (!reservation?.id) return;
 
-    const session = getPaymentSessionByReservationId(reservation.id);
+    const session =
+      getPaymentSessionFromReservation(reservation) ??
+      getPaymentSessionByReservationId(reservation.id);
     if (!session) {
-      setError("Payment session was not found in this browser. Create a fresh reservation if this one expires.");
+      setError("Payment session is unavailable. Cancel this hold or wait for it to expire, then reserve again.");
+      return;
+    }
+
+    if (getPaymentRemainingMs(reservation) === 0) {
+      setError("This payment hold has expired. Refresh after cleanup or cancel it to restore stock now.");
       return;
     }
 
@@ -273,6 +297,12 @@ export default function ReservationDetailPage() {
       setPaymentProcessing(true);
       setError("");
       setSuccess("Opening secure Cashfree checkout...");
+      savePaymentSession({
+        orderId: session.orderId,
+        paymentSessionId: session.paymentSessionId,
+        reservationId: session.reservationId,
+        listingId: session.listingId,
+      });
       const checkoutResult = await openCashfreeCheckout({
         paymentSessionId: session.paymentSessionId,
       });
@@ -397,7 +427,11 @@ export default function ReservationDetailPage() {
                     disabled={cancelling}
                     className="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-50"
                   >
-                    {cancelling ? "Cancelling..." : "Cancel Reservation"}
+                    {cancelling
+                      ? "Cancelling..."
+                      : paymentState === "payment_pending"
+                        ? "Cancel Hold"
+                        : "Cancel Reservation"}
                   </button>
                 ) : (
                   <p className="text-sm text-zinc-600">
@@ -431,7 +465,9 @@ export default function ReservationDetailPage() {
                 <ReviewList ratings={ratings} />
               </section>
             )}
-            {reservation.id && reservation.provider_id && (
+            {paymentState !== "payment_pending" &&
+              reservation.id &&
+              reservation.provider_id && (
               <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                 <div>
                   <h2 className="text-base font-semibold text-zinc-950">
@@ -459,6 +495,7 @@ export default function ReservationDetailPage() {
                 reservation.pickup_type === "ngo" ? "ngo" : "user"
               }
               reservationId={reservation.id}
+              paymentPending={paymentState === "payment_pending"}
             />
           </>
         ) : (

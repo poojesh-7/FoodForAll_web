@@ -335,6 +335,22 @@ exports.getReservationById = async (req, res) => {
             p.food_amount,
             p.reliability_deposit_amount,
             p.reliability_deposit_status,
+            CASE
+              WHEN r.status='payment_pending'
+              AND r.payment_status='pending'
+              AND p.status='pending'
+              AND r.user_id=$1
+              THEN p.order_id
+              ELSE NULL
+            END AS order_id,
+            CASE
+              WHEN r.status='payment_pending'
+              AND r.payment_status='pending'
+              AND p.status='pending'
+              AND r.user_id=$1
+              THEN p.payment_session_id
+              ELSE NULL
+            END AS payment_session_id,
             ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
             restaurant.restaurant_name,
             provider.phone AS provider_phone,
@@ -410,6 +426,20 @@ exports.getMyReservations = async (req, res) => {
           p.food_amount,
           p.reliability_deposit_amount,
           p.reliability_deposit_status,
+          CASE
+            WHEN r.status='payment_pending'
+            AND r.payment_status='pending'
+            AND p.status='pending'
+            THEN p.order_id
+            ELSE NULL
+          END AS order_id,
+          CASE
+            WHEN r.status='payment_pending'
+            AND r.payment_status='pending'
+            AND p.status='pending'
+            THEN p.payment_session_id
+            ELSE NULL
+          END AS payment_session_id,
           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
           restaurant.restaurant_name,
           provider.phone AS provider_phone,
@@ -440,7 +470,6 @@ exports.getMyReservations = async (req, res) => {
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.user_id = $1
-    AND NOT (r.status='payment_pending' AND r.payment_status='pending')
     ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
     `,
     [req.user.id],

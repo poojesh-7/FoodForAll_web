@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowRight,
   Clock3,
   MapPin,
@@ -13,14 +16,18 @@ import {
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
-import { getReservationPaymentState } from "@/lib/payment-flow";
+import {
+  formatPaymentCountdown,
+  getPaymentRemainingMs,
+  getReservationPaymentState,
+} from "@/lib/payment-flow";
 import type {
   DbId,
   ProviderReservationRow,
   ReservationDetails,
   ReservationHistoryRow,
 } from "@backend/contracts/api-contracts";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type ReservationLike =
   | ReservationHistoryRow
@@ -187,6 +194,59 @@ function DetailItem({
   );
 }
 
+function usePaymentCountdown(reservation: ReservationLike, enabled: boolean) {
+  const [remainingMs, setRemainingMs] = useState(() =>
+    enabled ? getPaymentRemainingMs(reservation) : null
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const updateRemaining = () => setRemainingMs(getPaymentRemainingMs(reservation));
+    const initialTimer = window.setTimeout(updateRemaining, 0);
+    const timer = window.setInterval(updateRemaining, 1000);
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [enabled, reservation]);
+
+  return enabled ? remainingMs ?? getPaymentRemainingMs(reservation) : null;
+}
+
+function PaymentPendingNotice({ remainingMs }: { remainingMs: number | null }) {
+  const expired = remainingMs !== null && remainingMs <= 0;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+          <div>
+            <p className="font-semibold">
+              Your reservation is temporarily held while payment is pending.
+            </p>
+            <p className="mt-1 leading-6 text-amber-900">
+              Food quantity is temporarily reserved for you. If payment is not
+              completed within 10 minutes, the reservation will expire
+              automatically and stock will be restored.
+            </p>
+          </div>
+        </div>
+        <div className="rounded-md border border-amber-300 bg-white px-3 py-2 text-center">
+          <p className="text-xs font-medium uppercase text-amber-700">
+            {expired ? "Expiring" : "Expires In"}
+          </p>
+          <p className="mt-1 font-mono text-lg font-semibold text-zinc-950">
+            {formatPaymentCountdown(remainingMs)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ReservationCard({
   reservation,
   href,
@@ -196,6 +256,8 @@ export default function ReservationCard({
   const id = getReservationId(reservation);
   const status = getOperationalStatus(reservation);
   const paymentState = getReservationPaymentState(reservation);
+  const paymentPending = paymentState === "payment_pending";
+  const paymentRemainingMs = usePaymentCountdown(reservation, paymentPending);
   const providerLatitude = toCoordinate(reservation.provider_latitude);
   const providerLongitude = toCoordinate(reservation.provider_longitude);
   const providerLocation =
@@ -251,6 +313,10 @@ export default function ReservationCard({
           </div>
           <PaymentStatusBadge state={paymentState} />
         </div>
+
+        {paymentPending && (
+          <PaymentPendingNotice remainingMs={paymentRemainingMs} />
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <DetailItem

@@ -8,9 +8,11 @@ import ReservationCard from "@/components/reservations/ReservationCard";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import {
   getPaymentSessionByOrderId,
+  getPaymentSessionFromReservation,
   getReservationPaymentState,
   isRetryablePaymentState,
   removePaymentSession,
+  savePaymentSession,
 } from "@/lib/payment-flow";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -219,14 +221,21 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
   };
 
   const retryPayment = async () => {
-    if (!session) return;
+    const retrySession = session ?? getPaymentSessionFromReservation(reservation);
+    if (!retrySession) return;
 
     try {
       setProcessing(true);
       setError("");
       setMessage("Opening secure Cashfree checkout...");
+      savePaymentSession({
+        orderId: retrySession.orderId,
+        paymentSessionId: retrySession.paymentSessionId,
+        reservationId: retrySession.reservationId,
+        listingId: retrySession.listingId,
+      });
       const checkoutResult = await openCashfreeCheckout({
-        paymentSessionId: session.paymentSessionId,
+        paymentSessionId: retrySession.paymentSessionId,
       });
 
       setMessage(
@@ -251,6 +260,12 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
         ? "Payment Processing"
         : "Payment Not Completed";
   const canRetry = session && isRetryablePaymentState(paymentState);
+  const backendRetrySession = reservation
+    ? getPaymentSessionFromReservation(reservation)
+    : null;
+  const canRetryFromBackend =
+    Boolean(backendRetrySession) && isRetryablePaymentState(paymentState);
+  const canRetryPayment = Boolean(canRetry || canRetryFromBackend);
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
@@ -305,7 +320,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
                 >
                   Refresh
                 </button>
-                {canRetry && (
+                {canRetryPayment && (
                   <button
                     type="button"
                     onClick={retryPayment}
@@ -315,7 +330,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
                     {processing ? "Processing..." : "Retry Payment"}
                   </button>
                 )}
-                {!canRetry && reservation.listing_id && paymentState !== "paid" && (
+                {!canRetryPayment && reservation.listing_id && paymentState !== "paid" && (
                   <Link
                     href={`/food/${String(reservation.listing_id)}`}
                     className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white"

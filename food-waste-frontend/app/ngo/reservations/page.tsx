@@ -7,8 +7,16 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import RatingForm from "@/components/ratings/RatingForm";
 import ProviderReportForm from "@/components/reservations/ProviderReportForm";
+import { openCashfreeCheckout } from "@/lib/cashfree";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
+import {
+  getPaymentRemainingMs,
+  getPaymentSessionByReservationId,
+  getPaymentSessionFromReservation,
+  getReservationPaymentState,
+  savePaymentSession,
+} from "@/lib/payment-flow";
 import {
   ngoService,
   type NGOReservationHistoryRow,
@@ -21,6 +29,7 @@ import { useRouter } from "next/navigation";
 
 type ActiveReservationFilter =
   | "all"
+  | "payment_pending"
   | "reserved"
   | "pending"
   | "volunteer_started"
@@ -41,6 +50,9 @@ function getReservationState(reservation: NGOReservationHistoryRow) {
   ) {
     return "failed";
   }
+  if (status === "payment_pending" || paymentStatus === "pending") {
+    return "payment_pending";
+  }
   if (
     taskStatus === "delivered" ||
     status === "picked_up" ||
@@ -57,6 +69,7 @@ function getReservationState(reservation: NGOReservationHistoryRow) {
 function getActiveFilterLabel(filter: ActiveReservationFilter) {
   const labels: Record<ActiveReservationFilter, string> = {
     all: "All Active",
+    payment_pending: "Payment Pending",
     reserved: "Reserved",
     pending: "Pending",
     volunteer_started: "Volunteer Started",
@@ -116,6 +129,10 @@ function canCancelReservation(reservation: NGOReservationHistoryRow) {
   const taskStatus = String(reservation.task_status ?? "").toLowerCase();
   const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
 
+  if (status === "payment_pending" && paymentStatus === "pending") {
+    return true;
+  }
+
   return (
     status === "reserved" &&
     taskStatus === "pending" &&
@@ -134,6 +151,7 @@ export default function NGOReservationsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [cancellingId, setCancellingId] = useState<DbId | null>(null);
+  const [paymentProcessingId, setPaymentProcessingId] = useState<DbId | null>(null);
   const [cancelTarget, setCancelTarget] =
     useState<NGOReservationHistoryRow | null>(null);
   const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
@@ -173,6 +191,12 @@ export default function NGOReservationsPage() {
       )
     );
   }, [reservationVersion, reservationsById]);
+
+  const reloadReservations = async () => {
+    const result = await ngoService.getReservations();
+    setReservations(result);
+    return result;
+  };
 
   const submitReview = async (
     reservation: NGOReservationHistoryRow,
@@ -214,20 +238,62 @@ export default function NGOReservationsPage() {
       setError("");
       setSuccess("");
       setCancellingId(cancelTarget.id);
+      const paymentPending =
+        getReservationPaymentState(cancelTarget) === "payment_pending";
       await reservationService.cancelReservation(cancelTarget.id);
-      setReservations((current) =>
-        current.map((item) =>
-          String(item.id) === String(cancelTarget.id)
-            ? { ...item, status: "cancelled" }
-            : item
-        )
+      await reloadReservations();
+      setSuccess(
+        paymentPending
+          ? "Payment hold cancelled. Reserved stock has been released."
+          : "Reservation cancelled successfully."
       );
-      setSuccess("Reservation cancelled successfully.");
       setCancelTarget(null);
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const resumePayment = async (reservation: NGOReservationHistoryRow) => {
+    const session =
+      getPaymentSessionFromReservation(reservation) ??
+      getPaymentSessionByReservationId(reservation.id);
+
+    if (!session) {
+      setError("Payment session is unavailable. Cancel this hold or wait for it to expire, then reserve again.");
+      return;
+    }
+
+    if (getPaymentRemainingMs(reservation) === 0) {
+      setError("This payment hold has expired. Refresh after cleanup or cancel it to restore stock now.");
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccess("Opening secure Cashfree checkout...");
+      setPaymentProcessingId(reservation.id);
+      savePaymentSession({
+        orderId: session.orderId,
+        paymentSessionId: session.paymentSessionId,
+        reservationId: session.reservationId,
+        listingId: session.listingId,
+      });
+
+      const checkoutResult = await openCashfreeCheckout({
+        paymentSessionId: session.paymentSessionId,
+      });
+
+      setSuccess(
+        checkoutResult?.error?.message || "Refreshing reservation payment state..."
+      );
+      await reloadReservations();
+    } catch (err) {
+      setError(ngoService.getErrorMessage(err));
+      setSuccess("");
+    } finally {
+      setPaymentProcessingId(null);
     }
   };
 
@@ -253,9 +319,61 @@ export default function NGOReservationsPage() {
   }, [activeFilter, reservations]);
 
   const renderReviewAction = (reservation: NGOReservationHistoryRow) => {
+    const paymentState = getReservationPaymentState(reservation);
+    const paymentPending = paymentState === "payment_pending";
+    const paymentSession =
+      getPaymentSessionFromReservation(reservation) ??
+      getPaymentSessionByReservationId(reservation.id);
+    const paymentExpired = getPaymentRemainingMs(reservation) === 0;
+
     return (
       <div className="space-y-2">
-        {canCancelReservation(reservation) && (
+        {paymentPending && (
+          <>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => resumePayment(reservation)}
+                disabled={
+                  !paymentSession ||
+                  paymentExpired ||
+                  String(paymentProcessingId) === String(reservation.id)
+                }
+                className="min-h-10 rounded-md border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {String(paymentProcessingId) === String(reservation.id)
+                  ? "Opening..."
+                  : "Resume Payment"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCancelTarget(reservation)}
+                disabled={
+                  String(cancellingId) === String(reservation.id) ||
+                  String(paymentProcessingId) === String(reservation.id)
+                }
+                className="min-h-10 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {String(cancellingId) === String(reservation.id)
+                  ? "Cancelling..."
+                  : "Cancel Hold"}
+              </button>
+            </div>
+            {!paymentSession && (
+              <p className="text-xs font-medium text-amber-800">
+                Payment session details are unavailable. Cancel this hold or
+                wait for automatic expiry before reserving again.
+              </p>
+            )}
+            {paymentExpired && (
+              <p className="text-xs font-medium text-amber-800">
+                This hold has expired and will be released by cleanup shortly.
+                You can cancel it now to restore stock immediately.
+              </p>
+            )}
+          </>
+        )}
+        {!paymentPending && canCancelReservation(reservation) && (
           <button
             type="button"
             onClick={() => setCancelTarget(reservation)}
@@ -267,11 +385,11 @@ export default function NGOReservationsPage() {
               : "Cancel Reservation"}
           </button>
         )}
-        {reservation.review_id ? (
+        {!paymentPending && reservation.review_id ? (
           <p className="text-sm font-medium text-emerald-700">
             You have already reviewed this reservation.
           </p>
-        ) : canReviewReservation(reservation) ? (
+        ) : !paymentPending && canReviewReservation(reservation) ? (
           <details className="rounded-md border border-zinc-200 bg-white p-3">
             <summary className="cursor-pointer text-sm font-medium text-zinc-950">
               Review provider
@@ -288,18 +406,20 @@ export default function NGOReservationsPage() {
             </div>
           </details>
         ) : null}
-        <details className="rounded-md border border-red-100 bg-white p-3">
-          <summary className="cursor-pointer text-sm font-medium text-red-700">
-            Report provider
-          </summary>
-          <div className="mt-3">
-            <ProviderReportForm
-              reservationId={reservation.id}
-              onError={setError}
-              onSuccess={setSuccess}
-            />
-          </div>
-        </details>
+        {!paymentPending && (
+          <details className="rounded-md border border-red-100 bg-white p-3">
+            <summary className="cursor-pointer text-sm font-medium text-red-700">
+              Report provider
+            </summary>
+            <div className="mt-3">
+              <ProviderReportForm
+                reservationId={reservation.id}
+                onError={setError}
+                onSuccess={setSuccess}
+              />
+            </div>
+          </details>
+        )}
       </div>
     );
   };
@@ -410,6 +530,7 @@ export default function NGOReservationsPage() {
                   {(
                     [
                       "all",
+                      "payment_pending",
                       "reserved",
                       "pending",
                       "volunteer_started",
@@ -440,6 +561,11 @@ export default function NGOReservationsPage() {
         loading={Boolean(cancellingId)}
         reservationType="ngo"
         reservationId={cancelTarget?.id ?? null}
+        paymentPending={
+          cancelTarget
+            ? getReservationPaymentState(cancelTarget) === "payment_pending"
+            : false
+        }
       />
     </NGOShell>
   );

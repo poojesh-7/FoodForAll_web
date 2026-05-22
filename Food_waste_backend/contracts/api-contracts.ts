@@ -215,6 +215,9 @@ export interface ReservationRow extends DbRow {
   pickup_code?: string;
   receive_code?: string;
   payment_status?: string;
+  payment_expires_at?: ISODateString | null;
+  order_id?: string | null;
+  payment_session_id?: string | null;
   reserved_at?: ISODateString | null;
   created_at?: ISODateString | null;
   assigned_at?: ISODateString | null;

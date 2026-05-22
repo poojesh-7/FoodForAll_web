@@ -11,9 +11,11 @@ const {
 } = require("../shared/services/realtime.service");
 const { createReservationPayment } = require("../shared/services/payment.service");
 const { getReservationPolicy } = require("../shared/services/restriction.service");
+const { reserveListingStock } = require("../shared/services/inventory.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   blockingReservationWhere,
+  pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
 const {
   ensureReservationPaymentContextSchema,
@@ -60,6 +62,7 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
     AND listing_id=$2
     AND (
       ${blockingReservationWhere()}
+      OR ${pendingPaymentReservationWhere()}
       OR (
         status='cancelled'
         AND COALESCE(payment_status, '') IN (
@@ -473,6 +476,14 @@ exports.bulkReserve = async (req, res) => {
         throw error;
       }
 
+      if (String(food.status || "active") !== "active") {
+        throw withStatus("Listing is not active", 409);
+      }
+
+      if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
+        throw withStatus("Listing pickup window has ended", 409);
+      }
+
       await ensureListingNotPreviouslyReserved(
         client,
         req.user.id,
@@ -484,6 +495,17 @@ exports.bulkReserve = async (req, res) => {
         error.statusCode = 409;
         throw error;
       }
+
+      await reserveListingStock(client, {
+        listingId: item.listing_id,
+        quantity,
+      });
+      logger.info("Inventory reserved for NGO reservation", {
+        userId: req.user.id,
+        listingId: item.listing_id,
+        quantity,
+        requiresPayment: Boolean(policy.requiresDeposit),
+      });
 
       const reservation = await client.query(
         `
@@ -502,7 +524,7 @@ exports.bulkReserve = async (req, res) => {
           policy.requiresDeposit ? "pending" : "not_required",
           JSON.stringify({
             source: "ngo_bulk_reserve",
-            stock_reserved: !policy.requiresDeposit,
+            stock_reserved: true,
           }),
         ]
       );
@@ -520,24 +542,6 @@ exports.bulkReserve = async (req, res) => {
         listingId: r.listing_id,
       });
 
-      if (!policy.requiresDeposit) {
-        const stockUpdate = await client.query(
-          `
-          UPDATE food_listings
-          SET remaining_quantity = remaining_quantity - $1
-          WHERE id=$2
-          AND remaining_quantity >= $1
-          RETURNING remaining_quantity
-          `,
-          [quantity, item.listing_id]
-        );
-
-        if (!stockUpdate.rows.length) {
-          const error = new Error("Not enough quantity");
-          error.statusCode = 409;
-          throw error;
-        }
-      }
     }
 
     const payment = policy.requiresDeposit
@@ -561,11 +565,9 @@ exports.bulkReserve = async (req, res) => {
           ? Promise.resolve()
           : publishTaskAvailabilityUpdated(reservation.id, { action: "available" })
       ),
-      ...(policy.requiresDeposit
-        ? []
-        : uniqueListingIds(created).map((listingId) =>
-            publishListingUpdated(listingId, { action: "quantity_updated" })
-          )),
+      ...uniqueListingIds(created).map((listingId) =>
+        publishListingUpdated(listingId, { action: "quantity_updated" })
+      ),
       ...(policy.requiresDeposit
         ? []
         : providerNotifications.map((notification) =>
@@ -588,7 +590,13 @@ exports.bulkReserve = async (req, res) => {
                 });
               })
           )),
-    ]);
+    ]).catch((err) => {
+      logger.warn("NGO bulk reservation side effects failed", {
+        err,
+        userId: req.user?.id,
+        reservationIds: created.map((reservation) => reservation.id),
+      });
+    });
 
     res.json({
       reservations: created,
@@ -607,10 +615,18 @@ exports.bulkReserve = async (req, res) => {
     await client.query("ROLLBACK");
     if (
       err.code === "23505" ||
-      err.constraint === "unique_active_reservation"
+      err.constraint === "unique_active_reservation" ||
+      err.constraint === "unique_pending_payment_reservation"
     ) {
       return res.status(409).json({ error: RESERVATION_EXISTS_MESSAGE });
     }
+
+    logger.warn("NGO bulk reservation failed", {
+      err,
+      userId: req.user?.id,
+      reason: err.reason,
+      reservationCount: Array.isArray(reservations) ? reservations.length : 0,
+    });
 
     res.status(err.statusCode || 400).json({ error: err.message });
   } finally {
@@ -1344,6 +1360,23 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     // 6️⃣ Create reservation
+    const quantityToReserve = Number(listing.remaining_quantity);
+    if (!Number.isInteger(quantityToReserve) || quantityToReserve <= 0) {
+      throw withStatus("Listing has no remaining quantity", 409);
+    }
+
+    await reserveListingStock(client, {
+      listingId,
+      quantity: quantityToReserve,
+    });
+    logger.info("Inventory reserved for NGO request acceptance", {
+      userId: req.user.id,
+      listingId,
+      requestId,
+      quantity: quantityToReserve,
+      requiresPayment: Boolean(policy.requiresDeposit),
+    });
+
     const pickupCode = generatePickupCode();
     const receiveCode = generatePickupCode();
 
@@ -1357,7 +1390,7 @@ exports.acceptNGORequest = async (req, res) => {
       [
         listingId,
         req.user.id,
-        listing.remaining_quantity,
+        quantityToReserve,
         policy.requiresDeposit ? null : pickupCode,
         policy.requiresDeposit ? null : receiveCode,
         policy.requiresDeposit ? "payment_pending" : "reserved",
@@ -1368,7 +1401,7 @@ exports.acceptNGORequest = async (req, res) => {
           ngo_id: ngoId,
           organization_name: ngoResult.rows[0].organization_name,
           provider_id: listing.provider_id,
-          stock_reserved: !policy.requiresDeposit,
+          stock_reserved: true,
         }),
       ]
     );
@@ -1389,18 +1422,6 @@ exports.acceptNGORequest = async (req, res) => {
       : null;
 
     // 7️⃣ Mark listing completed
-    if (!policy.requiresDeposit) {
-      await client.query(
-        `
-        UPDATE food_listings
-        SET remaining_quantity=0,
-            status='completed'
-        WHERE id=$1
-        `,
-        [listingId]
-      );
-    }
-
     await client.query("COMMIT");
 
     // 🔔 Notification AFTER commit
@@ -1411,10 +1432,15 @@ exports.acceptNGORequest = async (req, res) => {
       policy.requiresDeposit
         ? Promise.resolve()
         : publishTaskAvailabilityUpdated(createdReservation.id, { action: "available" }),
-      policy.requiresDeposit
-        ? Promise.resolve()
-        : publishListingUpdated(listingId, { action: "completed" }),
-    ]);
+      publishListingUpdated(listingId, { action: "completed" }),
+    ]).catch((err) => {
+      logger.warn("NGO request acceptance side effects failed", {
+        err,
+        userId: req.user?.id,
+        requestId,
+        reservationId: createdReservation.id,
+      });
+    });
 
     if (!policy.requiresDeposit) {
       await notificationQueue.add("notify-user", {
@@ -1431,10 +1457,18 @@ exports.acceptNGORequest = async (req, res) => {
     await client.query("ROLLBACK");
     if (
       err.code === "23505" ||
-      err.constraint === "unique_active_reservation"
+      err.constraint === "unique_active_reservation" ||
+      err.constraint === "unique_pending_payment_reservation"
     ) {
       return res.status(409).json({ error: RESERVATION_EXISTS_MESSAGE });
     }
+
+    logger.warn("NGO request acceptance failed", {
+      err,
+      userId: req.user?.id,
+      requestId,
+      reason: err.reason,
+    });
 
     res.status(err.statusCode || 400).json({ error: err.message });
   } finally {

@@ -13,10 +13,15 @@ const {
   refundReliabilityDeposit,
 } = require("../shared/services/payment.service");
 const { getReservationPolicy } = require("../shared/services/restriction.service");
+const {
+  reserveListingStock,
+  restoreListingStock,
+} = require("../shared/services/inventory.service");
 const { applyRecovery } = require("../shared/services/penalty.service");
 const { createProviderReport } = require("../shared/services/moderation.service");
 const {
   blockingReservationWhere,
+  pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
@@ -49,6 +54,7 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
     AND listing_id=$2
     AND (
       ${blockingReservationWhere()}
+      OR ${pendingPaymentReservationWhere()}
       OR (
         status='cancelled'
         AND COALESCE(payment_status, '') IN (
@@ -179,6 +185,14 @@ exports.createReservation = async (req, res) => {
       throw withStatus("Free listings are only available for NGOs", 403);
     }
 
+    if (String(food.status || "active") !== "active") {
+      throw withStatus("Listing is not active", 409);
+    }
+
+    if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
+      throw withStatus("Listing pickup window has ended", 409);
+    }
+
     await ensureListingNotPreviouslyReserved(
       client,
       req.user.id,
@@ -200,6 +214,16 @@ exports.createReservation = async (req, res) => {
       throw withStatus(policy.restrictionReason || "Reservation restricted", 403);
     }
 
+    await reserveListingStock(client, {
+      listingId: listing_id,
+      quantity: quantityValue,
+    });
+    logger.info("Inventory reserved for pending payment", {
+      userId: req.user.id,
+      listingId: listing_id,
+      quantity: quantityValue,
+    });
+
     /*
     CREATE RESERVATION
     */
@@ -215,7 +239,7 @@ exports.createReservation = async (req, res) => {
         req.user.id,
         quantityValue,
         null,
-        JSON.stringify({ source: "user_reservation", stock_reserved: false }),
+        JSON.stringify({ source: "user_reservation", stock_reserved: true }),
       ]
     );
 
@@ -238,6 +262,15 @@ exports.createReservation = async (req, res) => {
     });
 
     await client.query("COMMIT");
+    await publishListingUpdated(listing_id, { action: "quantity_updated" }).catch(
+      (err) => {
+        logger.warn("Reservation listing update publish failed", {
+          err,
+          listingId: listing_id,
+          reservationId: reservation.id,
+        });
+      }
+    );
 
     res.status(201).json({
       reservation,
@@ -260,7 +293,8 @@ exports.createReservation = async (req, res) => {
 
     if (
       err.code === "23505" ||
-      err.constraint === "unique_active_reservation"
+      err.constraint === "unique_active_reservation" ||
+      err.constraint === "unique_pending_payment_reservation"
     ) {
       return res.status(409).json({
         error: RESERVATION_EXISTS_MESSAGE,
@@ -271,6 +305,7 @@ exports.createReservation = async (req, res) => {
       err,
       userId: req.user?.id,
       listingId: listing_id,
+      reason: err.reason,
     });
 
     res.status(err.statusCode || 400).json({
@@ -585,14 +620,12 @@ const legacyCancelReservation = async (req, res) => {
     7️⃣ RESTORE QUANTITY
     ========================
     */
-    await client.query(
-      `
-      UPDATE food_listings
-      SET remaining_quantity = remaining_quantity + $1
-      WHERE id=$2
-      `,
-      [reservation.quantity_reserved, reservation.listing_id]
-    );
+    if (hasReservedStock(reservation)) {
+      await restoreListingStock(client, {
+        listingId: reservation.listing_id,
+        quantity: reservation.quantity_reserved,
+      });
+    }
 
     /*
     ========================
@@ -734,18 +767,10 @@ exports.cancelReservation = async (req, res) => {
       await cancelPayment(client, reservation.id);
 
       if (hasReservedStock(reservation)) {
-        await client.query(
-          `
-          UPDATE food_listings
-          SET remaining_quantity = remaining_quantity + $1,
-              status = CASE
-                WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
-                ELSE status
-              END
-          WHERE id=$2
-          `,
-          [reservation.quantity_reserved, reservation.listing_id]
-        );
+        await restoreListingStock(client, {
+          listingId: reservation.listing_id,
+          quantity: reservation.quantity_reserved,
+        });
       }
 
       await client.query(
@@ -788,14 +813,10 @@ exports.cancelReservation = async (req, res) => {
       }
 
       if (hasReservedStock(reservation)) {
-        await client.query(
-          `
-          UPDATE food_listings
-          SET remaining_quantity = remaining_quantity + $1
-          WHERE id=$2
-          `,
-          [reservation.quantity_reserved, reservation.listing_id]
-        );
+        await restoreListingStock(client, {
+          listingId: reservation.listing_id,
+          quantity: reservation.quantity_reserved,
+        });
       }
 
       await client.query(
@@ -880,14 +901,10 @@ exports.cancelReservation = async (req, res) => {
         throw withStatus("Reservation payment is not refundable", 400);
       }
 
-      await client.query(
-        `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity + $1
-        WHERE id=$2
-        `,
-        [reservation.quantity_reserved, reservation.listing_id]
-      );
+      await restoreListingStock(client, {
+        listingId: reservation.listing_id,
+        quantity: reservation.quantity_reserved,
+      });
     }
 
     cancelledReservation = reservation;

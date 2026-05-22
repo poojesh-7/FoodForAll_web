@@ -68,6 +68,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS unique_active_reservation
     AND COALESCE(payment_status, '') NOT IN ('failed', 'expired', 'abandoned', 'cancelled')
   );
 
+CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_payment_reservation
+  ON reservations (user_id, listing_id)
+  WHERE status='payment_pending' AND payment_status='pending';
+
 CREATE INDEX IF NOT EXISTS idx_reservations_user_status
   ON reservations (user_id, status, reserved_at DESC);
 

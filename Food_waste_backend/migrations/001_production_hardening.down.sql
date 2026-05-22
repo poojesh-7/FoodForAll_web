@@ -21,6 +21,7 @@ DROP INDEX IF EXISTS idx_reservations_listing_reserved;
 DROP INDEX IF EXISTS idx_reservations_listing_status;
 DROP INDEX IF EXISTS idx_reservations_user_lifecycle;
 DROP INDEX IF EXISTS idx_reservations_user_status;
+DROP INDEX IF EXISTS unique_pending_payment_reservation;
 DROP INDEX IF EXISTS unique_active_reservation;
 DROP INDEX IF EXISTS idx_food_listings_location_gist;
 DROP INDEX IF EXISTS idx_food_listings_provider_status;

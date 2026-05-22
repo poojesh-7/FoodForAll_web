@@ -59,6 +59,13 @@ function blockingReservationWhere(alias = "") {
   `;
 }
 
+function pendingPaymentReservationWhere(alias = "") {
+  const status = column(alias, "status");
+  const paymentStatus = column(alias, "payment_status");
+
+  return `${status}='payment_pending' AND ${paymentStatus}='pending'`;
+}
+
 async function ensureReservationInteractionLockSchema(client = pool) {
   if (shouldSkipRuntimeSchemaMutation()) return;
 
@@ -76,9 +83,17 @@ async function ensureReservationInteractionLockSchema(client = pool) {
     WHERE ${blockingReservationWhere()}
     `
   );
+  await client.query(
+    `
+    CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_payment_reservation
+    ON reservations (user_id, listing_id)
+    WHERE ${pendingPaymentReservationWhere()}
+    `
+  );
 }
 
 module.exports = {
   blockingReservationWhere,
+  pendingPaymentReservationWhere,
   ensureReservationInteractionLockSchema,
 };

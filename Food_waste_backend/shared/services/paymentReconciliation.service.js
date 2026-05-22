@@ -24,6 +24,10 @@ const {
   parsePaymentContext,
 } = require("./reservationPaymentContext.service");
 const {
+  reserveListingStock,
+  restoreListingStock,
+} = require("./inventory.service");
+const {
   getReservationSnapshot,
   publishListingUpdated,
   publishPaymentUpdated,
@@ -190,6 +194,12 @@ async function ensurePaymentHardeningSchema(client = pool) {
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_reservations_pending_payment
         ON reservations (payment_status, status, payment_expires_at)
+        WHERE status='payment_pending' AND payment_status='pending'
+      `);
+
+      await client.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_payment_reservation
+        ON reservations (user_id, listing_id)
         WHERE status='payment_pending' AND payment_status='pending'
       `);
 
@@ -473,18 +483,10 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
   }
 
   if (hasReservedStock(reservation)) {
-    await client.query(
-      `
-      UPDATE food_listings
-      SET remaining_quantity = remaining_quantity + $1,
-          status = CASE
-            WHEN pickup_end_time > NOW() AND status='completed' THEN 'active'
-            ELSE status
-          END
-      WHERE id=$2
-      `,
-      [reservation.quantity_reserved, reservation.listing_id]
-    );
+    await restoreListingStock(client, {
+      listingId: reservation.listing_id,
+      quantity: reservation.quantity_reserved,
+    });
   }
 
   await client.query(
@@ -525,12 +527,52 @@ async function activatePendingReservation(client, reservation) {
   const context = parsePaymentContext(reservation.payment_context);
 
   if (hasReservedStock(reservation)) {
+    if (context.source === "ngo_request_accept" && context.request_id) {
+      const requestResult = await client.query(
+        `
+        SELECT *
+        FROM ngo_requests
+        WHERE id=$1
+        AND listing_id=$2
+        FOR UPDATE
+        `,
+        [context.request_id, reservation.listing_id]
+      );
+
+      const request = requestResult.rows[0];
+      if (!request || request.status !== "pending") {
+        throw new Error("NGO request no longer available for paid reservation activation");
+      }
+
+      await client.query(
+        `
+        UPDATE ngo_requests
+        SET status='accepted', responded_at=NOW()
+        WHERE id=$1
+        `,
+        [context.request_id]
+      );
+
+      await client.query(
+        `
+        UPDATE ngo_requests
+        SET status='expired', responded_at=NOW()
+        WHERE listing_id=$1
+        AND id != $2
+        AND status='pending'
+        `,
+        [reservation.listing_id, context.request_id]
+      );
+    }
+
     const activated = await client.query(
       `
       UPDATE reservations
       SET payment_status='paid',
           status='reserved',
-          payment_context=COALESCE(payment_context, '{}'::jsonb) || $2::jsonb
+          pickup_code=COALESCE(pickup_code, $2),
+          receive_code=COALESCE(receive_code, $3),
+          payment_context=COALESCE(payment_context, '{}'::jsonb) || $4::jsonb
       WHERE id=$1
       AND status='payment_pending'
       AND payment_status='pending'
@@ -538,6 +580,8 @@ async function activatePendingReservation(client, reservation) {
       `,
       [
         reservation.id,
+        generatePickupCode(),
+        generatePickupCode(),
         JSON.stringify({ activated_at: new Date().toISOString() }),
       ]
     );
@@ -620,32 +664,11 @@ async function activatePendingReservation(client, reservation) {
     }
   }
 
-  const stockUpdate = await client.query(
-    context.source === "ngo_request_accept"
-      ? `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity - $1,
-            status = CASE
-              WHEN remaining_quantity - $1 <= 0 THEN 'completed'
-              ELSE status
-            END
-        WHERE id=$2
-        AND remaining_quantity >= $1
-        RETURNING remaining_quantity
-        `
-      : `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity - $1
-        WHERE id=$2
-        AND remaining_quantity >= $1
-        RETURNING remaining_quantity
-      `,
-    [reservation.quantity_reserved, reservation.listing_id]
-  );
-
-  if (!stockUpdate.rows.length) {
-    throw new Error("Inventory update failed during paid reservation activation");
-  }
+  await reserveListingStock(client, {
+    listingId: reservation.listing_id,
+    quantity: reservation.quantity_reserved,
+    completeWhenEmpty: context.source === "ngo_request_accept",
+  });
 
   if (context.source === "ngo_request_accept" && context.request_id) {
     await client.query(

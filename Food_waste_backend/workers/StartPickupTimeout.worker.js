@@ -15,6 +15,7 @@ const {
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const { applyPenalty } = require("../shared/services/penalty.service");
+const { restoreListingStock } = require("../shared/services/inventory.service");
 
 /*
 Socket publisher
@@ -100,14 +101,15 @@ const pickupTimeoutWorker = new Worker(
       /*
       Return quantity
       */
-      await client.query(
-        `
-        UPDATE food_listings
-        SET remaining_quantity = remaining_quantity + $1
-        WHERE id=$2
-        `,
-        [r.quantity_reserved, r.listing_id]
-      );
+      await restoreListingStock(client, {
+        listingId: r.listing_id,
+        quantity: r.quantity_reserved,
+      });
+      logger.info("Inventory restored after pickup timeout", {
+        reservationId,
+        listingId: r.listing_id,
+        quantity: r.quantity_reserved,
+      });
 
       /*
       Mark failed

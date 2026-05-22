@@ -9,6 +9,7 @@ const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const notificationQueue = require("../queues/notification.queue");
 const { applyPenalty } = require("../shared/services/penalty.service");
 const { retainReliabilityDeposit } = require("../shared/services/payment.service");
+const { restoreListingStock } = require("../shared/services/inventory.service");
 const {
   publishListingUpdated,
   publishReservationUpdated,
@@ -74,14 +75,16 @@ const expiryWorker = new Worker(
       );
 
       if (totalReturned > 0) {
-        await client.query(
-          `
-          UPDATE food_listings
-          SET remaining_quantity = remaining_quantity + $1
-          WHERE id=$2
-          `,
-          [totalReturned, listingId]
-        );
+        await restoreListingStock(client, {
+          listingId,
+          quantity: totalReturned,
+          reactivateIfAvailable: false,
+        });
+        logger.info("Inventory restored during listing expiry", {
+          listingId,
+          quantity: totalReturned,
+          reservationCount: reservations.rows.length,
+        });
       }
 
       /*

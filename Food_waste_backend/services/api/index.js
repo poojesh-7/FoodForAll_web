@@ -25,6 +25,11 @@ const {
 const { globalLimiter } = require("../../middlewares/rateLimit.middleware");
 const { isValidId } = require("../../utils/validation");
 const logger = require("../../shared/utils/logger");
+const {
+  TokenVerificationError,
+  extractAccessTokenFromSocketHandshake,
+  verifyAccessToken,
+} = require("../../utils/token");
 const requestContextMiddleware = require("../../middlewares/requestContext.middleware");
 const healthRoutes = require("../../routes/health.routes");
 const {
@@ -68,29 +73,38 @@ app.use(requestContextMiddleware);
 app.use("/api/v1", globalLimiter);
 app.use("/health", healthRoutes);
 // require("../../admin/cleanup");
-const jwt = require("jsonwebtoken");
 
 io.use((socket, next) => {
+  const socketMeta = {
+    socketId: socket.id,
+    ip: socket.handshake.address,
+  };
+  let tokenSource = null;
+
   try {
     const cookies = cookie.parse(socket.handshake.headers.cookie || "");
-    const token = socket.handshake.auth?.token || cookies.accessToken;
+    const tokenResult = extractAccessTokenFromSocketHandshake(
+      socket.handshake,
+      cookies
+    );
+    const token = tokenResult.token;
+    tokenSource = tokenResult.source;
 
     if (!token) {
       logger.security("Socket authentication failed", {
         reason: "missing_token",
-        socketId: socket.id,
-        ip: socket.handshake.address,
+        ...socketMeta,
       });
       return next(new Error("Unauthorized"));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
 
     if (!decoded?.id || !isValidId(decoded.id)) {
       logger.security("Socket authentication failed", {
         reason: "invalid_user_id",
-        socketId: socket.id,
-        ip: socket.handshake.address,
+        tokenSource,
+        ...socketMeta,
       });
       return next(new Error("Invalid token"));
     }
@@ -100,10 +114,13 @@ io.use((socket, next) => {
 
     next();
   } catch (err) {
+    const reason =
+      err instanceof TokenVerificationError ? err.reason : "auth_exception";
+
     logger.security("Socket authentication failed", {
-      reason: "invalid_token",
-      socketId: socket.id,
-      ip: socket.handshake.address,
+      reason,
+      tokenSource,
+      ...socketMeta,
       err,
     });
     next(new Error("Invalid token"));

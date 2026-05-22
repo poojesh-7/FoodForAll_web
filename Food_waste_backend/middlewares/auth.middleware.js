@@ -1,13 +1,19 @@
-const jwt = require("jsonwebtoken");
 const { isValidId } = require("../utils/validation");
 const logger = require("../shared/utils/logger");
 const { mergeContext } = require("../shared/utils/requestContext");
+const {
+  TokenSourceError,
+  TokenVerificationError,
+  extractAccessTokenFromRequest,
+  verifyAccessToken,
+} = require("../utils/token");
 
-function unauthorized(req, res, message, reason) {
+function unauthorized(req, res, message, reason, meta = {}) {
   logger.security("Authentication failed", {
     reason,
     path: req.originalUrl,
     ip: req.ip,
+    ...meta,
   });
   return res.status(401).json({
     success: false,
@@ -17,33 +23,56 @@ function unauthorized(req, res, message, reason) {
 }
 
 module.exports = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const bearerToken = authHeader?.startsWith("Bearer ")
-    ? authHeader.split(" ")[1]
-    : null;
-
-  const token = bearerToken || req.cookies?.accessToken;
-
-  if (!token) return unauthorized(req, res, "Authentication token is required", "missing_token");
+  let tokenSource;
+  let token;
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    ({ token, source: tokenSource } = extractAccessTokenFromRequest(req));
+  } catch (err) {
+    if (err instanceof TokenSourceError) {
+      return unauthorized(
+        req,
+        res,
+        "Authentication token is invalid",
+        err.reason
+      );
+    }
+
+    return unauthorized(req, res, "Authentication failed", "token_source_exception");
+  }
+
+  if (!token) {
+    return unauthorized(req, res, "Authentication token is required", "missing_token");
+  }
+
+  try {
+    const decoded = verifyAccessToken(token);
     if (!decoded?.id || !isValidId(decoded.id)) {
-      return unauthorized(req, res, "Authentication token is invalid", "invalid_user_id");
+      return unauthorized(
+        req,
+        res,
+        "Authentication token is invalid",
+        "invalid_user_id",
+        { tokenSource }
+      );
     }
 
     req.user = decoded;
     mergeContext({ userId: decoded.id, role: decoded.role });
     next();
   } catch (err) {
-    if (err instanceof jwt.TokenExpiredError) {
-      return unauthorized(req, res, "Authentication token has expired", "expired_token");
+    if (err instanceof TokenVerificationError) {
+      const message =
+        err.reason === "expired_token"
+          ? "Authentication token has expired"
+          : "Authentication token is invalid";
+
+      return unauthorized(req, res, message, err.reason, { tokenSource });
     }
 
-    if (err instanceof jwt.JsonWebTokenError || err instanceof jwt.NotBeforeError) {
-      return unauthorized(req, res, "Authentication token is invalid", "invalid_token");
-    }
-
-    return unauthorized(req, res, "Authentication failed", "auth_exception");
+    return unauthorized(req, res, "Authentication failed", "auth_exception", {
+      tokenSource,
+      err,
+    });
   }
 };

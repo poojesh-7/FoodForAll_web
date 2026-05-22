@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const {
   generateAccessToken,
   generateRefreshToken,
+  TokenVerificationError,
+  verifyRefreshToken,
 } = require("../utils/token");
 const logger = require("../shared/utils/logger");
 const {
@@ -463,15 +465,36 @@ exports.setRole = async (req, res) => {
 exports.refreshToken = async (req, res) => {
   try {
     await ensureAuthHardeningSchema();
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.cookies?.refreshToken;
 
     if (!refreshToken) {
+      logger.security("Refresh token attempt failed", {
+        reason: "missing_refresh_token",
+        ip: getClientIp(req),
+      });
       return res.status(401).json({
         error: "Refresh token required",
       });
     }
 
-    const refreshTokenHash = hashRefreshToken(refreshToken);
+    let verifiedRefreshToken;
+    try {
+      verifiedRefreshToken = verifyRefreshToken(refreshToken);
+    } catch (err) {
+      logger.security("Refresh token attempt failed", {
+        reason:
+          err instanceof TokenVerificationError
+            ? err.reason
+            : "refresh_token_validation_exception",
+        ip: getClientIp(req),
+      });
+
+      return res.status(401).json({
+        error: "Invalid refresh token",
+      });
+    }
+
+    const refreshTokenHash = hashRefreshToken(verifiedRefreshToken);
     const fingerprint = getSessionFingerprint(req);
 
     const result = await pool.query(
@@ -480,12 +503,12 @@ exports.refreshToken = async (req, res) => {
       FROM users
       WHERE refresh_token=$1 OR refresh_token=$2
       `,
-      [refreshToken, refreshTokenHash]
+      [verifiedRefreshToken, refreshTokenHash]
     );
 
     if (!result.rows.length) {
       const reusedSession = await getRecentlyRotatedRefreshTokenWithRetry(
-        refreshToken
+        verifiedRefreshToken
       );
 
       if (reusedSession?.fingerprint === fingerprint) {
@@ -507,7 +530,8 @@ exports.refreshToken = async (req, res) => {
         );
       }
 
-      logger.warn("Refresh token replay blocked", {
+      logger.security("Refresh token replay blocked", {
+        reason: "refresh_reuse_detected",
         ip: getClientIp(req),
       });
 
@@ -519,6 +543,12 @@ exports.refreshToken = async (req, res) => {
     const user = result.rows[0];
 
     if (new Date(user.refresh_token_expiry) < new Date()) {
+      logger.security("Refresh token attempt failed", {
+        reason: "expired_refresh_token",
+        userId: user.id,
+        ip: getClientIp(req),
+      });
+
       return res.status(401).json({
         error: "Refresh token expired",
       });
@@ -545,7 +575,7 @@ exports.refreshToken = async (req, res) => {
         newRefreshTokenHash,
         expiry,
         user.id,
-        refreshToken,
+        verifiedRefreshToken,
         fingerprint,
         refreshTokenHash,
       ]
@@ -554,7 +584,7 @@ exports.refreshToken = async (req, res) => {
     // 🔐 Generate new access token
     if (!updateResult.rows.length) {
       const reusedSession = await getRecentlyRotatedRefreshTokenWithRetry(
-        refreshToken
+        verifiedRefreshToken
       );
 
       if (reusedSession?.fingerprint === fingerprint) {
@@ -576,6 +606,12 @@ exports.refreshToken = async (req, res) => {
         );
       }
 
+      logger.security("Refresh token replay blocked", {
+        reason: "refresh_token_already_rotated",
+        userId: user.id,
+        ip: getClientIp(req),
+      });
+
       return res.status(401).json({
         error: "Refresh token was already rotated",
       });
@@ -590,7 +626,7 @@ exports.refreshToken = async (req, res) => {
     };
 
     try {
-      await rememberRotatedRefreshToken(refreshToken, session);
+      await rememberRotatedRefreshToken(verifiedRefreshToken, session);
     } catch (err) {
       logger.warn("Unable to store refresh reuse grace entry", { err });
     }
@@ -1043,7 +1079,7 @@ exports.getMe = async (req, res) => {
 // LOGOUT
 exports.logout = async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.cookies?.refreshToken;
     // 🔒 Optional DB cleanup only if user exists
     if (req.user?.id) {
       await pool.query(
@@ -1058,17 +1094,33 @@ exports.logout = async (req, res) => {
       [req.user.id]
     );
     } else if (refreshToken) {
-      await pool.query(
-        `
-        UPDATE users
-        SET refresh_token=NULL,
-            refresh_token_expiry=NULL,
-            refresh_token_device=NULL,
-            refresh_token_family=NULL
-        WHERE refresh_token=$1 OR refresh_token=$2
-        `,
-        [refreshToken, hashRefreshToken(refreshToken)]
-      );
+      let verifiedRefreshToken = null;
+
+      try {
+        verifiedRefreshToken = verifyRefreshToken(refreshToken);
+      } catch (err) {
+        logger.security("Logout refresh token cleanup skipped", {
+          reason:
+            err instanceof TokenVerificationError
+              ? err.reason
+              : "refresh_token_validation_exception",
+          ip: getClientIp(req),
+        });
+      }
+
+      if (verifiedRefreshToken) {
+        await pool.query(
+          `
+          UPDATE users
+          SET refresh_token=NULL,
+              refresh_token_expiry=NULL,
+              refresh_token_device=NULL,
+              refresh_token_family=NULL
+          WHERE refresh_token=$1 OR refresh_token=$2
+          `,
+          [verifiedRefreshToken, hashRefreshToken(verifiedRefreshToken)]
+        );
+      }
     }
 
     // 🍪 Always clear cookies

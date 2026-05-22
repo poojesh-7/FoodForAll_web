@@ -209,7 +209,8 @@ exports.registerRestaurant = async (req, res) => {
     await pool.query(
       `
       UPDATE users
-      SET 
+      SET
+        role = 'provider',
         latitude = $1,
         longitude = $2,
         location = ST_SetSRID(ST_MakePoint($2,$1),4326)::geography

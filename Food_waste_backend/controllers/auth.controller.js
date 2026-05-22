@@ -36,7 +36,7 @@ const {
   normalizeEmail,
   toNumber,
 } = require("../utils/validation");
-const { validateSelfServiceRole } = require("../utils/roles");
+const { validateOnboardingRoleSelection } = require("../utils/roles");
 const {
   shouldSkipRuntimeSchemaMutation,
 } = require("../shared/config/runtimeSchema");
@@ -421,18 +421,34 @@ exports.setRole = async (req, res) => {
       });
     }
 
+    const currentUser = await pool.query(
+      "SELECT id, role FROM users WHERE id=$1",
+      [userId]
+    );
+
+    if (!currentUser.rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+        data: null,
+      });
+    }
+
     const {
       allowed: roleAllowed,
+      onboarding,
       privileged: privilegedRole,
+      reason,
       role: normalizedRole,
-    } = validateSelfServiceRole(role);
+    } = validateOnboardingRoleSelection(role, currentUser.rows[0].role);
 
     if (!roleAllowed) {
       if (privilegedRole) {
-        logger.security("Blocked self-service privileged role assignment", {
+        logger.security("Blocked role selection", {
+          reason,
           userId,
           requestedRole: normalizedRole,
-          currentRole: req.user?.role,
+          currentRole: currentUser.rows[0].role,
           ip: getClientIp(req),
         });
       }
@@ -466,7 +482,9 @@ exports.setRole = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Role set successfully",
+      message: onboarding
+        ? "Onboarding role selected successfully"
+        : "Role set successfully",
       data: {
         user: updatedUser,
       },
@@ -702,12 +720,14 @@ exports.completeProfile = async (req, res) => {
     const {
       allowed: roleAllowed,
       privileged: privilegedRole,
+      reason,
       role: normalizedRole,
-    } = validateSelfServiceRole(role);
+    } = validateOnboardingRoleSelection(role);
 
     if (!roleAllowed) {
       if (privilegedRole) {
-        logger.security("Blocked privileged role during profile completion", {
+        logger.security("Blocked invalid role during profile completion", {
+          reason,
           requestedRole: normalizedRole,
           phone: normalizedPhone,
           ip: getClientIp(req),

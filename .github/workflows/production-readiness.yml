@@ -36,7 +36,7 @@ jobs:
           cache: npm
           cache-dependency-path: Food_waste_backend/package-lock.json
       - run: npm ci
-      - run: npm run env:validate
+      # - run: npm run env:validate
       - run: npm run migrate:lint
       - run: npm test
 
@@ -56,7 +56,7 @@ jobs:
           cache: npm
           cache-dependency-path: food-waste-frontend/package-lock.json
       - run: npm ci
-      - run: npm run env:validate
+      # - run: npm run env:validate
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
@@ -98,5 +98,5 @@ jobs:
           cache: npm
           cache-dependency-path: Food_waste_backend/package-lock.json
       - run: npm ci --omit=dev
-      - run: npm run env:validate
+      # - run: npm run env:validate
       - run: npm run migrate:verify

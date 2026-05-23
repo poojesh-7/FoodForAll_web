@@ -8,6 +8,7 @@
     "start": "node services/api/index.js",
     "workers:start": "node services/workers/index.js",
     "env:validate": "node scripts/validate-env.js",
+    "architecture:validate": "node scripts/validate-backend-architecture.js",
     "test": "node --test",
     "migrate": "node scripts/migrate.js up",
     "migrate:rollback": "node scripts/migrate.js down",

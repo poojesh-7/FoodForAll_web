@@ -343,67 +343,6 @@ exports.joinNGO = async (req, res) => {
     return res.status(400).json({ error: "NGO id is required" });
   }
 
-  try {
-    const existing = await pool.query(
-      `
-      SELECT * FROM volunteers
-      WHERE user_id=$1 AND ngo_id=$2
-      `,
-      [req.user.id, ngo_id],
-    );
-
-    // Case 1️⃣ Already active
-    if (existing.rows.length && existing.rows[0].status === "active") {
-      return res.status(409).json({ error: "Already joined NGO" });
-    }
-
-    // Case 2️⃣ Previously left → reactivate
-    if (existing.rows.length && existing.rows[0].status === "left") {
-      const updated = await pool.query(
-        `
-        UPDATE volunteers
-        SET status='active'
-        WHERE user_id=$1 AND ngo_id=$2
-        RETURNING *
-        `,
-        [req.user.id, ngo_id],
-      );
-
-      return res.status(200).json(updated.rows[0]);
-    }
-
-    // Case 3️⃣ No record → create new
-    const result = await pool.query(
-      `
-      INSERT INTO volunteers (user_id, ngo_id, status)
-      VALUES ($1,$2,'active')
-      RETURNING *
-      `,
-      [req.user.id, ngo_id],
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    logger.error("Direct volunteer join failed", {
-      err,
-      userId: req.user?.id,
-      ngoId: ngo_id,
-    });
-    res.status(500).json({ error: "Failed to join NGO" });
-  }
-};
-
-// 🚪 Leave NGO
-exports.joinNGO = async (req, res) => {
-  if (req.user.role !== "volunteer")
-    return res.status(403).json({ error: "Only volunteers allowed" });
-
-  const { ngo_id } = req.body;
-
-  if (!isValidId(ngo_id)) {
-    return res.status(400).json({ error: "NGO id is required" });
-  }
-
   const client = await pool.connect();
 
   try {

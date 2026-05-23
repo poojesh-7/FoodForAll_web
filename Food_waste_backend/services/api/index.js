@@ -26,6 +26,10 @@ const { globalLimiter } = require("../../middlewares/rateLimit.middleware");
 const { isValidId } = require("../../utils/validation");
 const logger = require("../../shared/utils/logger");
 const {
+  assertBackendArchitecture,
+} = require("../../shared/utils/backendArchitectureValidation");
+assertBackendArchitecture({ logger });
+const {
   TokenVerificationError,
   extractAccessTokenFromSocketHandshake,
   verifyAccessToken,

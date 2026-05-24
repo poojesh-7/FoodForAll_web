@@ -540,15 +540,7 @@ const refundWorker = new Worker(
       throw err;
     }
   }),
-  workerOptions(connection, {
-    attempts: 5,
-    backoff: {
-      type: "exponential",
-      delay: 3000,
-    },
-    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-    removeOnFail: { age: 14 * 24 * 60 * 60, count: 2000 },
-  })
+  workerOptions(connection)
 );
 
 registerWorkerEvents(refundWorker, "refund-queue");

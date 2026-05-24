@@ -17,6 +17,7 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
+    stop_grace_period: 60s
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - ./infra/redis/redis.production.conf:/usr/local/etc/redis/redis.conf:ro
@@ -48,6 +49,7 @@ services:
     env_file:
       - ${DEPLOY_ENV_FILE:-./.env.production}
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -64,6 +66,7 @@ services:
     env_file:
       - ${DEPLOY_ENV_FILE:-./.env.production}
     restart: unless-stopped
+    stop_grace_period: 90s
     depends_on:
       migrate:
         condition: service_completed_successfully

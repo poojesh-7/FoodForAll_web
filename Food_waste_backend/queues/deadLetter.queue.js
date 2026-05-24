@@ -1,16 +1,13 @@
 const { Queue } = require("bullmq");
 const connection = require("../shared/config/bullmq");
-const { queueOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, queueOptions } = require("../shared/utils/queueOptions");
+const { registerQueue } = require("../shared/utils/queueRuntime");
 
-const deadLetterQueue = new Queue(
+const deadLetterQueue = registerQueue(new Queue(
   "dead-letter-queue",
   queueOptions(connection, {
-    defaultJobOptions: {
-      attempts: 1,
-      removeOnComplete: { age: 30 * 24 * 60 * 60, count: 10000 },
-      removeOnFail: { age: 30 * 24 * 60 * 60, count: 10000 },
-    },
+    defaultJobOptions: jobOptions("deadLetter"),
   })
-);
+));
 
 module.exports = deadLetterQueue;

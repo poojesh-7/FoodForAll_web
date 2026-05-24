@@ -8,6 +8,7 @@ const {
 } = require("../shared/services/reservationLock.service");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
 const logger = require("../shared/utils/logger");
+const { jobOptions } = require("../shared/utils/queueOptions");
 const {
   isIntegerInRange,
   isNumberInRange,
@@ -456,7 +457,7 @@ exports.createFood = async (req, res) => {
     await expiryQueue.add(
       "expire-food",
       { listingId: listing.id },
-      { delay: expiryDelay, jobId: `expiry-${listing.id}` }
+      jobOptions("critical", { delay: expiryDelay, jobId: `expiry-${listing.id}` })
     );
 
     const alertDelay = Math.max(endTime - 30 * 60 * 1000 - Date.now(), 0);
@@ -464,7 +465,7 @@ exports.createFood = async (req, res) => {
     await alertQueue.add(
       "expiry-alert",
       { listingId: listing.id },
-      { delay: alertDelay, jobId: `alert-${listing.id}` }
+      jobOptions("critical", { delay: alertDelay, jobId: `alert-${listing.id}` })
     );
 
     await client.query("COMMIT");

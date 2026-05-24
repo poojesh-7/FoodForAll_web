@@ -2,13 +2,84 @@ const logger = require("./logger");
 const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { runWithContext, contextFromJob } = require("./requestContext");
 const {
+  registerManagedInterval,
+  registerWorker,
+} = require("./queueRuntime");
+const {
   heartbeatWorker,
   recordAlert,
   recordOperationalEvent,
 } = require("../services/observability.service");
 
+const HEARTBEAT_INTERVAL_MS = Number(
+  process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000
+);
+
+function enqueueDeadLetter(workerName, job, err) {
+  return deadLetterQueue
+    .add(
+      "retry-exhausted",
+      {
+        sourceQueue: workerName,
+        jobId: job?.id,
+        jobName: job?.name,
+        data: job?.data,
+        opts: job?.opts,
+        failedReason: job?.failedReason || err?.message,
+        stacktrace: job?.stacktrace || [],
+        attemptsMade: job?.attemptsMade,
+        failedAt: new Date().toISOString(),
+      },
+      {
+        jobId: `${workerName}:${job?.id}:retry-exhausted`,
+      }
+    )
+    .catch((deadLetterErr) => {
+      logger.error("Dead-letter enqueue failed", {
+        queue: workerName,
+        jobId: job?.id,
+        err: deadLetterErr,
+      });
+    });
+}
+
 function registerWorkerEvents(worker, workerName) {
+  const activeJobs = new Set();
+
+  registerWorker(workerName, worker);
+  void heartbeatWorker(workerName, workerName, "running", {
+    processId: process.pid,
+    startedAt: new Date().toISOString(),
+  });
+  registerManagedInterval(
+    `worker-heartbeat:${workerName}`,
+    () =>
+      heartbeatWorker(
+        workerName,
+        workerName,
+        activeJobs.size > 0 ? "processing" : "running",
+        {
+          processId: process.pid,
+          activeJobs: activeJobs.size,
+        }
+      ),
+    HEARTBEAT_INTERVAL_MS
+  );
+
+  worker.on("active", (job) => {
+    activeJobs.add(String(job?.id));
+    runWithContext(contextFromJob(job, workerName), () => {
+      logger.queue("Queue job active", {
+        queue: workerName,
+        jobId: job?.id,
+        jobName: job?.name,
+        attemptsMade: job?.attemptsMade,
+      });
+    });
+  });
+
   worker.on("completed", (job) => {
+    activeJobs.delete(String(job?.id));
     runWithContext(contextFromJob(job, workerName), () => {
       logger.queue("Queue job completed", {
         queue: workerName,
@@ -24,6 +95,7 @@ function registerWorkerEvents(worker, workerName) {
   });
 
   worker.on("failed", (job, err) => {
+    activeJobs.delete(String(job?.id));
     runWithContext(contextFromJob(job, workerName), () => {
       const attempts = Number(job?.opts?.attempts || 1);
       const retryExhausted = Number(job?.attemptsMade || 0) >= attempts;
@@ -50,21 +122,7 @@ function registerWorkerEvents(worker, workerName) {
         },
       });
       if (retryExhausted) {
-        void deadLetterQueue.add(
-          "retry-exhausted",
-          {
-            sourceQueue: workerName,
-            jobId: job?.id,
-            jobName: job?.name,
-            data: job?.data,
-            failedReason: job?.failedReason || err?.message,
-            attemptsMade: job?.attemptsMade,
-            failedAt: new Date().toISOString(),
-          },
-          {
-            jobId: `${workerName}:${job?.id}:retry-exhausted`,
-          }
-        );
+        void enqueueDeadLetter(workerName, job, err);
         void recordAlert({
           alertKey: `${workerName}:retry_exhausted`,
           category: "queue",
@@ -73,6 +131,37 @@ function registerWorkerEvents(worker, workerName) {
           metadata: { jobId: job?.id, jobName: job?.name },
         });
       }
+    });
+  });
+
+  worker.on("stalled", (jobId, previous) => {
+    const normalizedJobId = String(jobId);
+    activeJobs.delete(normalizedJobId);
+    logger.warn("Queue job stalled and will be recovered by BullMQ", {
+      queue: workerName,
+      jobId: normalizedJobId,
+      previous,
+    });
+    void recordOperationalEvent({
+      category: "queue",
+      severity: "warning",
+      eventName: "queue_job_stalled",
+      metadata: {
+        queueName: workerName,
+        jobId: normalizedJobId,
+        previous,
+      },
+    });
+    void recordAlert({
+      alertKey: `${workerName}:stalled_job`,
+      category: "queue",
+      severity: "warning",
+      message: `Stalled job detected in ${workerName}`,
+      metadata: { jobId: normalizedJobId, previous },
+    });
+    void heartbeatWorker(workerName, workerName, "stalled", {
+      jobId: normalizedJobId,
+      previous,
     });
   });
 
@@ -90,6 +179,13 @@ function registerWorkerEvents(worker, workerName) {
       severity: "error",
       message: `Worker error in ${workerName}`,
       metadata: { message: err?.message },
+    });
+  });
+
+  worker.on("closed", () => {
+    logger.info("Queue worker closed", { queue: workerName });
+    void heartbeatWorker(workerName, workerName, "closed", {
+      processId: process.pid,
     });
   });
 

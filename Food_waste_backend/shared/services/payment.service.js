@@ -3,6 +3,7 @@ const paymentQueue = require("../../queues/payment.queue");
 const crypto = require("crypto");
 const logger = require("../utils/logger");
 const { PaymentError } = require("../utils/errors");
+const { jobOptions } = require("../utils/queueOptions");
 const {
   recordAlert,
   recordOperationalEvent,
@@ -119,12 +120,10 @@ async function createPayment({
         orderId,
         paymentSessionId,
       },
-      {
+      jobOptions("critical", {
         delay: 10 * 60 * 1000,
         jobId: `payment-batch-${orderId}`,
-        attempts: 5,
-        backoff: { type: "exponential", delay: 3000 },
-      }
+      })
     );
 
     void recordOperationalEvent({
@@ -215,11 +214,9 @@ async function refundReliabilityDeposit(refundQueue, reservationId) {
   await refundQueue.add(
     "refund-reliability-deposit",
     { reservationId, refundType: "reliability_deposit" },
-    {
+    jobOptions("critical", {
       jobId: `deposit-refund-${reservationId}`,
-      attempts: 5,
-      backoff: { type: "exponential", delay: 3000 },
-    }
+    })
   );
 }
 

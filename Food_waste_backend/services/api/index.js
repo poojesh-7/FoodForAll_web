@@ -3,8 +3,9 @@ const {
   validateEnvironment,
 } = require("../../shared/config/env");
 validateEnvironment();
-require("../../shared/config/db");
+const pool = require("../../shared/config/db");
 const redis = require("../../shared/config/redis");
+const bullmqConnection = require("../../shared/config/bullmq");
 const {
   assertMigrationsCurrent,
 } = require("../../shared/config/migrationStatus");
@@ -29,6 +30,10 @@ const {
   assertBackendArchitecture,
 } = require("../../shared/utils/backendArchitectureValidation");
 assertBackendArchitecture({ logger });
+const {
+  closeQueueRuntime,
+  getQueueRuntimeSnapshot,
+} = require("../../shared/utils/queueRuntime");
 const {
   TokenVerificationError,
   extractAccessTokenFromSocketHandshake,
@@ -186,8 +191,11 @@ Redis Socket Bridge
 ========================
 */
 
+let socketBridgeSubscriber;
+
 async function startSocketBridge() {
   const subscriber = redis.duplicate();
+  socketBridgeSubscriber = subscriber;
 
   await subscriber.connect();
 
@@ -249,6 +257,78 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 
 registerProcessErrorHandlers("api");
+
+let shuttingDown = false;
+
+function withShutdownTimeout(promise, label) {
+  const timeoutMs = Number(process.env.API_SHUTDOWN_TIMEOUT_MS || 30000);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    if (typeof timer.unref === "function") {
+      timer.unref();
+    }
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function closeHttpServer() {
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function closeSocketServer() {
+  return new Promise((resolve) => {
+    io.close(() => resolve());
+  });
+}
+
+async function closeRedisClients() {
+  if (socketBridgeSubscriber?.isOpen) {
+    await socketBridgeSubscriber.quit();
+  }
+
+  if (redis.isOpen) {
+    await redis.quit();
+  }
+
+  if (bullmqConnection.status !== "end") {
+    await bullmqConnection.quit();
+  }
+}
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  logger.warn("API server shutting down", {
+    signal,
+    runtime: getQueueRuntimeSnapshot(),
+  });
+
+  try {
+    await withShutdownTimeout(closeHttpServer(), "HTTP server close");
+    await withShutdownTimeout(closeSocketServer(), "Socket.IO close");
+    await closeQueueRuntime();
+    await withShutdownTimeout(closeRedisClients(), "Redis clients close");
+    await withShutdownTimeout(pool.end(), "PostgreSQL pool close");
+    logger.info("API server shutdown complete", { signal });
+    process.exit(0);
+  } catch (err) {
+    logger.error("API server shutdown failed", { signal, err });
+    process.exit(1);
+  }
+}
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function startServer() {
   if (isProductionLike(process.env.APP_ENV)) {

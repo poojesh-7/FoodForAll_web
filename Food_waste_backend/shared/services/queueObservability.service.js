@@ -7,19 +7,26 @@ const notificationQueue = require("../../queues/notification.queue");
 const paymentQueue = require("../../queues/payment.queue");
 const refundQueue = require("../../queues/refund.queue");
 const operationalCleanupQueue = require("../../queues/operationalCleanup.queue");
+const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { ensureObservabilitySchema, recordAlert } = require("./observability.service");
 
-const monitoredQueues = [
-  expiryQueue,
-  expiryAlertQueue,
-  pickupQueue,
-  deliveryQueue,
-  notificationQueue,
-  paymentQueue,
-  refundQueue,
-  operationalCleanupQueue,
+const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
+const STUCK_ACTIVE_MS = Number(process.env.QUEUE_STUCK_ACTIVE_MS || 15 * 60 * 1000);
+const DELAYED_OVERDUE_MS = Number(process.env.QUEUE_DELAYED_OVERDUE_MS || 2 * 60 * 1000);
+
+const monitoredQueueConfigs = [
+  { queue: expiryQueue, workerRequired: true },
+  { queue: expiryAlertQueue, workerRequired: true },
+  { queue: pickupQueue, workerRequired: true },
+  { queue: deliveryQueue, workerRequired: true },
+  { queue: notificationQueue, workerRequired: true },
+  { queue: paymentQueue, workerRequired: true },
+  { queue: refundQueue, workerRequired: true },
+  { queue: operationalCleanupQueue, workerRequired: true },
+  { queue: deadLetterQueue, workerRequired: false, deadLetter: true },
 ];
 
+const monitoredQueues = monitoredQueueConfigs.map(({ queue }) => queue);
 const queuesByName = new Map(monitoredQueues.map((queue) => [queue.name, queue]));
 
 async function serializeJob(job) {
@@ -34,6 +41,10 @@ async function serializeJob(job) {
     processedOn: job.processedOn || null,
     finishedOn: job.finishedOn || null,
     delay: job.delay || 0,
+    dueAt:
+      job.delay && job.timestamp
+        ? new Date(Number(job.timestamp) + Number(job.delay)).toISOString()
+        : null,
     data: {
       reservationId: job.data?.reservationId || null,
       reservationIds: Array.isArray(job.data?.reservationIds)
@@ -59,6 +70,15 @@ async function getWorkerHeartbeats() {
   }
 }
 
+function getHeartbeatStatus(heartbeat) {
+  if (!heartbeat) return "missing";
+
+  const lastSeenAt = new Date(heartbeat.last_seen_at).getTime();
+  if (!Number.isFinite(lastSeenAt)) return "invalid";
+
+  return Date.now() - lastSeenAt > STALE_HEARTBEAT_MS ? "stale" : "ok";
+}
+
 async function getQueueHealth({ includeJobs = true } = {}) {
   const heartbeats = await getWorkerHeartbeats();
   const heartbeatsByQueue = new Map(
@@ -66,7 +86,7 @@ async function getQueueHealth({ includeJobs = true } = {}) {
   );
 
   return Promise.all(
-    monitoredQueues.map(async (queue) => {
+    monitoredQueueConfigs.map(async ({ queue, workerRequired, deadLetter }) => {
       const [counts, isPaused, failedJobs, activeJobs, delayedJobs] =
         await Promise.all([
           queue.getJobCounts(
@@ -84,6 +104,8 @@ async function getQueueHealth({ includeJobs = true } = {}) {
           includeJobs ? queue.getDelayed(0, 9) : Promise.resolve([]),
         ]);
 
+      const heartbeat = heartbeatsByQueue.get(queue.name) || null;
+      const heartbeatStatus = workerRequired ? getHeartbeatStatus(heartbeat) : "not_required";
       const retryExhausted = failedJobs.filter((job) => {
         const attempts = Number(job.opts?.attempts || 1);
         return Number(job.attemptsMade || 0) >= attempts;
@@ -91,10 +113,27 @@ async function getQueueHealth({ includeJobs = true } = {}) {
       const now = Date.now();
       const stuckActive = activeJobs.filter((job) => {
         if (!job.processedOn) return false;
-        return now - Number(job.processedOn) > 15 * 60 * 1000;
+        return now - Number(job.processedOn) > STUCK_ACTIVE_MS;
       });
+      const overdueDelayed = delayedJobs.filter((job) => {
+        const dueAt = Number(job.timestamp || 0) + Number(job.delay || 0);
+        return dueAt > 0 && now - dueAt > DELAYED_OVERDUE_MS;
+      });
+      const deadLetterWaiting =
+        deadLetter &&
+        Number(counts.waiting || 0) +
+          Number(counts.delayed || 0) +
+          Number(counts.failed || 0) >
+          0;
       const status =
-        isPaused || retryExhausted.length > 0 || stuckActive.length > 0
+        isPaused ||
+        retryExhausted.length > 0 ||
+        stuckActive.length > 0 ||
+        overdueDelayed.length > 0 ||
+        heartbeatStatus === "missing" ||
+        heartbeatStatus === "stale" ||
+        heartbeatStatus === "invalid" ||
+        deadLetterWaiting
           ? "degraded"
           : "healthy";
 
@@ -118,6 +157,36 @@ async function getQueueHealth({ includeJobs = true } = {}) {
         });
       }
 
+      if (overdueDelayed.length > 0) {
+        void recordAlert({
+          alertKey: `${queue.name}:overdue_delayed_jobs`,
+          category: "queue",
+          severity: "warning",
+          message: `${overdueDelayed.length} overdue delayed jobs in ${queue.name}`,
+          metadata: { queueName: queue.name, jobIds: overdueDelayed.map((job) => job.id) },
+        });
+      }
+
+      if (workerRequired && heartbeatStatus !== "ok") {
+        void recordAlert({
+          alertKey: `${queue.name}:worker_heartbeat_${heartbeatStatus}`,
+          category: "queue",
+          severity: heartbeatStatus === "missing" ? "warning" : "error",
+          message: `Worker heartbeat ${heartbeatStatus} for ${queue.name}`,
+          metadata: { queueName: queue.name, heartbeat },
+        });
+      }
+
+      if (deadLetterWaiting) {
+        void recordAlert({
+          alertKey: `${queue.name}:dead_letter_jobs_visible`,
+          category: "queue",
+          severity: "error",
+          message: `${queue.name} contains dead-letter jobs requiring inspection`,
+          metadata: { queueName: queue.name, counts },
+        });
+      }
+
       return {
         name: queue.name,
         status,
@@ -125,7 +194,9 @@ async function getQueueHealth({ includeJobs = true } = {}) {
         counts,
         retry_exhausted_count: retryExhausted.length,
         stuck_active_count: stuckActive.length,
-        worker: heartbeatsByQueue.get(queue.name) || null,
+        overdue_delayed_count: overdueDelayed.length,
+        worker_heartbeat_status: heartbeatStatus,
+        worker: heartbeat,
         failed_jobs: await Promise.all(failedJobs.map(serializeJob)),
         active_jobs: await Promise.all(activeJobs.map(serializeJob)),
         delayed_jobs: await Promise.all(delayedJobs.map(serializeJob)),
@@ -136,10 +207,20 @@ async function getQueueHealth({ includeJobs = true } = {}) {
 
 async function cleanupQueues() {
   const results = [];
-  for (const queue of monitoredQueues) {
+  for (const { queue, deadLetter } of monitoredQueueConfigs) {
+    if (deadLetter) {
+      results.push({
+        queue: queue.name,
+        completed: 0,
+        failed: 0,
+        skipped: true,
+      });
+      continue;
+    }
+
     const [completed, failed] = await Promise.all([
       queue.clean(24 * 60 * 60 * 1000, 1000, "completed"),
-      queue.clean(14 * 24 * 60 * 60 * 1000, 2000, "failed"),
+      queue.clean(30 * 24 * 60 * 60 * 1000, 2000, "failed"),
     ]);
 
     results.push({
@@ -174,6 +255,7 @@ async function retryFailedJob(queueName, jobId) {
 module.exports = {
   cleanupQueues,
   getQueueHealth,
+  monitoredQueueConfigs,
   monitoredQueues,
   retryFailedJob,
 };

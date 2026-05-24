@@ -11,6 +11,14 @@ connection.on("connect", () => {
   logger.info("BullMQ Redis connected");
 });
 
+connection.on("reconnecting", () => {
+  logger.warn("BullMQ Redis reconnecting");
+});
+
+connection.on("end", () => {
+  logger.warn("BullMQ Redis connection closed");
+});
+
 connection.on("error", (err) => {
   logger.error("BullMQ Redis error", { err });
 });

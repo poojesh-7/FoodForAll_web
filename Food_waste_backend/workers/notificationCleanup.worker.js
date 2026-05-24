@@ -1,8 +1,9 @@
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
+const { registerManagedInterval } = require("../shared/utils/queueRuntime");
 
 function startNotificationCleanupWorker() {
-  setInterval(async () => {
+  registerManagedInterval("notification-cleanup", async () => {
     try {
       await pool.query(`
         DELETE FROM notifications
@@ -13,7 +14,7 @@ function startNotificationCleanupWorker() {
     } catch (err) {
       logger.error("Notification cleanup failed", { err });
     }
-  }, 86400000); // once per day
+  }, 86400000);
 }
 
 module.exports = startNotificationCleanupWorker;

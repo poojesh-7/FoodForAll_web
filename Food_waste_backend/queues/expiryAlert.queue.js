@@ -1,7 +1,15 @@
 const { Queue } = require("bullmq");
 const connection = require("../shared/config/bullmq");
-const { queueOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, queueOptions } = require("../shared/utils/queueOptions");
+const { registerQueue } = require("../shared/utils/queueRuntime");
 
-const expiryAlertQueue = new Queue("expiry-alert-queue", queueOptions(connection));
+const expiryAlertQueue = registerQueue(
+  new Queue(
+    "expiry-alert-queue",
+    queueOptions(connection, {
+      defaultJobOptions: jobOptions("critical"),
+    })
+  )
+);
 
 module.exports = expiryAlertQueue;

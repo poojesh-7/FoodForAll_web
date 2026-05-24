@@ -1,16 +1,13 @@
 const { Queue } = require("bullmq");
 const connection = require("../shared/config/bullmq");
-const { queueOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, queueOptions } = require("../shared/utils/queueOptions");
+const { registerQueue } = require("../shared/utils/queueRuntime");
 
-const paymentQueue = new Queue(
+const paymentQueue = registerQueue(new Queue(
   "payment-queue",
   queueOptions(connection, {
-    defaultJobOptions: {
-      attempts: 5,
-      removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-      removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
-    },
+    defaultJobOptions: jobOptions("critical"),
   })
-);
+));
 
 module.exports = paymentQueue;

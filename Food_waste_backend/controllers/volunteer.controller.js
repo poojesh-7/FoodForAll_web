@@ -15,6 +15,7 @@ const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
 const logger = require("../shared/utils/logger");
+const { jobOptions } = require("../shared/utils/queueOptions");
 const {
   isProvided,
   isNumberInRange,
@@ -555,14 +556,10 @@ exports.startTask = async (req, res) => {
       await pickupQueue.add(
         "pickup-timeout",
         { reservationId: updatedReservation.id },
-        {
+        jobOptions("critical", {
           delay: 15 * 60 * 1000, // 15 minutes
           jobId: `pickup-${updatedReservation.id}`,
-          attempts: 3,
-          backoff: { type: "exponential", delay: 2000 },
-          removeOnComplete: { age: 3600, count: 1000 },
-          removeOnFail: { age: 3600, count: 1000 }
-        }
+        })
       );
 
       logger.info("Pickup timeout scheduled", { reservationId: updatedReservation.id });

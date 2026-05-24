@@ -25,6 +25,10 @@ redisClient.on("error", (err) => {
   logger.error("Redis error", { err });
 });
 
+redisClient.on("end", () => {
+  logger.warn("Redis connection closed");
+});
+
 let connecting;
 
 const connectRedis = async () => {
@@ -42,15 +46,5 @@ const connectRedis = async () => {
 };
 
 connectRedis();
-
-process.on("SIGTERM", async () => {
-  try {
-    if (redisClient.isOpen) {
-      await redisClient.quit();
-    }
-  } finally {
-    process.exit(0);
-  }
-});
 
 module.exports = redisClient;

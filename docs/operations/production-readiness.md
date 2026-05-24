@@ -52,16 +52,41 @@ Protected data includes reservations, payments, restrictions, penalties, provide
 
 ## Redis And Queue Recovery
 
-Redis uses RDB snapshots plus AOF `appendfsync everysec`. BullMQ queues use an environment-specific prefix and persistent Redis storage, so delayed payment, refund, expiry, and reconciliation jobs survive container restarts.
+Redis uses RDB snapshots plus AOF `appendfsync everysec`, `aof-use-rdb-preamble yes`, `no-appendfsync-on-rewrite no`, `stop-writes-on-bgsave-error yes`, and `maxmemory-policy noeviction`. The Redis `/data` directory must be backed by a persistent Docker volume or managed Redis persistence tier. Do not run BullMQ queues on ephemeral Redis storage in staging or production.
+
+BullMQ queues use an environment-specific prefix and persistent Redis storage, so delayed payment, refund, expiry, delivery, pickup, and reconciliation jobs survive Redis and container restarts. Critical queue jobs use capped retries with exponential backoff and retain failed jobs long enough for inspection. Retry-exhausted jobs are copied to `dead-letter-queue` with payload, source queue, attempts, and failure metadata before cleanup retention can remove the original failed job.
 
 On worker restart:
 
 - BullMQ reclaims stalled active jobs.
+- Workers use explicit lock duration, stalled interval, and max stalled count settings.
+- Idle workers write heartbeats so queue health does not report false "No heartbeat" states.
 - Failed jobs remain available in failed sets for admin retry.
 - Payment reconciliation sweep runs every five minutes.
 - Webhook events are idempotent by event key and payload hash.
+- Refund jobs use stable gateway refund IDs and stable BullMQ job IDs to avoid duplicate refunds.
 
 Do not flush Redis in production unless PostgreSQL has been restored and reconciliation has been planned.
+
+Required Redis deployment checks:
+
+- `appendonly yes`
+- `appendfsync everysec`
+- persistent `/data` volume enabled and included in backup/snapshot policy
+- `maxmemory-policy noeviction`
+- no `FLUSHDB` or `FLUSHALL` access in application credentials
+- container stop grace period long enough for Redis to flush and workers to close
+
+Recommended queue runtime settings:
+
+- `QUEUE_LOCK_DURATION_MS=120000`
+- `QUEUE_STALLED_INTERVAL_MS=30000`
+- `QUEUE_MAX_STALLED_COUNT=2`
+- `QUEUE_SHUTDOWN_TIMEOUT_MS=30000`
+- `WORKER_HEARTBEAT_INTERVAL_MS=30000`
+- `WORKER_STALE_HEARTBEAT_MS=90000`
+- `QUEUE_DELAYED_OVERDUE_MS=120000`
+- `QUEUE_STUCK_ACTIVE_MS=900000`
 
 ## Websocket Scaling
 
@@ -97,7 +122,9 @@ Queue recovery:
 
 - Preserve Redis AOF/RDB volume.
 - Start Redis, then workers.
-- Retry exhausted jobs from admin queue UI after checking idempotency.
+- Check `/health/queues` for stale workers, overdue delayed jobs, stalled active jobs, retry exhaustion, and dead-letter backlog.
+- Retry exhausted jobs from admin queue UI only after checking idempotency and any related payment/refund state.
+- Inspect `dead-letter-queue` before cleaning failed jobs.
 
 Webhook recovery:
 

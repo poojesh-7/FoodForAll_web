@@ -1,6 +1,7 @@
 const pool = require("../shared/config/db");
 const redis = require("../shared/config/redis");
 const logger = require("../shared/utils/logger");
+const { registerManagedInterval } = require("../shared/utils/queueRuntime");
 
 async function syncNGOLocations() {
   try {
@@ -30,8 +31,7 @@ async function syncNGOLocations() {
 function startNGOLocationSyncWorker() {
   syncNGOLocations();
 
-  // repeat every 10 minutes
-  setInterval(syncNGOLocations, 600000);
+  registerManagedInterval("ngo-location-sync", syncNGOLocations, 600000);
 }
 
 module.exports = startNGOLocationSyncWorker;

@@ -13,11 +13,7 @@ const notificationWorker = new Worker(
 
     await notifyUser(userId, type, title, message, data);
   }),
-  workerOptions(connection, {
-    attempts: 3,
-    removeOnComplete: { age: 3600, count: 500 },
-    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 }
-  })
+  workerOptions(connection)
 );
 
 registerWorkerEvents(notificationWorker, "notification-queue");

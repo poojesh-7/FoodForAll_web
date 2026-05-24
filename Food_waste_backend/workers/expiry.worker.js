@@ -165,12 +165,7 @@ const expiryWorker = new Worker(
       client.release();
     }
   }),
-  workerOptions(connection, {
-    attempts: 5,
-    backoff: { type: "exponential", delay: 3000 },
-    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
-  })
+  workerOptions(connection)
 );
 
 registerWorkerEvents(expiryWorker, "expiry-queue");

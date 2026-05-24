@@ -3,7 +3,7 @@ const connection = require("../shared/config/bullmq");
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
-const { workerOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, workerOptions } = require("../shared/utils/queueOptions");
 const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const operationalCleanupQueue = require("../queues/operationalCleanup.queue");
 const { cleanupQueues } = require("../shared/services/queueObservability.service");
@@ -21,12 +21,12 @@ operationalCleanupQueue
   .add(
     "operational-retention-cleanup",
     {},
-    {
+    jobOptions("operational", {
       jobId: "operational-retention-cleanup",
       repeat: { every: 24 * 60 * 60 * 1000 },
       removeOnComplete: { age: 7 * 24 * 60 * 60, count: 30 },
       removeOnFail: { age: 14 * 24 * 60 * 60, count: 100 },
-    }
+    })
   )
   .catch((err) => {
     logger.warn("Operational cleanup scheduling failed", { err });
@@ -100,12 +100,7 @@ const cleanupWorker = new Worker(
       metadata: { counts, queueCleanup },
     });
   }),
-  workerOptions(connection, {
-    attempts: 3,
-    backoff: { type: "exponential", delay: 5000 },
-    removeOnComplete: { age: 7 * 24 * 60 * 60, count: 30 },
-    removeOnFail: { age: 14 * 24 * 60 * 60, count: 100 },
-  })
+  workerOptions(connection)
 );
 
 registerWorkerEvents(cleanupWorker, "operational-cleanup-queue");

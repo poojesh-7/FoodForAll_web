@@ -3,7 +3,7 @@ const connection = require("../shared/config/bullmq");
 const paymentQueue = require("../queues/payment.queue");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
-const { workerOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, workerOptions } = require("../shared/utils/queueOptions");
 const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const {
   reconcileStalePaymentSessions,
@@ -15,12 +15,12 @@ paymentQueue
   .add(
     "payment-reconciliation-sweep",
     {},
-    {
+    jobOptions("critical", {
       jobId: "payment-reconciliation-sweep",
       repeat: { every: 5 * 60 * 1000 },
       removeOnComplete: { age: 60 * 60, count: 24 },
       removeOnFail: { age: 24 * 60 * 60, count: 100 },
-    }
+    })
   )
   .catch((err) => {
     logger.warn("Payment reconciliation sweep scheduling failed", { err });
@@ -53,12 +53,7 @@ const paymentTimeoutWorker = new Worker(
       reconciledOrders: results.length,
     });
   }),
-  workerOptions(connection, {
-    attempts: 5,
-    backoff: { type: "exponential", delay: 3000 },
-    removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-    removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
-  })
+  workerOptions(connection)
 );
 
 registerWorkerEvents(paymentTimeoutWorker, "payment-queue");

@@ -28,6 +28,7 @@ const {
   ensureReservationPaymentContextSchema,
   hasReservedStock,
 } = require("../shared/services/reservationPaymentContext.service");
+const { jobOptions } = require("../shared/utils/queueOptions");
 const {
   publishListingUpdated,
   publishPaymentUpdated,
@@ -693,10 +694,9 @@ const legacyCancelReservation = async (req, res) => {
       await refundQueue.add(
         "refund-payment",
         { reservationId: reservation.id },
-        {
+        jobOptions("critical", {
           jobId: `refund-${reservation.id}`,
-          attempts: 5,
-        }
+        })
       );
     }
 
@@ -947,11 +947,9 @@ exports.cancelReservation = async (req, res) => {
         await refundQueue.add(
           "refund-payment",
           { reservationId: refundReservationId },
-          {
+          jobOptions("critical", {
             jobId: `refund-${refundReservationId}`,
-            attempts: 5,
-            backoff: { type: "exponential", delay: 3000 },
-          }
+          })
         );
       } catch (err) {
         logger.error("Failed to enqueue refund", { err, reservationId: refundReservationId });
@@ -1127,14 +1125,10 @@ exports.markAsPickedUp = async (req, res) => {
       await deliveryQueue.add(
         "delivery-timeout",
         { reservationId: updatedReservation.id },
-        {
+        jobOptions("critical", {
           delay,
           jobId: `delivery-${updatedReservation.id}`,
-          attempts: 3,
-          backoff: { type: "exponential", delay: 2000 },
-          removeOnComplete: { age: 3600, count: 1000 },
-          removeOnFail: { age: 3600, count: 1000 }
-        }
+        })
       );
 
       logger.info("Delivery timeout scheduled", { reservationId: id });

@@ -34,6 +34,7 @@ const {
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
 } = require("./realtime.service");
+const { jobOptions } = require("../utils/queueOptions");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
@@ -1110,13 +1111,9 @@ async function publishSideEffects(sideEffects, action = "payment_changed") {
         refundQueue.add(
           "refund-payment",
           { reservationId },
-          {
+          jobOptions("critical", {
             jobId: `refund-${reservationId}`,
-            attempts: 5,
-            backoff: { type: "exponential", delay: 3000 },
-            removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-            removeOnFail: { age: 14 * 24 * 60 * 60, count: 2000 },
-          }
+          })
         )
       )
     );

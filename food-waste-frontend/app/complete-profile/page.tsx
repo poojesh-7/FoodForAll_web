@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
-import type { UserRole } from "@backend/contracts/api-contracts";
+// import type { UserRole } from "@backend/contracts/api-contracts";
+type UserRole =
+  | "user"
+  | "volunteer"
+  | "ngo"
+  | "provider"
+  | "admin";
 
 type CompleteProfileForm = {
   name: string;

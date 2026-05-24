@@ -32,6 +32,8 @@ pnpm-debug.log*
 # ======================
 .env*
 dev.env
+!.env.production.example
+.env.production
 
 # ======================
 # OS / System

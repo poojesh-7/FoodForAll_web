@@ -17,9 +17,27 @@ Each environment must use separate `DATABASE_URL`, `REDIS_URL`, `QUEUE_PREFIX`, 
 2. Build images with `docker compose -f docker-compose.production.yml build`.
 3. Apply migrations with the `migrate` service.
 4. Start `api`, `worker`, `frontend`, `redis`, `postgres`, `db-backup`, and `nginx`.
-5. Confirm `/health`, `/health/queues`, and `/health/payments`.
+5. Confirm `/nginx-health`, `/health`, `/health/queues`, and `/health/payments`.
 
 Production API and worker startup verify that every versioned migration has been applied. Runtime schema mutation is disabled in production.
+
+## Reverse Proxy And HTTPS
+
+Nginx is the production edge for frontend traffic, `/api/`, `/socket.io/`,
+Cashfree webhooks, static assets, and health checks. The production compose file
+keeps PostgreSQL, Redis, API, workers, and frontend on an internal Docker
+network; only Nginx publishes ports `80` and `443`.
+
+Use `PUBLIC_API_URL=https://<domain>/api/v1`,
+`FRONTEND_URL=https://<domain>`, `TRUST_PROXY_HOPS=1`,
+`COOKIE_SECURE=true`, and `COOKIE_SAME_SITE=none` for the standard same-origin
+production deployment. Nginx overwrites forwarded IP headers at the edge so
+Express logs, secure cookies, and Redis-backed rate limiting see the trusted
+client address.
+
+The full Nginx runbook, certificate layout, Cloudflare notes, route map,
+websocket validation, and Cashfree webhook notes live in
+[`docs/operations/nginx-production.md`](./nginx-production.md).
 
 ## Secrets
 

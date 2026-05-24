@@ -20,7 +20,7 @@
     ],
     "paths": {
       "@/*": ["./*"],
-      "@backend/*": ["../Food_waste_backend/*"]
+      "@contracts/*": ["./contracts/*"]
     }
   },
   "include": [
@@ -29,8 +29,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts",
-    "../Food_waste_backend/contracts/api-contracts.ts"
+    "**/*.mts"
   ],
   "exclude": ["node_modules"]
 }

@@ -6,6 +6,7 @@ import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import { adminService } from "@/services/admin.service";
 import { useAdminStore } from "@/store/adminStore";
+import { FailedJob } from "../../../types/failedJob"
 
 function queueTotal(value: unknown) {
   const count = Number(value ?? 0);
@@ -169,7 +170,7 @@ export default function AdminQueuesPage() {
                 </h2>
               </div>
               <ul className="divide-y divide-zinc-100 text-sm">
-                {queue.failed_jobs?.slice(0, 5).map((job) => (
+                {queue.failed_jobs?.slice(0, 5).map((job:any) => (
                   <li key={String(job.id)} className="px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-medium text-zinc-950">

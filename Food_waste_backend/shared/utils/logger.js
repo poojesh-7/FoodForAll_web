@@ -1,16 +1,35 @@
-const SENSITIVE_KEY_PATTERN =
-  /(password|token|secret|authorization|cookie|otp|pickup_code|receive_code|verification_code|session|signature|payment_session|payment_session_id|payment_details|card|cvv|upi|bank|payload)/i;
-
-const MAX_STRING_LENGTH = 500;
-const MAX_DEPTH = 5;
+const pino = require("pino");
 const {
   EMPTY_CONTEXT,
   getContext,
   normalizeContext,
 } = require("./requestContext");
 
+const SENSITIVE_KEY_PATTERN =
+  /(password|token|secret|authorization|cookie|otp|pickup_code|receive_code|verification_code|session|signature|payment_session|payment_session_id|payment_details|card|cvv|upi|bank|payload)/i;
+
+const MAX_STRING_LENGTH = 500;
+const MAX_DEPTH = 5;
+
 function isProduction() {
   return process.env.NODE_ENV === "production";
+}
+
+let baseLogger;
+
+function getBaseLogger() {
+  if (!baseLogger) {
+    baseLogger = pino({
+      base: {
+        service: process.env.SERVICE_NAME || "food_waste_backend",
+      },
+      level: process.env.LOG_LEVEL || (isProduction() ? "info" : "debug"),
+      messageKey: "message",
+      timestamp: pino.stdTimeFunctions.isoTime,
+    });
+  }
+
+  return baseLogger;
 }
 
 function redact(value, depth = 0) {
@@ -63,69 +82,42 @@ function serializeError(err) {
   return redact(serialized, 1);
 }
 
-function buildEntry(level, message, meta) {
+function buildFields(meta) {
   const normalizedMeta = redact(meta || {});
+  const currentContext = getContext();
   const context = normalizeContext({
-    ...getContext(),
+    ...currentContext,
     ...(normalizedMeta.context || {}),
-    requestId: normalizedMeta.requestId ?? getContext().requestId,
-    userId: normalizedMeta.userId ?? getContext().userId,
-    role: normalizedMeta.role ?? getContext().role,
-    reservationId: normalizedMeta.reservationId ?? getContext().reservationId,
+    requestId: normalizedMeta.requestId ?? currentContext.requestId,
+    userId: normalizedMeta.userId ?? currentContext.userId,
+    role: normalizedMeta.role ?? currentContext.role,
+    reservationId: normalizedMeta.reservationId ?? currentContext.reservationId,
     paymentSessionId:
-      normalizedMeta.paymentSessionId ?? getContext().paymentSessionId,
-    queueJobId: normalizedMeta.queueJobId ?? getContext().queueJobId,
-    workerName: normalizedMeta.workerName ?? getContext().workerName,
+      normalizedMeta.paymentSessionId ?? currentContext.paymentSessionId,
+    queueJobId: normalizedMeta.queueJobId ?? currentContext.queueJobId,
+    workerName: normalizedMeta.workerName ?? currentContext.workerName,
   });
 
-  const entry = {
-    level,
-    message,
-    timestamp: new Date().toISOString(),
+  const fields = {
     environment: process.env.NODE_ENV || "development",
+    appEnv: process.env.APP_ENV,
     ...EMPTY_CONTEXT,
     ...context,
     ...normalizedMeta,
   };
 
-  delete entry.context;
-  return entry;
+  delete fields.context;
+  return fields;
 }
 
 function write(level, message, meta) {
-  const entry = buildEntry(level, message, meta);
-
-  if (isProduction()) {
-    const line = JSON.stringify(entry);
-    if (level === "error") return console.error(line);
-    if (level === "warn") return console.warn(line);
-    return console.log(line);
-  }
-
-  const metaForDev = { ...entry };
-  delete metaForDev.level;
-  delete metaForDev.message;
-  delete metaForDev.timestamp;
-  delete metaForDev.environment;
-
-  const hasMeta = Object.keys(metaForDev).length > 0;
-  const prefix = `[${entry.timestamp}] ${level.toUpperCase()}: ${message}`;
-
-  if (level === "error") {
-    return hasMeta ? console.error(prefix, metaForDev) : console.error(prefix);
-  }
-
-  if (level === "warn") {
-    return hasMeta ? console.warn(prefix, metaForDev) : console.warn(prefix);
-  }
-
-  return hasMeta ? console.log(prefix, metaForDev) : console.log(prefix);
+  const logger = getBaseLogger();
+  const log = logger[level] ? logger[level].bind(logger) : logger.info.bind(logger);
+  log(buildFields(meta), message);
 }
 
 module.exports = {
-  debug: (message, meta) => {
-    if (!isProduction()) write("debug", message, meta);
-  },
+  debug: (message, meta) => write("debug", message, meta),
   error: (message, meta) => write("error", message, meta),
   info: (message, meta) => write("info", message, meta),
   payment: (message, meta) => write("info", message, { eventCategory: "payment", ...meta }),
@@ -135,9 +127,7 @@ module.exports = {
   serializeError,
   warn: (message, meta) => write("warn", message, meta),
   withContext: (context) => ({
-    debug: (message, meta) => {
-      if (!isProduction()) write("debug", message, { ...meta, context });
-    },
+    debug: (message, meta) => write("debug", message, { ...meta, context }),
     error: (message, meta) => write("error", message, { ...meta, context }),
     info: (message, meta) => write("info", message, { ...meta, context }),
     payment: (message, meta) =>

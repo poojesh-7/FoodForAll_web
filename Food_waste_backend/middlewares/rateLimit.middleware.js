@@ -281,6 +281,25 @@ const adminActionLimiter = createRateLimiter({
   ],
 });
 
+const paymentLimiter = createRateLimiter({
+  name: "payment",
+  message: "Too many payment requests. Please wait before trying again.",
+  code: "PAYMENT_RATE_LIMITED",
+  rules: [
+    { name: "payment-user-10m", limit: 20, windowMs: 10 * 60 * 1000, keyGenerator: byUserOrIp },
+    { name: "payment-ip-10m", limit: 80, windowMs: 10 * 60 * 1000, keyGenerator: byIp },
+  ],
+});
+
+const paymentWebhookLimiter = createRateLimiter({
+  name: "payment-webhook",
+  message: "Too many payment webhook requests.",
+  code: "PAYMENT_WEBHOOK_RATE_LIMITED",
+  rules: [
+    { name: "payment-webhook-ip-minute", limit: 120, windowMs: 60 * 1000, keyGenerator: byIp },
+  ],
+});
+
 module.exports = {
   adminActionLimiter,
   authLimiter,
@@ -293,6 +312,8 @@ module.exports = {
   ngoRequestLimiter,
   otpSendLimiter,
   otpVerifyLimiter,
+  paymentLimiter,
+  paymentWebhookLimiter,
   registrationLimiter,
   reportLimiter,
   reservationCreateLimiter,

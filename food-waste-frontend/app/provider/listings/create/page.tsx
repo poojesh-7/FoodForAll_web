@@ -6,6 +6,7 @@ import FoodListingForm from "@/components/FoodListingForm";
 import { foodService } from "@/services/food.service";
 import {
   getFoodValidationError,
+  sanitizeFoodFormValues,
   type FoodFormValues,
 } from "@/lib/food";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -30,7 +31,8 @@ export default function CreateProviderListingPage() {
   const submit = async () => {
     if (loading) return;
 
-    const validationError = getFoodValidationError(values);
+    const sanitizedValues = sanitizeFoodFormValues(values);
+    const validationError = getFoodValidationError(sanitizedValues);
     if (validationError) {
       setError(validationError);
       return;
@@ -41,13 +43,13 @@ export default function CreateProviderListingPage() {
       setError("");
 
       await foodService.createFood({
-        title: values.title.trim(),
-        description: values.description.trim() || null,
-        quantity: Number(values.quantity),
-        price: values.is_free ? 0 : Number(values.price),
-        is_free: values.is_free,
-        pickup_start_time: new Date(values.pickup_start_time).toISOString(),
-        pickup_end_time: new Date(values.pickup_end_time).toISOString(),
+        title: sanitizedValues.title,
+        description: sanitizedValues.description || null,
+        quantity: Number(sanitizedValues.quantity),
+        price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
+        is_free: sanitizedValues.is_free,
+        pickup_start_time: new Date(sanitizedValues.pickup_start_time).toISOString(),
+        pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),
       });
 
       router.push("/provider/listings");

@@ -1,4 +1,8 @@
+const compression = require("compression");
 const helmet = require("helmet");
+const hpp = require("hpp");
+const mongoSanitize = require("express-mongo-sanitize");
+const logger = require("../shared/utils/logger");
 
 const LOCAL_DEVELOPMENT_ORIGINS = [
   "http://localhost:3000",
@@ -97,9 +101,53 @@ function buildHelmetMiddleware() {
   });
 }
 
+function buildCompressionMiddleware() {
+  return compression({
+    filter(req, res) {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
+    },
+    threshold: 1024,
+  });
+}
+
+function buildHppMiddleware() {
+  return hpp({
+    whitelist: [
+      "ids",
+      "listing_ids",
+      "reservation_ids",
+      "statuses",
+    ],
+  });
+}
+
+function sanitizeObjectInPlace(target) {
+  if (!target || typeof target !== "object") return;
+  mongoSanitize.sanitize(target, { replaceWith: "_" });
+}
+
+function sanitizeQueryAndParams(req, res, next) {
+  try {
+    sanitizeObjectInPlace(req.query);
+    sanitizeObjectInPlace(req.params);
+  } catch (err) {
+    logger.security("Request query sanitization failed", {
+      err,
+      path: req.originalUrl,
+      method: req.method,
+    });
+  }
+
+  next();
+}
+
 module.exports = {
+  buildCompressionMiddleware,
   buildCorsOptions,
   buildHelmetMiddleware,
+  buildHppMiddleware,
   buildSocketCorsOptions,
   getAllowedOrigins,
+  sanitizeQueryAndParams,
 };

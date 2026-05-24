@@ -8,6 +8,7 @@ const {
 const {
   ngoBulkReserveLimiter,
   ngoRequestLimiter,
+  paymentLimiter,
   registrationLimiter,
 } = require("../middlewares/rateLimit.middleware");
 const {
@@ -26,6 +27,7 @@ router.post(
   "/bulk-reserve",
   authMiddleware,
   ngoBulkReserveLimiter,
+  paymentLimiter,
   requireVerifiedNGO,
   reservationRestrictionMiddleware,
   ngoCtrl.bulkReserve,
@@ -90,6 +92,7 @@ router.put(
   "/requests/:requestID/accept",
   authMiddleware,
   ngoRequestLimiter,
+  paymentLimiter,
   requireVerifiedNGO,
   reservationRestrictionMiddleware,
   ngoCtrl.acceptNGORequest,

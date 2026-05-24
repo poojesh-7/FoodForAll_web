@@ -10,6 +10,10 @@ const { publishListingUpdated } = require("../shared/services/realtime.service")
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const {
+  sanitizeOptionalText,
+  sanitizePlainText,
+} = require("../shared/utils/sanitize");
+const {
   isIntegerInRange,
   isNumberInRange,
   isProvided,
@@ -104,8 +108,14 @@ exports.registerRestaurant = async (req, res) => {
       });
     }
 
-    const normalizedName = String(restaurant_name).trim();
+    const normalizedName = sanitizePlainText(restaurant_name, { maxLength: 160 });
     const normalizedFssai = String(fssai_number).trim();
+
+    if (!isProvided(normalizedName)) {
+      return res.status(400).json({
+        error: "Restaurant name is required",
+      });
+    }
 
     // 🔹 Check if restaurant already exists for this user
     const existingRestaurant = await pool.query(
@@ -312,8 +322,11 @@ exports.createFood = async (req, res) => {
     } = req.body;
 
     // 🔹 Normalize
-    title = title?.trim();
-    description = description?.trim() || null;
+    title = sanitizePlainText(title, { maxLength: 160 });
+    description = sanitizeOptionalText(description, {
+      maxLength: 2000,
+      preserveNewlines: true,
+    });
     quantity = Number(quantity);
     price = Number(price) || 0;
     is_free = is_free === true || is_free === "true";
@@ -539,10 +552,15 @@ exports.updateFood = async (req, res) => {
 
     const { title, description, price, is_free, quantity, pickup_end_time } =
       req.body;
+    const sanitizedTitle = sanitizePlainText(title, { maxLength: 160 });
+    const sanitizedDescription = sanitizeOptionalText(description, {
+      maxLength: 2000,
+      preserveNewlines: true,
+    });
     const endTime = new Date(pickup_end_time).getTime();
     const originalStartTime = new Date(current.pickup_start_time).getTime();
 
-    if (!isProvided(title) || !isProvided(pickup_end_time)) {
+    if (!isProvided(sanitizedTitle) || !isProvided(pickup_end_time)) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Title and pickup end time are required" });
     }
@@ -628,8 +646,8 @@ exports.updateFood = async (req, res) => {
        WHERE id=$8
        RETURNING *`,
       [
-        String(title).trim(),
-        description,
+        sanitizedTitle,
+        sanitizedDescription,
         nextQuantity,
         nextRemaining,
         nextPrice,

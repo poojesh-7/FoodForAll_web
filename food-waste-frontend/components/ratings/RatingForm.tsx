@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useState } from "react";
+import { sanitizeTextInput } from "@/lib/sanitize";
 
 type RatingFormProps = {
   onSubmit: (rating: number, review: string) => Promise<void>;
@@ -34,7 +35,10 @@ export default function RatingForm({
     try {
       setSubmitting(true);
       setError("");
-      await onSubmit(rating, review.trim());
+      await onSubmit(
+        rating,
+        sanitizeTextInput(review, { maxLength: 500, preserveNewlines: true })
+      );
       setReview("");
       setRating(null);
     } finally {

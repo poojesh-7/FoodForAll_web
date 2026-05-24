@@ -15,9 +15,12 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const {
+  buildCompressionMiddleware,
   buildCorsOptions,
   buildHelmetMiddleware,
+  buildHppMiddleware,
   buildSocketCorsOptions,
+  sanitizeQueryAndParams,
 } = require("../../middlewares/security.middleware");
 const {
   errorHandler,
@@ -62,9 +65,13 @@ const app = express();
 const server = http.createServer(app);
 const paymentRoutes = require("../../routes/payment.routes");
 const corsOptions = buildCorsOptions();
+const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "256kb";
+const urlencodedBodyLimit = process.env.URLENCODED_BODY_LIMIT || "64kb";
 
-if (process.env.NODE_ENV === "production") {
-  app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+if (isProductionLike(process.env.APP_ENV)) {
+  app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1));
 }
 
 const io = new Server(server, {
@@ -77,7 +84,10 @@ const cookie = require("cookie");
 
 app.use(cookieParser());
 app.use(buildHelmetMiddleware());
+app.use(buildCompressionMiddleware());
 app.use(cors(corsOptions));
+app.use(buildHppMiddleware());
+app.use(sanitizeQueryAndParams);
 app.use(requestContextMiddleware);
 app.use("/api/v1", globalLimiter);
 app.use("/health", healthRoutes);
@@ -138,7 +148,16 @@ io.use((socket, next) => {
 
 app.use("/api/v1/payments", paymentRoutes);
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: jsonBodyLimit,
+  strict: true,
+  type: ["application/json", "application/*+json"],
+}));
+app.use(express.urlencoded({
+  extended: false,
+  limit: urlencodedBodyLimit,
+  parameterLimit: 100,
+}));
 app.set("io", io);
 
 /*

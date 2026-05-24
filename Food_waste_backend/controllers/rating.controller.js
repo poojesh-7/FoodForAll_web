@@ -1,5 +1,6 @@
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
+const { sanitizeOptionalText } = require("../shared/utils/sanitize");
 const { isProvided, isValidId, toNumber } = require("../utils/validation");
 
 const REVIEW_MAX_LENGTH = 500;
@@ -23,18 +24,6 @@ function parseRating(value) {
 
 function isUuid(value) {
   return UUID_PATTERN.test(String(value));
-}
-
-function sanitizeReview(value) {
-  if (!isProvided(value)) return null;
-
-  const normalized = String(value)
-    .replace(/\r\n/g, "\n")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .trim();
-
-  if (!normalized) return null;
-  return normalized.slice(0, REVIEW_MAX_LENGTH);
 }
 
 function isReservationReviewEligible(reservation) {
@@ -70,7 +59,12 @@ exports.createRating = async (req, res) => {
     return res.status(400).json({ error: "Rating must be an integer between 1 and 5" });
   }
 
-  const sanitizedReview = sanitizeReview(review);
+  const sanitizedReview = isProvided(review)
+    ? sanitizeOptionalText(review, {
+        maxLength: REVIEW_MAX_LENGTH,
+        preserveNewlines: true,
+      })
+    : null;
   const client = await pool.connect();
 
   try {

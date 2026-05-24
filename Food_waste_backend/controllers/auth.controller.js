@@ -80,14 +80,23 @@ async function ensureAuthHardeningSchema() {
 }
 
 function isProduction() {
-  return process.env.NODE_ENV === "production";
+  return process.env.APP_ENV === "production" || process.env.NODE_ENV === "production";
+}
+
+function getSameSiteMode() {
+  const configured = String(process.env.COOKIE_SAME_SITE || "").toLowerCase();
+  if (["lax", "strict", "none"].includes(configured)) return configured;
+  return isProduction() ? "none" : "lax";
 }
 
 function getCookieOptions(maxAge) {
+  const sameSite = getSameSiteMode();
+  const secure = isProduction() || process.env.COOKIE_SECURE === "true" || sameSite === "none";
+
   return {
     httpOnly: true,
-    secure: isProduction(),
-    sameSite: isProduction() ? "none" : "lax",
+    secure,
+    sameSite,
     path: "/",
     maxAge,
   };

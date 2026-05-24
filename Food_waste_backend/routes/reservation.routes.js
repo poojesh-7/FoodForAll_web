@@ -2,6 +2,7 @@ const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const reservationCtrl = require("../controllers/reservation.controller");
 const {
+  paymentLimiter,
   reportLimiter,
   reservationCreateLimiter,
 } = require("../middlewares/rateLimit.middleware");
@@ -18,6 +19,7 @@ router.post(
   "/",
   reservationCreateLimiter,
   authMiddleware,
+  paymentLimiter,
   requireUser,
   reservationRestrictionMiddleware,
   reservationCtrl.createReservation

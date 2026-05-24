@@ -5,6 +5,10 @@ const { recordViolation } = require("./restriction.service");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
 const {
+  sanitizeOptionalText,
+  sanitizePlainText,
+} = require("../utils/sanitize");
+const {
   recordAlert,
   recordOperationalEvent,
 } = require("./observability.service");
@@ -25,7 +29,7 @@ const DUPLICATE_REPORT_MESSAGE =
 const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 function normalizeReason(reason) {
-  return String(reason || "").trim().toLowerCase();
+  return sanitizePlainText(reason, { maxLength: 80 }).toLowerCase();
 }
 
 async function createProviderReport({
@@ -38,6 +42,10 @@ async function createProviderReport({
 }) {
   await ensureRestrictionSchema(client);
   const normalizedReason = normalizeReason(reason);
+  const sanitizedDescription = sanitizeOptionalText(description, {
+    maxLength: 1000,
+    preserveNewlines: true,
+  });
 
   if (!REPORT_REASONS.has(normalizedReason)) {
     const error = new Error("Invalid report reason");
@@ -121,7 +129,7 @@ async function createProviderReport({
         reportedBy,
         reservationId,
         normalizedReason,
-        String(description || "").trim().slice(0, 1000) || null,
+        sanitizedDescription,
       ]
     );
 

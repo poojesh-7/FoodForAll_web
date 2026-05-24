@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { reservationService } from "@/services/reservation.service";
+import { sanitizeOptionalTextInput } from "@/lib/sanitize";
 import type { DbId, ReportProviderRequest } from "@backend/contracts/api-contracts";
 
 const reportReasonOptions: {
@@ -51,7 +52,10 @@ export default function ProviderReportForm({
       onSuccess?.("");
       await reservationService.reportProvider(reservationId, {
         reason,
-        description: description.trim() || null,
+        description: sanitizeOptionalTextInput(description, {
+          maxLength: 1000,
+          preserveNewlines: true,
+        }),
       });
       const message = "Provider report submitted for moderation.";
       setDescription("");

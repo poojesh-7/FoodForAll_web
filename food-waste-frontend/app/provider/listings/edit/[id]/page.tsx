@@ -7,6 +7,7 @@ import { foodService } from "@/services/food.service";
 import {
   formatFoodDate,
   getFoodValidationError,
+  sanitizeFoodFormValues,
   toDateTimeLocal,
   type FoodFormValues,
 } from "@/lib/food";
@@ -74,7 +75,8 @@ export default function EditProviderListingPage() {
   const submit = async () => {
     if (loading) return;
 
-    const validationError = getFoodValidationError(values, {
+    const sanitizedValues = sanitizeFoodFormValues(values);
+    const validationError = getFoodValidationError(sanitizedValues, {
       includeQuantity: true,
       includePickupStart: false,
     });
@@ -88,12 +90,12 @@ export default function EditProviderListingPage() {
       setError("");
 
       await foodService.updateFood(id, {
-        title: values.title.trim(),
-        description: values.description.trim() || null,
-        quantity: Number(values.quantity),
-        price: values.is_free ? 0 : Number(values.price),
-        is_free: values.is_free,
-        pickup_end_time: new Date(values.pickup_end_time).toISOString(),
+        title: sanitizedValues.title,
+        description: sanitizedValues.description || null,
+        quantity: Number(sanitizedValues.quantity),
+        price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
+        is_free: sanitizedValues.is_free,
+        pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),
       });
 
       router.push("/provider/listings");

@@ -42,6 +42,10 @@ function errorHandler(err, req, res, next) {
     return sendError(res, 400, "Invalid JSON body");
   }
 
+  if (err?.type === "entity.too.large") {
+    return sendError(res, 413, "Request body is too large");
+  }
+
   if (err?.name === "MulterError") {
     const message =
       err.code === "LIMIT_FILE_SIZE"

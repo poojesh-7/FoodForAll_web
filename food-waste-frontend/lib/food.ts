@@ -1,4 +1,5 @@
 import type { FoodListingRow, NearbyFoodListing } from "@backend/contracts/api-contracts";
+import { sanitizeTextInput } from "./sanitize";
 
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;
 
@@ -73,6 +74,17 @@ export function getFoodValidationError(
   }
 
   return null;
+}
+
+export function sanitizeFoodFormValues(values: FoodFormValues): FoodFormValues {
+  return {
+    ...values,
+    title: sanitizeTextInput(values.title, { maxLength: 160 }),
+    description: sanitizeTextInput(values.description, {
+      maxLength: 2000,
+      preserveNewlines: true,
+    }),
+  };
 }
 
 export function toDateTimeLocal(value?: string | number | null) {

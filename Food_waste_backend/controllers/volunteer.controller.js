@@ -528,6 +528,13 @@ exports.startTask = async (req, res) => {
 
     const reservation = reservationResult.rows[0];
 
+    if (
+      reservation.status !== "reserved" ||
+      !["paid", "not_required"].includes(reservation.payment_status)
+    ) {
+      throw withStatus("Task is not ready for volunteer pickup", 409);
+    }
+
     if (reservation.task_status !== "pending")
       throw withStatus("Task already taken", 409);
 
@@ -608,6 +615,15 @@ exports.startTask = async (req, res) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+
+    if (
+      err.code === "23505" ||
+      err.constraint === "unique_volunteer_active_task"
+    ) {
+      return res.status(409).json({
+        error: "Finish current task before taking another",
+      });
+    }
 
     res.status(err.statusCode || 400).json({
       error: err.message,
@@ -768,6 +784,9 @@ exports.completeTask = async (req, res) => {
 
     if (reservation.assigned_volunteer_id !== volunteerId)
       throw withStatus("Not assigned to you", 403);
+
+    if (!["paid", "not_required"].includes(reservation.payment_status))
+      throw withStatus("Reservation payment is not finalized", 409);
 
     if (reservation.status !== "reserved")
       throw withStatus("Reservation already completed", 409);

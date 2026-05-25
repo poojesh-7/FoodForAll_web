@@ -26,8 +26,13 @@ const {
 } = require("./reservationPaymentContext.service");
 const {
   reserveListingStock,
-  restoreListingStock,
 } = require("./inventory.service");
+const {
+  lockPaymentGraphByOrderId,
+  lockPaymentById,
+  lockReservationGraph,
+  restoreReservationStockIfHeld,
+} = require("./reservationConsistency.service");
 const {
   getReservationSnapshot,
   publishListingUpdated,
@@ -36,6 +41,7 @@ const {
   publishTaskAvailabilityUpdated,
 } = require("./realtime.service");
 const { jobOptions } = require("../utils/queueOptions");
+const { withTransaction } = require("../utils/transaction");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
@@ -174,6 +180,59 @@ async function ensurePaymentHardeningSchema(client = pool) {
       `);
 
       await client.query(`
+        DO $$
+        DECLARE
+          target record;
+        BEGIN
+          FOR target IN
+            SELECT *
+            FROM (VALUES
+              ('cashfree_webhook_events', 'idempotency_key'),
+              ('cashfree_webhook_events', 'event_type'),
+              ('cashfree_webhook_events', 'order_id'),
+              ('cashfree_webhook_events', 'cf_payment_id'),
+              ('cashfree_webhook_events', 'refund_id'),
+              ('cashfree_webhook_events', 'status'),
+              ('cashfree_webhook_events', 'payload_hash'),
+              ('cashfree_webhook_events', 'signature'),
+              ('cashfree_webhook_events', 'webhook_timestamp'),
+              ('payments', 'order_id'),
+              ('payments', 'payment_session_id'),
+              ('payments', 'transaction_id'),
+              ('payments', 'payment_method'),
+              ('payments', 'refund_id'),
+              ('payments', 'refund_status'),
+              ('payments', 'gateway_status'),
+              ('payments', 'last_webhook_event_key'),
+              ('payments', 'reconciliation_status'),
+              ('payments', 'reliability_deposit_status'),
+              ('payments', 'reliability_deposit_refund_id'),
+              ('reservations', 'payment_status'),
+              ('reservations', 'status'),
+              ('reservations', 'task_status'),
+              ('reservations', 'pickup_type')
+            ) AS columns_to_widen(table_name, column_name)
+          LOOP
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = current_schema()
+              AND table_name = target.table_name
+              AND column_name = target.column_name
+              AND data_type = 'character varying'
+              AND (character_maximum_length IS NULL OR character_maximum_length < 128)
+            ) THEN
+              EXECUTE format(
+                'ALTER TABLE %I ALTER COLUMN %I TYPE TEXT',
+                target.table_name,
+                target.column_name
+              );
+            END IF;
+          END LOOP;
+        END $$;
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_cashfree_webhook_events_order
         ON cashfree_webhook_events (order_id, received_at DESC)
       `);
@@ -189,14 +248,29 @@ async function ensurePaymentHardeningSchema(client = pool) {
       `);
 
       await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_payments_order_reservation_lock
+        ON payments (order_id, reservation_id, id)
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_payments_reservation
         ON payments (reservation_id)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_payments_reservation_status_updated
+        ON payments (reservation_id, status, updated_at DESC)
       `);
 
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_reservations_pending_payment
         ON reservations (payment_status, status, payment_expires_at)
         WHERE status='payment_pending' AND payment_status='pending'
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_reservations_listing_payment_state
+        ON reservations (listing_id, status, payment_status, id)
       `);
 
       await client.query(`
@@ -463,19 +537,11 @@ async function markWebhookEventFailed(event, err) {
 }
 
 async function restorePendingReservation(client, reservationId, paymentStatus) {
-  const reservationResult = await client.query(
-    `
-    SELECT *
-    FROM reservations
-    WHERE id=$1
-    FOR UPDATE
-    `,
-    [reservationId]
-  );
+  const { reservation, payment } = await lockReservationGraph(client, reservationId, {
+    lockPayments: true,
+  });
 
-  if (!reservationResult.rows.length) return null;
-
-  const reservation = reservationResult.rows[0];
+  if (!reservation) return null;
 
   if (
     reservation.status !== "payment_pending" ||
@@ -484,18 +550,30 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
     return null;
   }
 
-  if (hasReservedStock(reservation)) {
-    await restoreListingStock(client, {
-      listingId: reservation.listing_id,
-      quantity: reservation.quantity_reserved,
+  if (
+    ["paid", "success", "refund_pending", "refunded"].includes(
+      String(payment?.status || "").toLowerCase()
+    )
+  ) {
+    logger.payment("Skipped stale payment expiry because payment is already terminal", {
+      reservationId,
+      paymentId: payment?.id,
+      paymentStatus: payment?.status,
     });
+    return null;
   }
+
+  await restoreReservationStockIfHeld(client, reservation, {
+    reason: `payment_${paymentStatus || "terminal"}`,
+  });
+
+  const reservationStatus =
+    paymentStatus === "expired" ? "expired_payment" : "payment_failed";
 
   await client.query(
     `
     UPDATE payments
-    SET reservation_id=NULL,
-        status=$2,
+    SET status=$2,
         gateway_status=$2,
         reconciliation_status='terminal',
         last_reconciled_at=NOW(),
@@ -508,12 +586,16 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
 
   await client.query(
     `
-    DELETE FROM reservations
+    UPDATE reservations
+    SET status=$2,
+        payment_status=$3,
+        payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+          jsonb_build_object('payment_terminal_at', NOW(), 'payment_terminal_source', 'gateway_reconciliation')
     WHERE id=$1
     AND status='payment_pending'
     AND payment_status='pending'
     `,
-    [reservationId]
+    [reservationId, reservationStatus, paymentStatus]
   );
 
   logger.info("Pending reservation restored after payment terminal state", {
@@ -719,39 +801,72 @@ async function activatePendingReservation(client, reservation) {
 }
 
 async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffects) {
-  const paymentResult = await client.query(
-    `
-    SELECT *
-    FROM payments
-    WHERE order_id=$1
-    FOR UPDATE
-    `,
-    [orderId]
+  const { payments, reservationsById } = await lockPaymentGraphByOrderId(
+    client,
+    orderId
   );
 
-  if (!paymentResult.rows.length) return;
+  if (!payments.length) return;
 
-  for (const payment of paymentResult.rows) {
+  for (const payment of payments) {
     if (payment.status === "refunded") continue;
 
-    const reservationResult = await client.query(
-      `
-      SELECT *
-      FROM reservations
-      WHERE id=$1
-      FOR UPDATE
-      `,
-      [payment.reservation_id]
-    );
-    const reservation = reservationResult.rows[0];
+    const reservation = reservationsById.get(String(payment.reservation_id));
 
-    if (!reservation) continue;
+    if (!reservation) {
+      await client.query(
+        `
+        UPDATE payments
+        SET status='paid',
+            gateway_status='PAID',
+            payment_method=$1,
+            transaction_id=COALESCE(transaction_id, $2),
+            reconciliation_status='orphan_paid_missing_reservation',
+            last_reconciled_at=NOW(),
+            updated_at=NOW()
+        WHERE id=$3
+        AND status <> 'refunded'
+        `,
+        [
+          serializePaymentMethod(paymentDetails?.payment_method),
+          paymentDetails?.cf_payment_id || null,
+          payment.id,
+        ]
+      );
+      logger.error("Paid payment has no reservation to finalize", {
+        paymentId: payment.id,
+        orderId,
+        reservationId: payment.reservation_id,
+      });
+      void recordAlert({
+        alertKey: "payment:orphan_paid_missing_reservation",
+        category: "payment",
+        severity: "error",
+        message: "Paid payment missing reservation",
+        metadata: {
+          paymentId: payment.id,
+          orderId,
+          reservationId: payment.reservation_id,
+        },
+      });
+      continue;
+    }
     if (reservation.payment_status === "refunded") continue;
 
+    const alreadyFinalPaid =
+      payment.status === "paid" && reservation.payment_status === "paid";
+
     if (
-      reservation.status === "cancelled" ||
-      refundedPaymentStates.has(payment.status) ||
-      refundedPaymentStates.has(reservation.payment_status)
+      !alreadyFinalPaid &&
+      ([
+        "cancelled",
+        "cancelled_before_confirmation",
+        "expired_payment",
+        "payment_failed",
+        "failed",
+      ].includes(reservation.status) ||
+        refundedPaymentStates.has(payment.status) ||
+        refundedPaymentStates.has(reservation.payment_status))
     ) {
       if (payment.status !== "refund_pending") {
         await client.query(
@@ -772,7 +887,12 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
       await client.query(
         `
         UPDATE reservations
-        SET payment_status='refund_pending'
+        SET status = CASE
+              WHEN status IN ('cancelled_before_confirmation', 'expired_payment', 'payment_failed', 'failed')
+              THEN 'cancelled'
+              ELSE status
+            END,
+            payment_status='refund_pending'
         WHERE id=$1
         AND payment_status NOT IN ('refunded', 'refund_failed')
         `,
@@ -784,7 +904,10 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
       continue;
     }
 
-    if (payment.status === "paid" && reservation.payment_status === "paid") {
+    if (
+      alreadyFinalPaid &&
+      reservation.status !== "payment_pending"
+    ) {
       continue;
     }
 
@@ -809,7 +932,41 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
 
     let activated = null;
     try {
-      activated = await activatePendingReservation(client, reservation);
+      if (
+        reservation.status === "payment_pending" &&
+        reservation.payment_status === "pending"
+      ) {
+        activated = await activatePendingReservation(client, reservation);
+      } else if (
+        reservation.status === "reserved" &&
+        reservation.payment_status === "paid"
+      ) {
+        activated = reservation;
+      } else if (
+        reservation.status === "reserved" &&
+        reservation.payment_status !== "paid"
+      ) {
+        const repaired = await client.query(
+          `
+          UPDATE reservations
+          SET payment_status='paid',
+              pickup_code=COALESCE(pickup_code, $2),
+              receive_code=COALESCE(receive_code, $3),
+              payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+                jsonb_build_object('paid_recovered_at', NOW(), 'paid_recovery_source', 'payment_reconciliation')
+          WHERE id=$1
+          AND status='reserved'
+          AND payment_status <> 'paid'
+          RETURNING *
+          `,
+          [reservation.id, generatePickupCode(), generatePickupCode()]
+        );
+        activated = repaired.rows[0] || null;
+      } else {
+        throw new Error(
+          `Reservation state cannot be finalized from ${reservation.status}/${reservation.payment_status}`
+        );
+      }
     } catch (err) {
       logger.error("Paid reservation activation failed", {
         err,
@@ -847,9 +1004,46 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
       continue;
     }
 
+    if (!activated) {
+      logger.error("Paid reservation activation produced no state transition", {
+        reservationId: payment.reservation_id,
+        orderId,
+        reservationStatus: reservation.status,
+        reservationPaymentStatus: reservation.payment_status,
+      });
+      await client.query(
+        `
+        UPDATE payments
+        SET status='refund_pending',
+            refund_status='refund_pending',
+            reconciliation_status='activation_missing_refund_pending',
+            last_reconciled_at=NOW(),
+            updated_at=NOW()
+        WHERE id=$1
+        AND status <> 'refunded'
+        `,
+        [payment.id]
+      );
+      await client.query(
+        `
+        UPDATE reservations
+        SET status='cancelled',
+            payment_status='refund_pending'
+        WHERE id=$1
+        AND payment_status <> 'refunded'
+        `,
+        [payment.reservation_id]
+      );
+      sideEffects.refundReservationIds.push(payment.reservation_id);
+      sideEffects.changedReservationIds.add(payment.reservation_id);
+      continue;
+    }
+
     if (activated) {
       sideEffects.changedReservationIds.add(payment.reservation_id);
-      sideEffects.activatedReservationIds.add(payment.reservation_id);
+      if (reservation.status === "payment_pending") {
+        sideEffects.activatedReservationIds.add(payment.reservation_id);
+      }
       sideEffects.changedListingIds.add(reservation.listing_id);
       logger.info("Payment finalized reservation", {
         reservationId: payment.reservation_id,
@@ -862,17 +1056,9 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
 
 async function processFailedOrder(client, orderId, orderStatus, sideEffects) {
   const paymentStatus = normalizeFailedStatus(orderStatus);
-  const paymentResult = await client.query(
-    `
-    SELECT *
-    FROM payments
-    WHERE order_id=$1
-    FOR UPDATE
-    `,
-    [orderId]
-  );
+  const { payments } = await lockPaymentGraphByOrderId(client, orderId);
 
-  for (const payment of paymentResult.rows) {
+  for (const payment of payments) {
     if (
       ["paid", "success", "refunded", "refund_pending"].includes(payment.status)
     ) continue;
@@ -884,27 +1070,45 @@ async function processFailedOrder(client, orderId, orderStatus, sideEffects) {
     );
     if (restoredListingId) {
       sideEffects.changedListingIds.add(restoredListingId);
+      sideEffects.changedReservationIds.add(payment.reservation_id);
     }
   }
 }
 
 async function processRefundEvent(client, refund, sideEffects) {
-  const { refund_id, refund_status } = refund || {};
+  const { refund_id } = refund || {};
+  const refund_status = String(refund?.refund_status || "").toUpperCase();
   if (!refund_id) return;
 
-  const paymentResult = await client.query(
+  const paymentRef = await client.query(
     `
-    SELECT *
+    SELECT id, reservation_id
     FROM payments
     WHERE refund_id=$1 OR reliability_deposit_refund_id=$1
-    FOR UPDATE
+    ORDER BY id
+    LIMIT 1
     `,
     [refund_id]
   );
 
-  if (!paymentResult.rows.length) return;
+  if (!paymentRef.rows.length) return;
 
-  const payment = paymentResult.rows[0];
+  const ref = paymentRef.rows[0];
+  let payment = null;
+
+  if (ref.reservation_id) {
+    const locked = await lockReservationGraph(client, ref.reservation_id, {
+      lockPayments: true,
+    });
+    payment =
+      locked.payments.find((row) => String(row.id) === String(ref.id)) ||
+      locked.payment;
+  } else {
+    payment = await lockPaymentById(client, ref.id);
+  }
+
+  if (!payment) return;
+
   const isDepositRefund = payment.reliability_deposit_refund_id === refund_id;
 
   if (isDepositRefund) {
@@ -1128,10 +1332,12 @@ async function processCashfreePayload(client, body, sideEffects) {
   const orderId = data.order_id || data.order?.order_id || data.payment?.order_id;
 
   if (orderId) {
-    const orderStatus =
+    const orderStatus = String(
       data.order_status ||
-      data.payment_status ||
-      data.payment?.payment_status;
+        data.payment_status ||
+        data.payment?.payment_status ||
+        ""
+    ).toUpperCase();
     const paymentDetails = data.payment_details || data.payment || {};
 
     if (paidStatuses.has(orderStatus)) {
@@ -1181,35 +1387,62 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
     ...fields,
   };
   let processingReserved = false;
+  let duplicate = false;
   const sideEffects = createSideEffects();
-  const client = await pool.connect();
 
   try {
     if (await wasWebhookProcessed(idempotencyKey)) {
+      logger.payment("Cashfree webhook replay ignored from Redis idempotency cache", {
+        idempotencyKey,
+        orderId: fields.orderId,
+        refundId: fields.refundId,
+      });
       return { duplicate: true };
     }
 
     processingReserved = await reserveWebhookProcessing(idempotencyKey);
     if (!processingReserved) {
+      logger.payment("Concurrent Cashfree webhook replay ignored", {
+        idempotencyKey,
+        orderId: fields.orderId,
+        refundId: fields.refundId,
+      });
       return { duplicate: true };
     }
 
-    await client.query("BEGIN");
-    await ensurePaymentHardeningSchema(client);
+    await withTransaction(
+      pool,
+      async (client) => {
+        await ensurePaymentHardeningSchema(client);
 
-    const reservedEvent = await reserveWebhookEvent(client, eventRecord);
+        const reservedEvent = await reserveWebhookEvent(client, eventRecord);
 
-    if (!reservedEvent.shouldProcess) {
-      await client.query("COMMIT");
-      await markWebhookProcessedInRedis(idempotencyKey);
-      return { duplicate: true };
-    }
+        if (!reservedEvent.shouldProcess) {
+          duplicate = true;
+          return;
+        }
 
-    await processCashfreePayload(client, body, sideEffects);
-    await markWebhookEventProcessed(client, idempotencyKey);
-    await client.query("COMMIT");
+        await processCashfreePayload(client, body, sideEffects);
+        await markWebhookEventProcessed(client, idempotencyKey);
+      },
+      {
+        name: "cashfree_webhook",
+        maxAttempts: 4,
+        lockTimeoutMs: 2500,
+        statementTimeoutMs: 20000,
+      }
+    );
 
     await markWebhookProcessedInRedis(idempotencyKey);
+    if (duplicate) {
+      logger.payment("Cashfree webhook replay ignored from database idempotency log", {
+        idempotencyKey,
+        orderId: fields.orderId,
+        refundId: fields.refundId,
+      });
+      return { duplicate: true };
+    }
+
     await publishSideEffects(sideEffects);
 
     logger.payment("Cashfree webhook processed", {
@@ -1232,7 +1465,6 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
 
     return { duplicate: false };
   } catch (err) {
-    await client.query("ROLLBACK");
     void recordOperationalEvent({
       category: "payment",
       severity: "error",
@@ -1262,7 +1494,6 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
         logger.warn("Cashfree webhook lock cleanup failed", { err });
       });
     }
-    client.release();
   }
 }
 
@@ -1322,33 +1553,41 @@ async function fetchCashfreeOrderState(orderId) {
 async function reconcileOrder({ orderId, source = "manual" }) {
   const gateway = await fetchCashfreeOrderState(orderId);
   const sideEffects = createSideEffects();
-  const client = await pool.connect();
 
   try {
-    await client.query("BEGIN");
-    await ensurePaymentHardeningSchema(client);
+    await withTransaction(
+      pool,
+      async (client) => {
+        await ensurePaymentHardeningSchema(client);
 
-    if (paidStatuses.has(gateway.status)) {
-      await processPaidOrder(client, orderId, gateway.paymentDetails, sideEffects);
-    } else if (failedStatuses.has(gateway.status)) {
-      await processFailedOrder(client, orderId, gateway.status, sideEffects);
-    } else {
-      await client.query(
-        `
-        UPDATE payments
-        SET gateway_status=$2,
-            reconciliation_status='pending_gateway',
-            reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1,
-            last_reconciled_at=NOW(),
-            updated_at=NOW()
-        WHERE order_id=$1
-        AND status='pending'
-        `,
-        [orderId, gateway.status]
-      );
-    }
+        if (paidStatuses.has(gateway.status)) {
+          await processPaidOrder(client, orderId, gateway.paymentDetails, sideEffects);
+        } else if (failedStatuses.has(gateway.status)) {
+          await processFailedOrder(client, orderId, gateway.status, sideEffects);
+        } else {
+          await client.query(
+            `
+            UPDATE payments
+            SET gateway_status=$2,
+                reconciliation_status='pending_gateway',
+                reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1,
+                last_reconciled_at=NOW(),
+                updated_at=NOW()
+            WHERE order_id=$1
+            AND status='pending'
+            `,
+            [orderId, gateway.status]
+          );
+        }
+      },
+      {
+        name: `payment_reconcile:${source}`,
+        maxAttempts: 4,
+        lockTimeoutMs: 2500,
+        statementTimeoutMs: 20000,
+      }
+    );
 
-    await client.query("COMMIT");
     await publishSideEffects(sideEffects, "payment_reconciled");
 
     logger.payment("Payment order reconciled", {
@@ -1375,7 +1614,6 @@ async function reconcileOrder({ orderId, source = "manual" }) {
       changedReservations: sideEffects.changedReservationIds.size,
     };
   } catch (err) {
-    await client.query("ROLLBACK");
     logger.error("Payment order reconciliation failed", { err, orderId, source });
     void recordAlert({
       alertKey: "payment:reconciliation_failure",
@@ -1385,8 +1623,6 @@ async function reconcileOrder({ orderId, source = "manual" }) {
       metadata: { orderId, source, message: err?.message },
     });
     throw err;
-  } finally {
-    client.release();
   }
 }
 
@@ -1414,6 +1650,14 @@ async function reconcileStalePaymentSessions(options = {}) {
         AND r.status='payment_pending'
         AND r.payment_status='pending'
         AND p.status='pending'
+        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cashfree_webhook_events we
+          WHERE we.order_id=p.order_id
+          AND we.received_at > NOW() - INTERVAL '2 minutes'
+          AND we.status IN ('processing', 'failed')
+        )
         FOR UPDATE OF r SKIP LOCKED
         `,
         [reservationIds]
@@ -1429,6 +1673,13 @@ async function reconcileStalePaymentSessions(options = {}) {
         AND r.payment_status='pending'
         AND p.status='pending'
         AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cashfree_webhook_events we
+          WHERE we.order_id=p.order_id
+          AND we.received_at > NOW() - INTERVAL '2 minutes'
+          AND we.status IN ('processing', 'failed')
+        )
         ORDER BY p.order_id
         LIMIT $1
         FOR UPDATE OF r SKIP LOCKED

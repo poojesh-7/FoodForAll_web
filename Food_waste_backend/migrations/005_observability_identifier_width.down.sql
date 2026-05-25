@@ -1,0 +1,2 @@
+-- Intentionally do not shrink observability identifier columns.
+-- Rolling back to varchar(20) can fail or truncate UUID/request/queue IDs.

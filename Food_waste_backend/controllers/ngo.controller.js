@@ -1297,27 +1297,24 @@ exports.acceptNGORequest = async (req, res) => {
     }
 
     // 2️⃣ Get request
-    const request = await client.query(
+    const requestRef = await client.query(
       `
-      SELECT r.*, f.id AS listing_id, f.remaining_quantity, f.pickup_end_time, f.status
+      SELECT r.id, r.listing_id
       FROM ngo_requests r
-      JOIN food_listings f ON f.id = r.listing_id
       WHERE r.id=$1
       AND r.ngo_id=$2
       AND r.status='pending'
-      FOR UPDATE
       `,
       [requestId, ngoId]
     );
 
-    if (!request.rows.length) {
+    if (!requestRef.rows.length) {
       const error = new Error("Request not found or already processed");
       error.statusCode = 409;
       throw error;
     }
 
-    const row = request.rows[0];
-    const listingId = row.listing_id;
+    const listingId = requestRef.rows[0].listing_id;
 
     // 🔥 3️⃣ LOCK LISTING (CRITICAL)
     const listingLock = await client.query(
@@ -1336,6 +1333,32 @@ exports.acceptNGORequest = async (req, res) => {
     );
 
     const listing = listingLock.rows[0];
+    if (!listing) {
+      const error = new Error("Listing not found or unavailable");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const request = await client.query(
+      `
+      SELECT *
+      FROM ngo_requests
+      WHERE id=$1
+      AND ngo_id=$2
+      AND listing_id=$3
+      AND status='pending'
+      FOR UPDATE
+      `,
+      [requestId, ngoId, listingId]
+    );
+
+    if (!request.rows.length) {
+      const error = new Error("Request not found or already processed");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const row = request.rows[0];
 
     // 🚨 Prevent double accept
     if (listing.status !== "active") {

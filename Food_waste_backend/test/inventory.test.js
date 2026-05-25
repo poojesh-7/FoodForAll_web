@@ -6,6 +6,9 @@ const {
   restoreListingStock,
 } = require("../shared/services/inventory.service");
 const {
+  restoreReservationStockIfHeld,
+} = require("../shared/services/reservationConsistency.service");
+const {
   pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
 
@@ -59,6 +62,27 @@ test("restoreListingStock uses one bounded stock restoration update", async () =
   assert.match(client.calls[0].sql, /remaining_quantity = remaining_quantity \+ \$1/);
   assert.match(client.calls[0].sql, /pickup_end_time > NOW\(\)/);
   assert.deepEqual(client.calls[0].params, [2, "listing-1", true]);
+});
+
+test("restoreReservationStockIfHeld casts JSONB reason parameter", async () => {
+  const client = clientWithRows([]);
+
+  await restoreReservationStockIfHeld(
+    client,
+    {
+      id: "reservation-1",
+      listing_id: "listing-1",
+      quantity_reserved: 1,
+      payment_context: {},
+    },
+    { reason: "payment_cancelled_before_confirmation" }
+  );
+
+  assert.match(client.calls[0].sql, /stock_restore_reason', \$2::text/);
+  assert.deepEqual(client.calls[0].params, [
+    "reservation-1",
+    "payment_cancelled_before_confirmation",
+  ]);
 });
 
 test("pendingPaymentReservationWhere blocks duplicate in-flight checkout holds", () => {

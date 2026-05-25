@@ -14,6 +14,9 @@ const {
 const {
   ensurePaymentHardeningSchema,
 } = require("../shared/services/paymentReconciliation.service");
+const {
+  lockReservationGraph,
+} = require("../shared/services/reservationConsistency.service");
 
 logger.info("Refund worker started");
 
@@ -42,22 +45,14 @@ async function markRefundFailed(reservationId) {
   try {
     await client.query("BEGIN");
 
-    const paymentResult = await client.query(
-      `
-      SELECT *
-      FROM payments
-      WHERE reservation_id=$1
-      FOR UPDATE
-      `,
-      [reservationId]
-    );
+    const { payment } = await lockReservationGraph(client, reservationId, {
+      lockPayments: true,
+    });
 
-    if (!paymentResult.rows.length) {
+    if (!payment) {
       await client.query("ROLLBACK");
       return;
     }
-
-    const payment = paymentResult.rows[0];
 
     if (FINAL_REFUND_STATES.has(payment.status)) {
       await client.query("ROLLBACK");
@@ -104,22 +99,14 @@ async function persistRefundStatus(reservationId, refundStatus) {
   try {
     await client.query("BEGIN");
 
-    const paymentResult = await client.query(
-      `
-      SELECT *
-      FROM payments
-      WHERE reservation_id=$1
-      FOR UPDATE
-      `,
-      [reservationId]
-    );
+    const { payment } = await lockReservationGraph(client, reservationId, {
+      lockPayments: true,
+    });
 
-    if (!paymentResult.rows.length) {
+    if (!payment) {
       await client.query("ROLLBACK");
       return;
     }
-
-    const payment = paymentResult.rows[0];
 
     if (FINAL_REFUND_STATES.has(payment.status)) {
       await client.query("ROLLBACK");
@@ -306,22 +293,15 @@ async function prepareDepositRefund(reservationId) {
     await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
-    const paymentResult = await client.query(
-      `
-      SELECT *
-      FROM payments
-      WHERE reservation_id=$1
-      FOR UPDATE
-      `,
-      [reservationId]
-    );
+    const { payment } = await lockReservationGraph(client, reservationId, {
+      lockPayments: true,
+    });
 
-    if (!paymentResult.rows.length) {
+    if (!payment) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    const payment = paymentResult.rows[0];
     const amount = Number(payment.reliability_deposit_amount || 0);
 
     if (
@@ -374,26 +354,17 @@ async function prepareRefund(reservationId) {
     await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
-    const paymentResult = await client.query(
-      `
-      SELECT
-        p.*,
-        r.status AS reservation_status,
-        r.payment_status AS reservation_payment_status
-      FROM payments p
-      JOIN reservations r ON r.id=p.reservation_id
-      WHERE p.reservation_id=$1
-      FOR UPDATE
-      `,
-      [reservationId]
-    );
+    const { reservation, payment } = await lockReservationGraph(client, reservationId, {
+      lockPayments: true,
+    });
 
-    if (!paymentResult.rows.length) {
+    if (!payment || !reservation) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    const payment = paymentResult.rows[0];
+    payment.reservation_status = reservation.status;
+    payment.reservation_payment_status = reservation.payment_status;
 
     if (
       payment.status === "refunded" ||

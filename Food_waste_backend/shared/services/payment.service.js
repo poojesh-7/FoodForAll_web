@@ -237,6 +237,7 @@ async function retainReliabilityDeposit(client, reservationId) {
 }
 
 async function cancelPayment(client, reservationId) {
+  await ensurePaymentHardeningSchema(client);
   await ensureRestrictionSchema(client);
   const paymentRes = await client.query(
     `SELECT * FROM payments WHERE reservation_id=$1 FOR UPDATE`,

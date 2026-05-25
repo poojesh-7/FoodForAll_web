@@ -15,7 +15,10 @@ const {
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const { applyPenalty } = require("../shared/services/penalty.service");
-const { restoreListingStock } = require("../shared/services/inventory.service");
+const {
+  lockReservationGraph,
+  restoreReservationStockIfHeld,
+} = require("../shared/services/reservationConsistency.service");
 
 /*
 Socket publisher
@@ -70,23 +73,14 @@ const pickupTimeoutWorker = new Worker(
     try {
       await client.query("BEGIN");
 
-      const reservation = await client.query(
-        `
-        SELECT id, listing_id, assigned_volunteer_id,
-               quantity_reserved, task_status, status
-        FROM reservations
-        WHERE id=$1
-        FOR UPDATE
-        `,
-        [reservationId]
-      );
+      const { reservation: r } = await lockReservationGraph(client, reservationId, {
+        lockPayments: false,
+      });
 
-      if (!reservation.rows.length) {
+      if (!r) {
         await client.query("ROLLBACK");
         return;
       }
-
-      const r = reservation.rows[0];
 
       if (!r.assigned_volunteer_id) {
         await client.query("ROLLBACK");
@@ -101,9 +95,8 @@ const pickupTimeoutWorker = new Worker(
       /*
       Return quantity
       */
-      await restoreListingStock(client, {
-        listingId: r.listing_id,
-        quantity: r.quantity_reserved,
+      await restoreReservationStockIfHeld(client, r, {
+        reason: "pickup_timeout",
       });
       logger.info("Inventory restored after pickup timeout", {
         reservationId,

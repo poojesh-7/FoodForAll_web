@@ -63,6 +63,52 @@ async function ensureObservabilitySchema(client = pool) {
         )
       `);
       await client.query(`
+        DO $$
+        DECLARE
+          target record;
+        BEGIN
+          FOR target IN
+            SELECT *
+            FROM (VALUES
+              ('operational_events', 'request_id'),
+              ('operational_events', 'correlation_id'),
+              ('operational_events', 'payment_session_id'),
+              ('operational_events', 'queue_job_id'),
+              ('operational_events', 'worker_name'),
+              ('operational_events', 'category'),
+              ('operational_events', 'severity'),
+              ('operational_events', 'event_name'),
+              ('operational_events', 'role'),
+              ('operational_alerts', 'alert_key'),
+              ('operational_alerts', 'category'),
+              ('operational_alerts', 'severity'),
+              ('operational_alerts', 'message'),
+              ('operational_alerts', 'status'),
+              ('worker_heartbeats', 'worker_name'),
+              ('worker_heartbeats', 'queue_name'),
+              ('worker_heartbeats', 'status'),
+              ('worker_heartbeats', 'last_job_id')
+            ) AS columns_to_widen(table_name, column_name)
+          LOOP
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = current_schema()
+              AND table_name = target.table_name
+              AND column_name = target.column_name
+              AND data_type = 'character varying'
+              AND (character_maximum_length IS NULL OR character_maximum_length < 128)
+            ) THEN
+              EXECUTE format(
+                'ALTER TABLE %I ALTER COLUMN %I TYPE TEXT',
+                target.table_name,
+                target.column_name
+              );
+            END IF;
+          END LOOP;
+        END $$;
+      `);
+      await client.query(`
         ALTER TABLE operational_events
         ADD COLUMN IF NOT EXISTS correlation_id TEXT NULL
       `);

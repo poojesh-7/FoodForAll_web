@@ -15,8 +15,11 @@ const {
 const { getReservationPolicy } = require("../shared/services/restriction.service");
 const {
   reserveListingStock,
-  restoreListingStock,
 } = require("../shared/services/inventory.service");
+const {
+  lockReservationGraph,
+  restoreReservationStockIfHeld,
+} = require("../shared/services/reservationConsistency.service");
 const { applyRecovery } = require("../shared/services/penalty.service");
 const { createProviderReport } = require("../shared/services/moderation.service");
 const {
@@ -26,7 +29,6 @@ const {
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   ensureReservationPaymentContextSchema,
-  hasReservedStock,
 } = require("../shared/services/reservationPaymentContext.service");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
 const { jobOptions } = require("../shared/utils/queueOptions");
@@ -171,7 +173,7 @@ exports.createReservation = async (req, res) => {
         WHERE approved_restaurant.user_id=f.provider_id
         AND approved_restaurant.is_verified=true
       )
-      FOR UPDATE
+      FOR UPDATE OF f
       `,
       [listing_id]
     );
@@ -393,7 +395,7 @@ exports.getReservationById = async (req, res) => {
     LEFT JOIN ratings rating ON rating.reservation_id = r.id
     LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.id=$1
-    FOR UPDATE OF r`,
+    `,
     [id],
   );
 
@@ -573,20 +575,10 @@ const legacyCancelReservation = async (req, res) => {
     1️⃣ LOCK RESERVATION
     ========================
     */
-    const result = await client.query(
-      `
-      SELECT r.*, f.provider_id, f.pickup_end_time
-      FROM reservations r
-      JOIN food_listings f ON r.listing_id = f.id
-      WHERE r.id=$1
-      FOR UPDATE
-      `,
-      [id]
-    );
+    const locked = await lockReservationGraph(client, id, { lockPayments: true });
+    const reservation = locked.reservation;
 
-    if (!result.rows.length) throw withStatus("Reservation not found", 404);
-
-    const reservation = result.rows[0];
+    if (!reservation) throw withStatus("Reservation not found", 404);
 
     /*
     ========================
@@ -662,12 +654,9 @@ const legacyCancelReservation = async (req, res) => {
     7️⃣ RESTORE QUANTITY
     ========================
     */
-    if (hasReservedStock(reservation)) {
-      await restoreListingStock(client, {
-        listingId: reservation.listing_id,
-        quantity: reservation.quantity_reserved,
-      });
-    }
+    await restoreReservationStockIfHeld(client, reservation, {
+      reason: "legacy_reservation_cancelled",
+    });
 
     /*
     ========================
@@ -763,20 +752,11 @@ exports.cancelReservation = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    const result = await client.query(
-      `
-      SELECT r.*, f.provider_id, f.pickup_end_time, f.is_free
-      FROM reservations r
-      JOIN food_listings f ON r.listing_id = f.id
-      WHERE r.id=$1
-      FOR UPDATE
-      `,
-      [id]
-    );
+    const locked = await lockReservationGraph(client, id, { lockPayments: true });
+    let reservation = locked.reservation;
+    let payment = locked.payment;
 
-    if (!result.rows.length) throw withStatus("Reservation not found", 404);
-
-    const reservation = result.rows[0];
+    if (!reservation) throw withStatus("Reservation not found", 404);
 
     if (reservation.user_id !== req.user.id) {
       throw withStatus("Unauthorized", 403);
@@ -792,42 +772,57 @@ exports.cancelReservation = async (req, res) => {
 
     if (
       reservation.status === "payment_pending" &&
+      reservation.payment_status === "pending" &&
+      ["paid", "success"].includes(String(payment?.status || "").toLowerCase())
+    ) {
+      const repaired = await client.query(
+        `
+        UPDATE reservations
+        SET status='reserved',
+            payment_status='paid',
+            pickup_code=COALESCE(pickup_code, $2),
+            receive_code=COALESCE(receive_code, $3),
+            payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+              jsonb_build_object('paid_recovered_at', NOW(), 'paid_recovery_source', 'cancel_race')
+        WHERE id=$1
+        AND status='payment_pending'
+        AND payment_status='pending'
+        RETURNING *
+        `,
+        [reservation.id, generatePickupCode(), generatePickupCode()]
+      );
+      if (repaired.rows.length) {
+        reservation = {
+          ...reservation,
+          ...repaired.rows[0],
+        };
+        logger.payment("Recovered paid reservation during cancellation race", {
+          reservationId: reservation.id,
+          paymentId: payment?.id,
+          orderId: payment?.order_id,
+        });
+      }
+    }
+
+    if (
+      reservation.status === "payment_pending" &&
       reservation.payment_status === "pending"
     ) {
-      const paymentResult = await client.query(
-        `
-        SELECT order_id
-        FROM payments
-        WHERE reservation_id=$1
-        FOR UPDATE
-        `,
-        [reservation.id]
-      );
-      paymentTimeoutOrderId = paymentResult.rows[0]?.order_id || null;
+      paymentTimeoutOrderId = payment?.order_id || null;
 
       await cancelPayment(client, reservation.id);
 
-      if (hasReservedStock(reservation)) {
-        await restoreListingStock(client, {
-          listingId: reservation.listing_id,
-          quantity: reservation.quantity_reserved,
-        });
-      }
+      await restoreReservationStockIfHeld(client, reservation, {
+        reason: "payment_cancelled_before_confirmation",
+      });
 
       await client.query(
         `
-        UPDATE payments
-        SET reservation_id=NULL,
-            updated_at=NOW()
-        WHERE reservation_id=$1
-        AND status='failed'
-        `,
-        [reservation.id]
-      );
-
-      await client.query(
-        `
-        DELETE FROM reservations
+        UPDATE reservations
+        SET status='cancelled_before_confirmation',
+            payment_status='failed',
+            payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+              jsonb_build_object('cancelled_before_confirmation_at', NOW())
         WHERE id=$1
         AND status='payment_pending'
         AND payment_status='pending'
@@ -853,12 +848,9 @@ exports.cancelReservation = async (req, res) => {
         throw withStatus("Cannot cancel after volunteer started", 400);
       }
 
-      if (hasReservedStock(reservation)) {
-        await restoreListingStock(client, {
-          listingId: reservation.listing_id,
-          quantity: reservation.quantity_reserved,
-        });
-      }
+      await restoreReservationStockIfHeld(client, reservation, {
+        reason: "ngo_reservation_cancelled",
+      });
 
       await client.query(
         `
@@ -880,16 +872,6 @@ exports.cancelReservation = async (req, res) => {
         );
       }
 
-      const paymentResult = await client.query(
-        `
-        SELECT *
-        FROM payments
-        WHERE reservation_id=$1
-        FOR UPDATE
-        `,
-        [reservation.id]
-      );
-      const payment = paymentResult.rows[0];
       paymentTimeoutOrderId = payment?.order_id || null;
 
       if (reservation.payment_status === "paid") {
@@ -942,9 +924,10 @@ exports.cancelReservation = async (req, res) => {
         throw withStatus("Reservation payment is not refundable", 400);
       }
 
-      await restoreListingStock(client, {
-        listingId: reservation.listing_id,
-        quantity: reservation.quantity_reserved,
+      await restoreReservationStockIfHeld(client, reservation, {
+        reason: refundReservationId
+          ? "paid_reservation_cancelled_for_refund"
+          : "reservation_cancelled",
       });
     }
 
@@ -1024,7 +1007,7 @@ exports.markAsPickedUp = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON r.listing_id = f.id
       WHERE r.id=$1
-      FOR UPDATE
+      FOR UPDATE OF r
       `,
       [id]
     );
@@ -1039,6 +1022,9 @@ exports.markAsPickedUp = async (req, res) => {
 
     if (reservation.status !== "reserved")
       throw withStatus("Reservation is not active", 409);
+
+    if (!["paid", "not_required"].includes(reservation.payment_status))
+      throw withStatus("Reservation payment is not finalized", 409);
 
     if (reservation.pickup_code !== pickup_code)
       throw withStatus("Invalid pickup code", 400);
@@ -1263,7 +1249,7 @@ exports.reportProvider = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON f.id = r.listing_id
       WHERE r.id=$1
-      FOR UPDATE
+      FOR UPDATE OF r
       `,
       [id]
     );

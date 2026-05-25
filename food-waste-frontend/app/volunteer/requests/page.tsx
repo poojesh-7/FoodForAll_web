@@ -7,7 +7,7 @@ import { volunteerService } from "@/services/volunteer.service";
 import type {
   VolunteerRequestAction,
   VolunteerRequestRow,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 function isHandledConflict(message: string) {
   const normalized = message.toLowerCase();

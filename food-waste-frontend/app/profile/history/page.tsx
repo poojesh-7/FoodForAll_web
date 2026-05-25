@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { userService } from "@/services/user";
 import { useAuthStore } from "@/store/authStore";
-import type { UserHistoryItem } from "@backend/contracts/api-contracts";
+import type { UserHistoryItem } from "@shared/contracts/api-contracts";
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";

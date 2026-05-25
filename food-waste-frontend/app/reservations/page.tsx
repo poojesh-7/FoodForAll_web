@@ -15,7 +15,7 @@ import {
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId, ReservationHistoryRow } from "@backend/contracts/api-contracts";
+import type { DbId, ReservationHistoryRow } from "@shared/contracts/api-contracts";
 
 type ReservationBucket = "active" | "completed" | "archived";
 type ReservationTab = ReservationBucket;

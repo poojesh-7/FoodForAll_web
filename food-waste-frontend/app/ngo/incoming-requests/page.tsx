@@ -9,7 +9,7 @@ import { getRestaurantDisplayName } from "@/lib/food";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { ngoService } from "@/services/ngo.service";
 import { reservationService } from "@/services/reservation.service";
-import type { DbId, NGOIncomingRequest } from "@backend/contracts/api-contracts";
+import type { DbId, NGOIncomingRequest } from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 const PAYMENT_POLL_ATTEMPTS = 8;

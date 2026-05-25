@@ -1,4 +1,4 @@
-import type { FoodListingRow, NearbyFoodListing } from "@backend/contracts/api-contracts";
+import type { FoodListingRow, NearbyFoodListing } from "@shared/contracts/api-contracts";
 import { sanitizeTextInput } from "./sanitize";
 
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;

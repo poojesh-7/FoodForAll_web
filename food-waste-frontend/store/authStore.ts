@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { resetAuthRefreshFailure } from "@/lib/axios";
 import { isUserOnboarded } from "@/lib/onboarding";
 import * as authApi from "@/services/auth";
-import type { AuthMeUser, AuthUser } from "@backend/contracts/api-contracts";
+import type { AuthMeUser, AuthUser } from "@shared/contracts/api-contracts";
 
 type AuthStoreUser = AuthMeUser | AuthUser;
 type SendOtpOutcome = {

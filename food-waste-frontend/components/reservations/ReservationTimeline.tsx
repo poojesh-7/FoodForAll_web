@@ -1,4 +1,4 @@
-import type { ReservationDetails, ReservationRow } from "@backend/contracts/api-contracts";
+import type { ReservationDetails, ReservationRow } from "@shared/contracts/api-contracts";
 
 type ReservationTimelineProps = {
   reservation: ReservationRow | ReservationDetails;

@@ -9,7 +9,7 @@ import type {
   ProviderRatingSummary,
   ProviderRatingsResponse,
   RatingRow,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {

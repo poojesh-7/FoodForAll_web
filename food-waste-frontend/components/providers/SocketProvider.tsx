@@ -17,7 +17,7 @@ import {
   useNotificationStore,
 } from "@/store/notificationStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { NotificationRow } from "@backend/contracts/api-contracts";
+import type { NotificationRow } from "@shared/contracts/api-contracts";
 
 type SocketContextValue = {
   socket: Socket;

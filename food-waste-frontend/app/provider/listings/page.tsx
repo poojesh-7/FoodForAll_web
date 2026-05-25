@@ -18,7 +18,7 @@ import type {
   FoodNGOOption,
   ListingRating,
   ProviderRatingSummary,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 type ListingView = "active" | "history";

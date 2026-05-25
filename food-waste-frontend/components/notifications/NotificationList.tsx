@@ -1,6 +1,6 @@
 "use client";
 
-import type { DbId, NotificationRow } from "@backend/contracts/api-contracts";
+import type { DbId, NotificationRow } from "@shared/contracts/api-contracts";
 
 type NotificationListProps = {
   notifications: NotificationRow[];

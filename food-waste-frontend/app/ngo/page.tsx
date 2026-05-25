@@ -13,7 +13,7 @@ import type {
   NGOAssignedVolunteer,
   NGOIncomingRequest,
   NGOVolunteerJoinRequest,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 

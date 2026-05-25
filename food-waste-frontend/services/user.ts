@@ -9,7 +9,7 @@ import type {
   UserHistoryResponse,
   UserProfile,
   UserUpdateResult,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type ApiBody<TContract, TLegacy> = TContract | TLegacy;
 

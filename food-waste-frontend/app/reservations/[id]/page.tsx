@@ -24,7 +24,7 @@ import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ListingRating,
   ReservationDetails,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useParams, useRouter } from "next/navigation";
 
 function canCancel(reservation: ReservationDetails) {

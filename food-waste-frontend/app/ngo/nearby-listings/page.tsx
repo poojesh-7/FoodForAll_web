@@ -16,7 +16,7 @@ import type {
   DbId,
   NearbyFoodListing,
   ReservationPricingPreview,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 const PAYMENT_POLL_ATTEMPTS = 8;

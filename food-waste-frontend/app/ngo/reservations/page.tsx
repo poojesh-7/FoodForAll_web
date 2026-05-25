@@ -24,7 +24,7 @@ import {
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId } from "@backend/contracts/api-contracts";
+import type { DbId } from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 type ActiveReservationFilter =

@@ -36,7 +36,7 @@ import type {
   ReservationPricingPreviewResponse,
   SetUrgentRequest,
   SetUrgentResponse,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type LegacyRegisterNGOResponse = {
   message?: string;

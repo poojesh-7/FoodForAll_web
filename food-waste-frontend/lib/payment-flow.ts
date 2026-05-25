@@ -1,4 +1,4 @@
-import type { DbId, ReservationDetails, ReservationRow } from "@backend/contracts/api-contracts";
+import type { DbId, ReservationDetails, ReservationRow } from "@shared/contracts/api-contracts";
 
 export type ReservationPaymentState =
   | "not_required"

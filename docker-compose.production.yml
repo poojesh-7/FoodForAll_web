@@ -86,8 +86,8 @@ services:
 
   frontend:
     build:
-      context: ./food-waste-frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./food-waste-frontend/Dockerfile
       args:
         NEXT_PUBLIC_APP_ENV: production
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}

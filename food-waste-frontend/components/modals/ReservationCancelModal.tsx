@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Loader2, X } from "lucide-react";
-import type { DbId } from "@backend/contracts/api-contracts";
+import type { DbId } from "@shared/contracts/api-contracts";
 
 type ReservationCancelModalProps = {
   open: boolean;

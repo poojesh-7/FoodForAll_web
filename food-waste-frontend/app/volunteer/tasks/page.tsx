@@ -11,7 +11,7 @@ import {
   type VolunteerCurrentTask,
 } from "@/services/volunteer.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId, ReservationRow, VolunteerTask } from "@backend/contracts/api-contracts";
+import type { DbId, ReservationRow, VolunteerTask } from "@shared/contracts/api-contracts";
 
 type LocationForm = {
   lat: string;

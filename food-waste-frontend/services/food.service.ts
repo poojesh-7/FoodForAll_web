@@ -22,7 +22,7 @@ import type {
   UpdateFoodRequest,
   UpdateFoodResponse,
   ViewNGOsForFoodResponse,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type LegacyRegisterRestaurantResponse = {
   message?: string;

@@ -37,7 +37,7 @@ import type {
   ReservationDetails,
   ProviderRatingSummary,
   ReservationPricingPreview,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 const PAYMENT_POLL_ATTEMPTS = 8;
 const PAYMENT_POLL_DELAY_MS = 1500;

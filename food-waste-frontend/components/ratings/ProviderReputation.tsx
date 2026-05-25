@@ -1,5 +1,5 @@
 import { ratingService } from "@/services/rating.service";
-import type { ProviderRatingSummary } from "@backend/contracts/api-contracts";
+import type { ProviderRatingSummary } from "@shared/contracts/api-contracts";
 import { MessageSquare, Star } from "lucide-react";
 
 type ProviderReputationProps = {

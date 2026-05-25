@@ -11,7 +11,7 @@ import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   VolunteerCurrentTask,
   VolunteerDashboardData,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 function toCount(value: unknown) {
   const count = Number(value ?? 0);

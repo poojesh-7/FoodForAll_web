@@ -17,7 +17,7 @@ import type {
   UpdateLocationResponse,
   VerifyOTPRequest,
   VerifyOTPResponse,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type ApiBody<TContract, TLegacy> = TContract | TLegacy;
 type BackendErrorResponse = ApiErrorResponse | {

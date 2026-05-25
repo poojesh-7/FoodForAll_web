@@ -12,7 +12,7 @@ import type {
   RestaurantProfile,
   UserProfile,
   UserRole,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type ProfileForm = {
   name: string;

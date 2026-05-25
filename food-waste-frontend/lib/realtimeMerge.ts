@@ -1,4 +1,4 @@
-import type { DbId } from "@backend/contracts/api-contracts";
+import type { DbId } from "@shared/contracts/api-contracts";
 
 type Row = Record<string, unknown> & { id?: DbId; reservation_id?: DbId };
 type RowLike = { id?: DbId; reservation_id?: DbId };

@@ -11,7 +11,7 @@ import type {
   AdminQueueHealth,
   AdminSecurityEvent,
   DbId,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 interface AdminState {
   ngos: AdminNGO[];

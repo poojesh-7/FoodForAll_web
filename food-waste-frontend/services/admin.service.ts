@@ -16,7 +16,7 @@ import type {
   PendingNGOsResponse,
   PendingRestaurantRow,
   PendingRestaurantsResponse,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
   id?: DbId;

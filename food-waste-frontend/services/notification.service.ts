@@ -6,7 +6,7 @@ import type {
   MarkNotificationReadResponse,
   NotificationRow,
   UnreadCountResponse,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 function encodeId(id: DbId) {
   return encodeURIComponent(String(id));

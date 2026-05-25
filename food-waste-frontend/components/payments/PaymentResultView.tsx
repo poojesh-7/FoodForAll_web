@@ -16,7 +16,7 @@ import {
 } from "@/lib/payment-flow";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { ReservationDetails } from "@backend/contracts/api-contracts";
+import type { ReservationDetails } from "@shared/contracts/api-contracts";
 
 type PaymentResultViewProps = {
   expected: "success" | "failed";

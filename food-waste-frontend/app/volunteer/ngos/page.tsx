@@ -5,7 +5,7 @@ import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import { volunteerService } from "@/services/volunteer.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId, VolunteerAvailableNGO } from "@backend/contracts/api-contracts";
+import type { DbId, VolunteerAvailableNGO } from "@shared/contracts/api-contracts";
 
 export default function VolunteerNGOsPage() {
   const [ngos, setNgos] = useState<VolunteerAvailableNGO[]>([]);

@@ -2,7 +2,7 @@ import type {
   AuthMeUser,
   AuthUser,
   UserRole,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 
 type OnboardingUser = Partial<AuthMeUser & AuthUser>;
 type VerificationRole = Extract<UserRole, "ngo" | "provider">;

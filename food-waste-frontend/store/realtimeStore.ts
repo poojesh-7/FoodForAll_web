@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DbId, FoodListingRow } from "@backend/contracts/api-contracts";
+import type { DbId, FoodListingRow } from "@shared/contracts/api-contracts";
 
 type RealtimeEntity = Record<string, unknown> & { id?: DbId; reservation_id?: DbId };
 

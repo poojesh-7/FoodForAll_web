@@ -1,4 +1,4 @@
-import type { ListingRating } from "@backend/contracts/api-contracts";
+import type { ListingRating } from "@shared/contracts/api-contracts";
 import { MessageSquare, Star } from "lucide-react";
 
 type ReviewListProps = {

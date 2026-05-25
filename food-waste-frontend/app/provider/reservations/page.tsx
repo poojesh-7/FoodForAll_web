@@ -11,7 +11,7 @@ import {
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { DbId, ProviderReservationRow } from "@backend/contracts/api-contracts";
+import type { DbId, ProviderReservationRow } from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 type LifecycleView = "active" | "history";

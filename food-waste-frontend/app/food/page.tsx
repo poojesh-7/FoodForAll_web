@@ -6,7 +6,7 @@ import { isNormalUserPaidListing } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { FoodListingRow } from "@backend/contracts/api-contracts";
+import type { FoodListingRow } from "@shared/contracts/api-contracts";
 import Link from "next/link";
 
 export default function FoodMarketplacePage() {

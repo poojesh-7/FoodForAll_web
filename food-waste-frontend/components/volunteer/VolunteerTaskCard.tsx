@@ -13,7 +13,7 @@ import type {
   DbId,
   VolunteerCurrentTask,
   VolunteerTask,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import type { ReactNode } from "react";
 
 type TaskLike = VolunteerTask | VolunteerCurrentTask;

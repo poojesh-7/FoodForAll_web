@@ -10,7 +10,7 @@ import { useAuthStore } from "@/store/authStore";
 import type {
   ImpactSummary,
   ProviderRatingSummary,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 function formatRestrictionDate(value: unknown) {

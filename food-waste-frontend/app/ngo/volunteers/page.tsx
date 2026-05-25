@@ -10,7 +10,7 @@ import type {
   NGOAssignedVolunteer,
   NGOVolunteerJoinRequest,
   NGOUnassignedVolunteer,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
 export default function NGOVolunteersPage() {

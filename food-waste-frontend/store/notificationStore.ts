@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { notificationService } from "@/services/notification.service";
-import type { DbId, NotificationRow } from "@backend/contracts/api-contracts";
+import type { DbId, NotificationRow } from "@shared/contracts/api-contracts";
 
 type NotificationSyncMessage =
   | { action: "read"; id: string }

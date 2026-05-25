@@ -26,7 +26,7 @@ import type {
   ProviderReservationRow,
   ReservationDetails,
   ReservationHistoryRow,
-} from "@backend/contracts/api-contracts";
+} from "@shared/contracts/api-contracts";
 import { useEffect, useState, type ReactNode } from "react";
 
 type ReservationLike =

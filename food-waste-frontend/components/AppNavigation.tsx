@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import { getRoleDashboard } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
-import type { UserRole } from "@backend/contracts/api-contracts";
+import type { UserRole } from "@shared/contracts/api-contracts";
 
 const roleLinks: Partial<Record<UserRole, { href: string; label: string }[]>> = {
   user: [

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { reservationService } from "@/services/reservation.service";
 import { sanitizeOptionalTextInput } from "@/lib/sanitize";
-import type { DbId, ReportProviderRequest } from "@backend/contracts/api-contracts";
+import type { DbId, ReportProviderRequest } from "@shared/contracts/api-contracts";
 
 const reportReasonOptions: {
   value: ReportProviderRequest["reason"];

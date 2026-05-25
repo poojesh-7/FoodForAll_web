@@ -4,6 +4,10 @@ const {
 } = require("../config/runtimeSchema");
 const logger = require("../utils/logger");
 const { getContext } = require("../utils/requestContext");
+const {
+  incrementCounter,
+  recordPaymentEvent,
+} = require("./metrics.service");
 
 let schemaReady;
 
@@ -23,6 +27,7 @@ async function ensureObservabilitySchema(client = pool) {
           severity TEXT NOT NULL DEFAULT 'info',
           event_name TEXT NOT NULL,
           request_id TEXT NULL,
+          correlation_id TEXT NULL,
           user_id UUID NULL,
           role TEXT NULL,
           reservation_id UUID NULL,
@@ -58,12 +63,21 @@ async function ensureObservabilitySchema(client = pool) {
         )
       `);
       await client.query(`
+        ALTER TABLE operational_events
+        ADD COLUMN IF NOT EXISTS correlation_id TEXT NULL
+      `);
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_operational_events_created
         ON operational_events (created_at DESC)
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_operational_events_category
         ON operational_events (category, severity, created_at DESC)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_operational_events_correlation
+        ON operational_events (correlation_id, created_at DESC)
+        WHERE correlation_id IS NOT NULL
       `);
       await client.query(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_operational_alerts_open_key
@@ -98,29 +112,39 @@ async function recordOperationalEvent({
   metadata = {},
 }) {
   const context = getContext();
+  incrementCounter("food_rescue_operational_events_total", {
+    category,
+    severity,
+    event: eventName,
+  });
+  if (category === "payment") {
+    recordPaymentEvent({ eventName, severity, status: metadata.status });
+  }
+  const redactedMetadata = logger.redact(metadata || {});
 
   try {
     await ensureObservabilitySchema();
     await pool.query(
       `
       INSERT INTO operational_events (
-        category, severity, event_name, request_id, user_id, role,
+        category, severity, event_name, request_id, correlation_id, user_id, role,
         reservation_id, payment_session_id, queue_job_id, worker_name, metadata
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
       `,
       [
         category,
         severity,
         eventName,
         context.requestId,
+        context.correlationId,
         toUuidOrNull(context.userId),
         context.role,
         toUuidOrNull(context.reservationId),
         context.paymentSessionId,
         context.queueJobId ? String(context.queueJobId) : null,
         context.workerName,
-        JSON.stringify(metadata || {}),
+        JSON.stringify(redactedMetadata),
       ]
     );
   } catch (err) {
@@ -135,6 +159,12 @@ async function recordAlert({
   message,
   metadata = {},
 }) {
+  incrementCounter("food_rescue_operational_alerts_total", {
+    category,
+    severity,
+  });
+  const redactedMetadata = logger.redact(metadata || {});
+
   try {
     await ensureObservabilitySchema();
     await pool.query(
@@ -150,7 +180,7 @@ async function recordAlert({
         message=EXCLUDED.message,
         metadata=EXCLUDED.metadata
       `,
-      [alertKey, category, severity, message, JSON.stringify(metadata || {})]
+      [alertKey, category, severity, message, JSON.stringify(redactedMetadata)]
     );
   } catch (err) {
     logger.warn("Operational alert capture failed", { err, alertKey });

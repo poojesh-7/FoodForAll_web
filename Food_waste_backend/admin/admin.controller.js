@@ -5,10 +5,12 @@ const {
   ensureObservabilitySchema,
   recordOperationalEvent,
 } = require("../shared/services/observability.service");
+const { getHealth } = require("../shared/services/health.service");
 const {
   getQueueHealth,
   retryFailedJob,
 } = require("../shared/services/queueObservability.service");
+const { getMetricsSnapshot } = require("../shared/services/metrics.service");
 const { getPaymentHealth } = require("../shared/services/paymentMonitoring.service");
 const {
   dismissProviderReport,
@@ -323,6 +325,118 @@ exports.getOperationalSummary = async (req, res) => {
   } catch (err) {
     logger.error("Failed to fetch operational summary", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch operational summary" });
+  }
+};
+
+async function getOperationalEventSummary() {
+  await ensureObservabilitySchema();
+  const result = await pool.query(`
+    SELECT category, severity, event_name,
+           COUNT(*)::int AS count,
+           MAX(created_at) AS last_seen_at
+    FROM operational_events
+    WHERE created_at >= NOW() - INTERVAL '24 hours'
+    GROUP BY category, severity, event_name
+    ORDER BY count DESC, last_seen_at DESC
+    LIMIT 100
+  `);
+
+  return result.rows;
+}
+
+async function getReservationDiagnostics() {
+  const result = await pool.query(`
+    SELECT
+      COUNT(*) FILTER (
+        WHERE r.status='payment_pending'
+        AND r.payment_status='pending'
+        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+      )::int AS expired_payment_pending,
+      COUNT(*) FILTER (
+        WHERE r.status='payment_pending'
+        AND r.payment_status='pending'
+        AND r.reserved_at <= NOW() - INTERVAL '30 minutes'
+      )::int AS aged_payment_pending,
+      COUNT(*) FILTER (
+        WHERE r.status IN ('reserved', 'payment_pending')
+        AND f.pickup_end_time <= NOW()
+      )::int AS pickup_window_closed_active,
+      COUNT(*) FILTER (
+        WHERE r.pickup_type='ngo'
+        AND r.task_status='pending'
+        AND r.reserved_at <= NOW() - INTERVAL '2 hours'
+      )::int AS stale_ngo_task_pending,
+      COUNT(*) FILTER (
+        WHERE r.status='cancelled'
+        AND r.payment_status='refund_pending'
+      )::int AS refund_pending_cancelled
+    FROM reservations r
+    LEFT JOIN food_listings f ON f.id=r.listing_id
+  `);
+
+  return result.rows[0];
+}
+
+exports.getOperationalDiagnostics = async (req, res) => {
+  try {
+    const [health, queues, payments, events, reservations] = await Promise.all([
+      getHealth({ io: req.app.get("io") }),
+      getQueueHealth({ includeJobs: true }),
+      getPaymentHealth(),
+      getOperationalEventSummary(),
+      getReservationDiagnostics(),
+    ]);
+
+    const degradedQueues = queues.filter((queue) => queue.status !== "healthy");
+    const paymentIssues = {
+      staleSessions: Number(payments.summary?.stale_sessions || 0),
+      webhookFailures24h: Number(payments.webhooks?.failed || 0),
+      reservationPaymentMismatches: Number(
+        payments.diagnostics?.reservation_payment_mismatches || 0
+      ),
+      reconciliationAttentionRequired: Number(
+        payments.diagnostics?.reconciliation_attention_required || 0
+      ),
+    };
+    const status =
+      health.status === "healthy" &&
+      degradedQueues.length === 0 &&
+      Object.values(paymentIssues).every((value) => value === 0)
+        ? "healthy"
+        : "degraded";
+
+    res.json({
+      status,
+      timestamp: new Date().toISOString(),
+      health,
+      queues: {
+        degraded: degradedQueues.length,
+        total: queues.length,
+        items: queues,
+      },
+      payments: {
+        issues: paymentIssues,
+        health: payments,
+      },
+      reservations,
+      events,
+      metrics: getMetricsSnapshot(),
+    });
+  } catch (err) {
+    logger.error("Failed to fetch operational diagnostics", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(500).json({ error: "Failed to fetch operational diagnostics" });
+  }
+};
+
+exports.getOperationalMetrics = async (req, res) => {
+  try {
+    res.json({ metrics: getMetricsSnapshot() });
+  } catch (err) {
+    logger.error("Failed to fetch operational metrics", { err, adminId: req.user?.id });
+    res.status(500).json({ error: "Failed to fetch operational metrics" });
   }
 };
 

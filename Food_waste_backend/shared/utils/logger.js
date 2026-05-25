@@ -89,6 +89,7 @@ function buildFields(meta) {
     ...currentContext,
     ...(normalizedMeta.context || {}),
     requestId: normalizedMeta.requestId ?? currentContext.requestId,
+    correlationId: normalizedMeta.correlationId ?? currentContext.correlationId,
     userId: normalizedMeta.userId ?? currentContext.userId,
     role: normalizedMeta.role ?? currentContext.role,
     reservationId: normalizedMeta.reservationId ?? currentContext.reservationId,

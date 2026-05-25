@@ -4,7 +4,7 @@ const { ensurePaymentHardeningSchema } = require("./paymentReconciliation.servic
 async function getPaymentHealth() {
   await ensurePaymentHardeningSchema();
 
-  const [payments, webhooks, stale] = await Promise.all([
+  const [payments, webhooks, stale, diagnostics] = await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status='pending')::int AS pending,
@@ -37,11 +37,34 @@ async function getPaymentHealth() {
       ORDER BY COALESCE(r.payment_expires_at, p.created_at) ASC
       LIMIT 20
     `),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE p.reservation_id IS NOT NULL AND r.id IS NULL)::int AS orphan_payments,
+        COUNT(*) FILTER (
+          WHERE r.id IS NOT NULL
+          AND (
+            (p.status='paid' AND r.payment_status NOT IN ('paid','refunded','refund_pending','refund_failed'))
+            OR (p.status IN ('failed','expired','abandoned','cancelled') AND r.payment_status='pending')
+            OR (p.status='refunded' AND r.payment_status <> 'refunded')
+          )
+        )::int AS reservation_payment_mismatches,
+        COUNT(*) FILTER (
+          WHERE p.status='pending'
+          AND p.created_at < NOW() - INTERVAL '30 minutes'
+        )::int AS aged_pending_payments,
+        COUNT(*) FILTER (
+          WHERE p.reconciliation_status IS NOT NULL
+          AND p.reconciliation_status NOT IN ('terminal','pending_gateway')
+        )::int AS reconciliation_attention_required
+      FROM payments p
+      LEFT JOIN reservations r ON r.id=p.reservation_id
+    `),
   ]);
 
   return {
     summary: payments.rows[0],
     webhooks: webhooks.rows[0],
+    diagnostics: diagnostics.rows[0],
     stale_sessions: stale.rows,
   };
 }

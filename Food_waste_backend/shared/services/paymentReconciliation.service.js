@@ -16,6 +16,7 @@ const {
   recordAlert,
   recordOperationalEvent,
 } = require("./observability.service");
+const { recordPaymentEvent } = require("./metrics.service");
 const generatePickupCode = require("../../utils/codeGenerator");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const {
@@ -1149,6 +1150,10 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
   const signature = getHeaderValue(headers, "x-webhook-signature");
   const timestamp = getHeaderValue(headers, "x-webhook-timestamp");
   const rawBuffer = toRawBody(rawBody);
+  recordPaymentEvent({
+    eventName: "cashfree_webhook_received",
+    status: "received",
+  });
 
   verifyCashfreeWebhookSignature({ rawBody: rawBuffer, signature, timestamp });
   logger.payment("Cashfree webhook signature verified", {

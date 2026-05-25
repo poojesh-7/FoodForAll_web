@@ -28,6 +28,7 @@ const {
   ensureReservationPaymentContextSchema,
   hasReservedStock,
 } = require("../shared/services/reservationPaymentContext.service");
+const { recordReservationCreated } = require("../shared/services/metrics.service");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const {
   publishListingUpdated,
@@ -263,6 +264,17 @@ exports.createReservation = async (req, res) => {
     });
 
     await client.query("COMMIT");
+    recordReservationCreated({
+      pickupType: reservation.pickup_type,
+      paymentStatus: reservation.payment_status,
+      source: "user_reservation",
+    });
+    logger.info("Reservation created", {
+      reservationId: reservation.id,
+      userId: req.user.id,
+      listingId: listing_id,
+      paymentStatus: reservation.payment_status,
+    });
     await publishListingUpdated(listing_id, { action: "quantity_updated" }).catch(
       (err) => {
         logger.warn("Reservation listing update publish failed", {

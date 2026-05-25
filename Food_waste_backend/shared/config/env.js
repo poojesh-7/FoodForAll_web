@@ -32,6 +32,7 @@ const PRODUCTION_REQUIRED_ENV = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "CASHFREE_WEBHOOK_SECRET",
+  "METRICS_TOKEN",
 ];
 
 let validatedEnv;
@@ -126,6 +127,7 @@ const envSchema = z.object({
   COOKIE_SAME_SITE: optionalString,
   JSON_BODY_LIMIT: optionalString,
   URLENCODED_BODY_LIMIT: optionalString,
+  METRICS_TOKEN: optionalString,
   TRUST_PROXY_HOPS: z.preprocess(
     (value) => {
       const raw = String(value || "1").trim();

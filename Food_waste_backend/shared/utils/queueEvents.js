@@ -10,6 +10,7 @@ const {
   recordAlert,
   recordOperationalEvent,
 } = require("../services/observability.service");
+const { recordQueueJob } = require("../services/metrics.service");
 
 const HEARTBEAT_INTERVAL_MS = Number(
   process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000
@@ -45,6 +46,7 @@ function enqueueDeadLetter(workerName, job, err) {
 
 function registerWorkerEvents(worker, workerName) {
   const activeJobs = new Set();
+  const activeJobStartedAt = new Map();
 
   registerWorker(workerName, worker);
   void heartbeatWorker(workerName, workerName, "running", {
@@ -67,8 +69,19 @@ function registerWorkerEvents(worker, workerName) {
   );
 
   worker.on("active", (job) => {
-    activeJobs.add(String(job?.id));
+    const jobId = String(job?.id);
+    activeJobs.add(jobId);
+    activeJobStartedAt.set(jobId, Date.now());
     runWithContext(contextFromJob(job, workerName), () => {
+      if (job?.timestamp) {
+        recordQueueJob({
+          queueName: workerName,
+          event: "active",
+          waitMs: Math.max(0, Date.now() - Number(job.timestamp)),
+        });
+      } else {
+        recordQueueJob({ queueName: workerName, event: "active" });
+      }
       logger.queue("Queue job active", {
         queue: workerName,
         jobId: job?.id,
@@ -79,8 +92,16 @@ function registerWorkerEvents(worker, workerName) {
   });
 
   worker.on("completed", (job) => {
-    activeJobs.delete(String(job?.id));
+    const jobId = String(job?.id);
+    const startedAt = activeJobStartedAt.get(jobId);
+    activeJobs.delete(jobId);
+    activeJobStartedAt.delete(jobId);
     runWithContext(contextFromJob(job, workerName), () => {
+      recordQueueJob({
+        queueName: workerName,
+        event: "completed",
+        durationMs: startedAt ? Date.now() - startedAt : undefined,
+      });
       logger.queue("Queue job completed", {
         queue: workerName,
         jobId: job?.id,
@@ -95,10 +116,19 @@ function registerWorkerEvents(worker, workerName) {
   });
 
   worker.on("failed", (job, err) => {
-    activeJobs.delete(String(job?.id));
+    const jobId = String(job?.id);
+    const startedAt = activeJobStartedAt.get(jobId);
+    activeJobs.delete(jobId);
+    activeJobStartedAt.delete(jobId);
     runWithContext(contextFromJob(job, workerName), () => {
       const attempts = Number(job?.opts?.attempts || 1);
       const retryExhausted = Number(job?.attemptsMade || 0) >= attempts;
+      recordQueueJob({
+        queueName: workerName,
+        event: retryExhausted ? "retry_exhausted" : "failed",
+        durationMs: startedAt ? Date.now() - startedAt : undefined,
+        retryExhausted,
+      });
       logger.error("Queue job failed", {
         queue: workerName,
         jobId: job?.id,
@@ -137,6 +167,8 @@ function registerWorkerEvents(worker, workerName) {
   worker.on("stalled", (jobId, previous) => {
     const normalizedJobId = String(jobId);
     activeJobs.delete(normalizedJobId);
+    activeJobStartedAt.delete(normalizedJobId);
+    recordQueueJob({ queueName: workerName, event: "stalled" });
     logger.warn("Queue job stalled and will be recovered by BullMQ", {
       queue: workerName,
       jobId: normalizedJobId,
@@ -166,6 +198,7 @@ function registerWorkerEvents(worker, workerName) {
   });
 
   worker.on("error", (err) => {
+    recordQueueJob({ queueName: workerName, event: "worker_error" });
     logger.error("Queue worker error", {
       queue: workerName,
       err,

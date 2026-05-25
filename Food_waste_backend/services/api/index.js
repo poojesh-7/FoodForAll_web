@@ -44,6 +44,7 @@ const {
 } = require("../../utils/token");
 const requestContextMiddleware = require("../../middlewares/requestContext.middleware");
 const healthRoutes = require("../../routes/health.routes");
+const metricsRoutes = require("../../routes/metrics.routes");
 const {
   registerProcessErrorHandlers,
 } = require("../../shared/services/errorTracking.service");
@@ -91,6 +92,7 @@ app.use(sanitizeQueryAndParams);
 app.use(requestContextMiddleware);
 app.use("/api/v1", globalLimiter);
 app.use("/health", healthRoutes);
+app.use("/metrics", metricsRoutes);
 // require("../../admin/cleanup");
 
 io.use((socket, next) => {

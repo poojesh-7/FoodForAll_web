@@ -9,6 +9,7 @@ const refundQueue = require("../../queues/refund.queue");
 const operationalCleanupQueue = require("../../queues/operationalCleanup.queue");
 const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { ensureObservabilitySchema, recordAlert } = require("./observability.service");
+const { setGauge, setQueueCountGauge } = require("./metrics.service");
 
 const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
 const STUCK_ACTIVE_MS = Number(process.env.QUEUE_STUCK_ACTIVE_MS || 15 * 60 * 1000);
@@ -136,6 +137,14 @@ async function getQueueHealth({ includeJobs = true } = {}) {
         deadLetterWaiting
           ? "degraded"
           : "healthy";
+
+      for (const [state, value] of Object.entries(counts)) {
+        setQueueCountGauge(queue.name, state, Number(value || 0));
+      }
+      setGauge("food_rescue_queue_status", { queue: queue.name }, status === "healthy" ? 1 : 0);
+      setGauge("food_rescue_queue_retry_exhausted", { queue: queue.name }, retryExhausted.length);
+      setGauge("food_rescue_queue_stuck_active", { queue: queue.name }, stuckActive.length);
+      setGauge("food_rescue_queue_overdue_delayed", { queue: queue.name }, overdueDelayed.length);
 
       if (retryExhausted.length > 0) {
         void recordAlert({

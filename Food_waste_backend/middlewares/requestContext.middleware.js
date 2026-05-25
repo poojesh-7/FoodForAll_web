@@ -1,4 +1,5 @@
 const logger = require("../shared/utils/logger");
+const { recordHttpRequest } = require("../shared/services/metrics.service");
 const {
   contextFromRequest,
   mergeContext,
@@ -11,7 +12,9 @@ function requestContextMiddleware(req, res, next) {
 
   runWithContext(context, () => {
     req.requestId = context.requestId;
+    req.correlationId = context.correlationId;
     res.setHeader("x-request-id", context.requestId);
+    res.setHeader("x-correlation-id", context.correlationId);
 
     res.on("finish", () => {
       mergeContext({
@@ -24,12 +27,17 @@ function requestContextMiddleware(req, res, next) {
       const meta = {
         method: req.method,
         path: req.originalUrl,
+        route: req.route
+          ? `${req.baseUrl || ""}${req.route.path || ""}`
+          : req.path,
         statusCode: res.statusCode,
         durationMs: Math.round(durationMs),
         userId: req.user?.id,
         role: req.user?.role,
         ip: req.ip,
       };
+
+      recordHttpRequest(meta);
 
       if (res.statusCode >= 500) {
         logger.error("HTTP request completed with server error", meta);

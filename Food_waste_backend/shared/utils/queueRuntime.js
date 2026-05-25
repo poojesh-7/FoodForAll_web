@@ -1,13 +1,67 @@
 const logger = require("./logger");
+const { getContext } = require("./requestContext");
 
 const registeredQueues = new Map();
 const registeredWorkers = new Map();
 const registeredTimers = new Map();
+const TRACE_PATCHED = Symbol("tracePatched");
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function attachTraceContext(data) {
+  if (!isPlainObject(data)) return data;
+
+  const context = getContext();
+  if (!context.requestId && !context.correlationId) return data;
+
+  return {
+    ...data,
+    requestId: data.requestId || data.request_id || context.requestId,
+    correlationId:
+      data.correlationId ||
+      data.correlation_id ||
+      context.correlationId ||
+      context.requestId,
+    userId: data.userId || data.user_id || context.userId,
+    role: data.role || context.role,
+    reservationId: data.reservationId || data.reservation_id || context.reservationId,
+    paymentSessionId:
+      data.paymentSessionId ||
+      data.payment_session_id ||
+      context.paymentSessionId,
+  };
+}
+
+function patchQueueTraceContext(queue) {
+  if (queue[TRACE_PATCHED]) return;
+
+  const originalAdd = queue.add.bind(queue);
+  queue.add = (name, data, opts) => originalAdd(name, attachTraceContext(data), opts);
+
+  if (typeof queue.addBulk === "function") {
+    const originalAddBulk = queue.addBulk.bind(queue);
+    queue.addBulk = (jobs) =>
+      originalAddBulk(
+        jobs.map((job) => ({
+          ...job,
+          data: attachTraceContext(job.data),
+        }))
+      );
+  }
+
+  Object.defineProperty(queue, TRACE_PATCHED, {
+    value: true,
+    enumerable: false,
+  });
+}
 
 function registerQueue(queue) {
   if (!queue?.name) return queue;
 
   if (!registeredQueues.has(queue.name)) {
+    patchQueueTraceContext(queue);
     registeredQueues.set(queue.name, queue);
     queue.on("error", (err) => {
       logger.error("Queue connection error", {

@@ -144,6 +144,23 @@ Queue recovery:
 - Retry exhausted jobs from admin queue UI only after checking idempotency and any related payment/refund state.
 - Inspect `dead-letter-queue` before cleaning failed jobs.
 
+## Observability
+
+Every API request receives `x-request-id` and `x-correlation-id`; queue jobs inherit that context when they are enqueued during a request. Structured logs include request, correlation, user, reservation, payment, queue job, and worker context while redacting tokens, signatures, cookies, OTPs, payment session IDs, and payment payload details.
+
+Health and metrics endpoints:
+
+- `/health`: database, Redis, websocket, worker heartbeat, open alert, and metrics summary.
+- `/health/queues`: queue counts, delayed backlog, stalled/retry-exhausted jobs, dead-letter growth, and worker heartbeat state.
+- `/health/payments`: payment summary, webhook failures, stale sessions, and reconciliation diagnostics.
+- `/metrics` and `/health/metrics`: Prometheus-compatible scrape output.
+- `/api/v1/admin/operations/diagnostics`: authenticated admin operational rollup for health, queues, payments, reservations, recent events, and metrics.
+- `/api/v1/admin/operations/metrics`: authenticated admin JSON metrics summary.
+
+Set `METRICS_TOKEN` in production before allowing monitoring systems to scrape `/metrics` or `/health/metrics`. Scrapers must send either `Authorization: Bearer <token>` or `x-metrics-token: <token>`. Without a token, production metrics endpoints return `404`.
+
+Alert sources are centralized through operational alerts for Redis disconnects, worker errors, stalled jobs, retry exhaustion, webhook failures, reconciliation failures, and repeated queue/payment degradation. Treat open alerts as operational work items; resolve only after the root cause and any replay/reconciliation step is complete.
+
 Webhook recovery:
 
 - Use `cashfree_webhook_events` to identify failed or duplicate events.

@@ -20,6 +20,7 @@ const {
 const {
   ensureReservationPaymentContextSchema,
 } = require("../shared/services/reservationPaymentContext.service");
+const { recordReservationCreated } = require("../shared/services/metrics.service");
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
@@ -554,6 +555,17 @@ exports.bulkReserve = async (req, res) => {
       : null;
 
     await client.query("COMMIT");
+    recordReservationCreated({
+      pickupType: "ngo",
+      paymentStatus: policy.requiresDeposit ? "pending" : "not_required",
+      source: "ngo_bulk_reserve",
+      count: created.length,
+    });
+    logger.info("NGO reservations created", {
+      userId: req.user.id,
+      reservationCount: created.length,
+      requiresPayment: Boolean(policy.requiresDeposit),
+    });
 
     await Promise.all([
       ...created.map((reservation) =>
@@ -1438,6 +1450,18 @@ exports.acceptNGORequest = async (req, res) => {
 
     // 7️⃣ Mark listing completed
     await client.query("COMMIT");
+    recordReservationCreated({
+      pickupType: createdReservation.pickup_type,
+      paymentStatus: createdReservation.payment_status,
+      source: "ngo_request_accept",
+    });
+    logger.info("NGO request reservation created", {
+      userId: req.user.id,
+      requestId,
+      reservationId: createdReservation.id,
+      paymentStatus: createdReservation.payment_status,
+      requiresPayment: Boolean(policy.requiresDeposit),
+    });
 
     // 🔔 Notification AFTER commit
     await Promise.all([

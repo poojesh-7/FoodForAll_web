@@ -9,6 +9,7 @@ import RatingForm from "@/components/ratings/RatingForm";
 import ProviderReportForm from "@/components/reservations/ProviderReportForm";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
+import { classifyReservationLifecycle } from "@/lib/reservationLifecycle";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
   getPaymentRemainingMs,
@@ -37,29 +38,12 @@ type ActiveReservationFilter =
 type ReservationTab = "active" | "completed" | "failed";
 
 function getReservationState(reservation: NGOReservationHistoryRow) {
-  const status = String(reservation.status ?? "").toLowerCase();
+  const lifecycle = classifyReservationLifecycle(reservation);
   const taskStatus = String(reservation.task_status ?? "").toLowerCase();
-  const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
 
-  if (
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "expired" ||
-    paymentStatus === "expired" ||
-    paymentStatus === "failed"
-  ) {
-    return "failed";
-  }
-  if (status === "payment_pending" || paymentStatus === "pending") {
-    return "payment_pending";
-  }
-  if (
-    taskStatus === "delivered" ||
-    status === "picked_up" ||
-    Boolean(reservation.completed_at)
-  ) {
-    return "completed";
-  }
+  if (lifecycle.group === "history" && lifecycle.status !== "completed") return "failed";
+  if (lifecycle.status === "payment_pending") return "payment_pending";
+  if (lifecycle.status === "completed") return "completed";
   if (taskStatus === "picked_from_provider") return "picked_from_provider";
   if (taskStatus === "in_progress") return "volunteer_started";
   if (taskStatus === "pending") return "pending";

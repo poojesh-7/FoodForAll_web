@@ -13,6 +13,7 @@ import {
   savePaymentSession,
 } from "@/lib/payment-flow";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
+import { classifyReservationLifecycle } from "@/lib/reservationLifecycle";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, ReservationHistoryRow } from "@shared/contracts/api-contracts";
@@ -21,29 +22,9 @@ type ReservationBucket = "active" | "completed" | "archived";
 type ReservationTab = ReservationBucket;
 
 function getReservationBucket(reservation: ReservationHistoryRow): ReservationBucket {
-  const status = String(reservation.status ?? "").toLowerCase();
-  const taskStatus = String(reservation.task_status ?? "").toLowerCase();
-  const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
-
-  if (
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "expired" ||
-    paymentStatus === "failed" ||
-    paymentStatus === "expired"
-  ) {
-    return "archived";
-  }
-
-  if (
-    status === "picked_up" ||
-    status === "delivered" ||
-    taskStatus === "delivered" ||
-    Boolean(reservation.completed_at)
-  ) {
-    return "completed";
-  }
-
+  const lifecycle = classifyReservationLifecycle(reservation);
+  if (lifecycle.status === "completed") return "completed";
+  if (lifecycle.group === "history") return "archived";
   return "active";
 }
 

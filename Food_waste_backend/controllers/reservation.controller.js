@@ -26,6 +26,9 @@ const {
   blockingReservationWhere,
   pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
+const {
+  lifecycleSql,
+} = require("../shared/services/reservationLifecycle.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   ensureReservationPaymentContextSchema,
@@ -653,10 +656,12 @@ exports.getProviderReservations = async (req, res) => {
              r.task_status,
              r.status,
              r.payment_status,
+             r.payment_expires_at,
              r.reserved_at,
              r.assigned_at,
              r.picked_up_at,
              r.completed_at,
+             ${lifecycleSql("r")} AS lifecycle_group,
              f.id AS listing_id,
              f.title,
              f.description,
@@ -682,7 +687,6 @@ exports.getProviderReservations = async (req, res) => {
       LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN payments p ON p.reservation_id = r.id
       WHERE f.provider_id = $1
-      AND NOT (r.status='payment_pending' AND r.payment_status='pending')
       ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC
       `,
       [req.user.id],

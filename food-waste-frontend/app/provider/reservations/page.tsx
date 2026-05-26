@@ -9,6 +9,10 @@ import {
   type ReservationPaymentState,
 } from "@/lib/payment-flow";
 import { mergeRealtimeRows } from "@/lib/realtimeMerge";
+import {
+  classifyReservationLifecycle,
+  isHistoricalReservation,
+} from "@/lib/reservationLifecycle";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, ProviderReservationRow } from "@shared/contracts/api-contracts";
@@ -18,11 +22,13 @@ type LifecycleView = "active" | "history";
 type StatusFilter =
   | "all"
   | "active"
+  | "payment_pending"
   | "reserved"
   | "in_progress"
   | "completed"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "failed";
 type TypeFilter = "all" | "ngo" | "user";
 type PaymentFilter = "all" | "paid" | "pending" | "refunded";
 
@@ -54,28 +60,14 @@ function getReservationType(reservation: ProviderReservationRow): "ngo" | "user"
 }
 
 function getOperationalStatus(reservation: ProviderReservationRow): StatusFilter {
-  const status = String(reservation.status ?? "").toLowerCase();
-  const taskStatus = String(reservation.task_status ?? "").toLowerCase();
-  const paymentStatus = String(reservation.payment_status ?? "").toLowerCase();
-
-  if (status === "cancelled") return "cancelled";
-  if (status === "expired" || paymentStatus === "expired") return "expired";
-  if (
-    status === "completed" ||
-    status === "picked_up" ||
-    taskStatus === "delivered" ||
-    Boolean(reservation.completed_at)
-  ) {
-    return "completed";
-  }
-  if (
-    taskStatus === "in_progress" ||
-    taskStatus === "picked_from_provider" ||
-    taskStatus === "assigned"
-  ) {
-    return "in_progress";
-  }
-  if (status === "reserved") return "reserved";
+  const lifecycle = classifyReservationLifecycle(reservation);
+  if (lifecycle.status === "payment_pending") return "payment_pending";
+  if (lifecycle.status === "reserved") return "reserved";
+  if (lifecycle.status === "in_progress") return "in_progress";
+  if (lifecycle.status === "completed") return "completed";
+  if (lifecycle.status === "cancelled") return "cancelled";
+  if (lifecycle.status === "expired") return "expired";
+  if (lifecycle.status === "failed") return "failed";
   return "active";
 }
 
@@ -83,11 +75,13 @@ function getStatusLabel(status: StatusFilter) {
   const labels: Record<StatusFilter, string> = {
     all: "All",
     active: "Active",
+    payment_pending: "Payment Pending",
     reserved: "Reserved",
     in_progress: "In Progress",
     completed: "Completed",
     cancelled: "Cancelled",
     expired: "Expired",
+    failed: "Failed",
   };
 
   return labels[status];
@@ -101,7 +95,10 @@ function getStatusClasses(status: StatusFilter) {
   if (status === "completed") {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
   }
-  if (status === "cancelled" || status === "expired") {
+  if (status === "payment_pending") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+  if (status === "cancelled" || status === "expired" || status === "failed") {
     return "border-zinc-200 bg-zinc-100 text-zinc-600";
   }
   return "border-zinc-200 bg-white text-zinc-700";
@@ -111,12 +108,6 @@ function getPaymentFilterState(state: ReservationPaymentState): PaymentFilter {
   if (state === "paid" || state === "not_required") return "paid";
   if (state === "refunded" || state === "refund_pending") return "refunded";
   return "pending";
-}
-
-function isHistoricalReservation(reservation: ProviderReservationRow) {
-  return ["completed", "cancelled", "expired"].includes(
-    getOperationalStatus(reservation)
-  );
 }
 
 function matchesQuery(reservation: ProviderReservationRow, query: string) {
@@ -149,13 +140,6 @@ function filterReservations({
   typeFilter: TypeFilter;
   paymentFilter: PaymentFilter;
 }) {
-  const normalizedQuery = query.trim().toLowerCase();
-  const exactMatch = reservations.find(
-    (reservation) =>
-      getReservationDisplayId(reservation.id).toLowerCase() === normalizedQuery
-  );
-  if (exactMatch) return [exactMatch];
-
   return reservations.filter((reservation) => {
     const operationalStatus = getOperationalStatus(reservation);
     const reservationType = getReservationType(reservation);
@@ -555,11 +539,13 @@ export default function ProviderReservationsPage() {
                 >
                   <option value="all">All statuses</option>
                   <option value="active">Active</option>
+                  <option value="payment_pending">Payment Pending</option>
                   <option value="reserved">Reserved</option>
                   <option value="in_progress">In Progress</option>
                   <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>
                   <option value="expired">Expired</option>
+                  <option value="failed">Failed</option>
                 </select>
                 <select
                   value={typeFilter}

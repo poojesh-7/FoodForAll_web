@@ -458,6 +458,7 @@ export interface ProviderReservationRow extends ReservationDetails {
   requester_name: string | null;
   requester_phone: string | null;
   reservation_kind: "user" | "ngo" | string;
+  lifecycle_group?: "active" | "history" | string;
 }
 
 export interface RatingRow extends DbRow {

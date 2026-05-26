@@ -32,6 +32,7 @@ const {
 } = require("../shared/services/reservationPaymentContext.service");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
 const { jobOptions } = require("../shared/utils/queueOptions");
+const { withTransaction } = require("../shared/utils/transaction");
 const {
   publishListingUpdated,
   publishPaymentUpdated,
@@ -138,6 +139,54 @@ async function notifyReservationCancelled(req, reservation) {
   });
 }
 
+async function cancelPaymentInitializationHold(reservationId, reason) {
+  return withTransaction(
+    pool,
+    async (client) => {
+      const { reservation } = await lockReservationGraph(client, reservationId, {
+        lockPayments: true,
+      });
+
+      if (
+        !reservation ||
+        reservation.status !== "payment_pending" ||
+        reservation.payment_status !== "pending"
+      ) {
+        return null;
+      }
+
+      const restoredListing = await restoreReservationStockIfHeld(client, reservation, {
+        reason,
+      });
+
+      await client.query(
+        `
+        UPDATE reservations
+        SET status='payment_failed',
+            payment_status='failed',
+            payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+              jsonb_build_object('payment_initialization_failed_at', NOW())
+        WHERE id=$1
+        AND status='payment_pending'
+        AND payment_status='pending'
+        `,
+        [reservation.id]
+      );
+
+      return {
+        listingId: reservation.listing_id,
+        restoredListing,
+      };
+    },
+    {
+      name: "payment_initialization_hold_cancel",
+      maxAttempts: 4,
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 20000,
+    }
+  );
+}
+
 exports.createReservation = async (req, res) => {
   if (req.user.role !== "user")
     return res.status(403).json({ error: "Only users allowed" });
@@ -153,159 +202,256 @@ exports.createReservation = async (req, res) => {
     return res.status(400).json({ error: "Quantity must be 1 or 2" });
   }
 
-  const client = await pool.connect();
-
   try {
     if (quantityValue > 2) throw withStatus("Max 2 items allowed", 400);
 
-    await client.query("BEGIN");
-    await ensureReservationPaymentContextSchema(client);
-    await ensureUserPaymentSpamLimit(client, req.user.id);
+    const hold = await withTransaction(
+      pool,
+      async (client) => {
+        await ensureReservationPaymentContextSchema(client);
+        await ensureUserPaymentSpamLimit(client, req.user.id);
 
-    const foodResult = await client.query(
-      `
-      SELECT f.*
-      FROM food_listings f
-      WHERE f.id=$1
-      AND EXISTS (
-        SELECT 1
-        FROM restaurants approved_restaurant
-        WHERE approved_restaurant.user_id=f.provider_id
-        AND approved_restaurant.is_verified=true
-      )
-      FOR UPDATE OF f
-      `,
-      [listing_id]
+        const foodResult = await client.query(
+          `
+          SELECT f.*
+          FROM food_listings f
+          WHERE f.id=$1
+          AND EXISTS (
+            SELECT 1
+            FROM restaurants approved_restaurant
+            WHERE approved_restaurant.user_id=f.provider_id
+            AND approved_restaurant.is_verified=true
+          )
+          FOR UPDATE OF f
+          `,
+          [listing_id]
+        );
+
+        if (!foodResult.rows.length) throw withStatus("Listing not found", 404);
+
+        const food = foodResult.rows[0];
+
+        if (food.is_free) {
+          throw withStatus("Free listings are only available for NGOs", 403);
+        }
+
+        if (Number(food.remaining_quantity) < quantityValue) {
+          throw withStatus("Not enough quantity", 409);
+        }
+
+        if (String(food.status || "active") !== "active") {
+          throw withStatus("Listing is not active", 409);
+        }
+
+        if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
+          throw withStatus("Listing pickup window has ended", 409);
+        }
+
+        await ensureListingNotPreviouslyReserved(client, req.user.id, listing_id);
+
+        const foodAmount = Number(food.price) * quantityValue;
+        const policy = await getReservationPolicy({
+          client,
+          userId: req.user.id,
+          role: req.user.role,
+          foodCost: foodAmount,
+        });
+
+        if (!policy.canReserve) {
+          throw withStatus(policy.restrictionReason || "Reservation restricted", 403);
+        }
+
+        await reserveListingStock(client, {
+          listingId: listing_id,
+          quantity: quantityValue,
+        });
+
+        const reservationResult = await client.query(
+          `
+          INSERT INTO reservations
+          (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status, payment_context)
+          VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending',$5::jsonb)
+          RETURNING *
+          `,
+          [
+            listing_id,
+            req.user.id,
+            quantityValue,
+            null,
+            JSON.stringify({
+              source: "user_reservation",
+              stock_reserved: true,
+              payment_initializing: true,
+            }),
+          ]
+        );
+
+        const reservation = reservationResult.rows[0];
+        const depositAmount = policy.requiresDeposit ? policy.depositAmount : 0;
+
+        return {
+          reservation,
+          foodAmount,
+          depositAmount,
+          policy,
+        };
+      },
+      {
+        name: "user_reservation_stock_hold",
+        maxAttempts: 4,
+        lockTimeoutMs: 2500,
+        statementTimeoutMs: 20000,
+      }
     );
 
-    if (!foodResult.rows.length) throw withStatus("Listing not found", 404);
-
-    const food = foodResult.rows[0];
-
-    /*
-    🚨 BLOCK FREE LISTINGS FOR USERS
-    */
-    if (food.is_free) {
-      throw withStatus("Free listings are only available for NGOs", 403);
-    }
-
-    if (String(food.status || "active") !== "active") {
-      throw withStatus("Listing is not active", 409);
-    }
-
-    if (new Date(food.pickup_end_time).getTime() <= Date.now()) {
-      throw withStatus("Listing pickup window has ended", 409);
-    }
-
-    await ensureListingNotPreviouslyReserved(
-      client,
-      req.user.id,
-      listing_id
-    );
-
-    if (food.remaining_quantity < quantityValue)
-      throw withStatus("Not enough quantity", 409);
-
-    const foodAmount = Number(food.price) * quantityValue;
-    const policy = await getReservationPolicy({
-      client,
-      userId: req.user.id,
-      role: req.user.role,
-      foodCost: foodAmount,
-    });
-
-    if (!policy.canReserve) {
-      throw withStatus(policy.restrictionReason || "Reservation restricted", 403);
-    }
-
-    await reserveListingStock(client, {
-      listingId: listing_id,
-      quantity: quantityValue,
-    });
     logger.info("Inventory reserved for pending payment", {
       userId: req.user.id,
       listingId: listing_id,
       quantity: quantityValue,
+      reservationId: hold.reservation.id,
     });
 
-    /*
-    CREATE RESERVATION
-    */
-    const reservationResult = await client.query(
-      `
-      INSERT INTO reservations
-      (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status, payment_context)
-      VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending',$5::jsonb)
-      RETURNING *
-      `,
-      [
-        listing_id,
-        req.user.id,
-        quantityValue,
-        null,
-        JSON.stringify({ source: "user_reservation", stock_reserved: true }),
-      ]
+    await publishListingUpdated(listing_id, { action: "quantity_updated" }).catch(
+      (err) => {
+        logger.warn("Pending reservation listing update publish failed", {
+          err,
+          listingId: listing_id,
+          reservationId: hold.reservation.id,
+        });
+      }
     );
 
-    const reservation = reservationResult.rows[0];
+    let responseReservation = hold.reservation;
+    let payment;
+    try {
+      const paymentSession = await withTransaction(
+        pool,
+        async (client) => {
+          const lockedReservation = await client.query(
+            `
+            SELECT *
+            FROM reservations
+            WHERE id=$1
+            FOR UPDATE
+            `,
+            [hold.reservation.id]
+          );
+          const pendingReservation = lockedReservation.rows[0];
 
-    /*
-    💳 PAYMENT (MANDATORY NOW)
-    */
-    const depositAmount = policy.requiresDeposit ? policy.depositAmount : 0;
-    const payment = await createReservationPayment({
-      client,
-      user: req.user,
-      reservations: [
-        {
-          ...reservation,
-          food_amount: foodAmount,
-          reliability_deposit_amount: depositAmount,
+          if (
+            !pendingReservation ||
+            pendingReservation.status !== "payment_pending" ||
+            pendingReservation.payment_status !== "pending"
+          ) {
+            throw withStatus("Reservation hold is no longer pending payment", 409);
+          }
+
+          const createdPayment = await createReservationPayment({
+            client,
+            user: req.user,
+            reservations: [
+              {
+                ...pendingReservation,
+                food_amount: hold.foodAmount,
+                reliability_deposit_amount: hold.depositAmount,
+              },
+            ],
+          });
+
+          const updatedReservation = await client.query(
+            `
+            UPDATE reservations
+            SET payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+              jsonb_build_object('payment_initializing', false, 'payment_initialized_at', NOW())
+            WHERE id=$1
+            AND status='payment_pending'
+            AND payment_status='pending'
+            RETURNING *
+            `,
+            [pendingReservation.id]
+          );
+
+          return {
+            payment: createdPayment,
+            reservation: updatedReservation.rows[0] || pendingReservation,
+          };
         },
-      ],
-    });
+        {
+          name: "user_reservation_payment_session",
+          maxAttempts: 1,
+          lockTimeoutMs: 2500,
+          statementTimeoutMs: 30000,
+        }
+      );
+      payment = paymentSession.payment;
+      responseReservation = paymentSession.reservation;
+    } catch (paymentErr) {
+      try {
+        const cleanup = await cancelPaymentInitializationHold(
+          hold.reservation.id,
+          "payment_initialization_failed"
+        );
 
-    await client.query("COMMIT");
+        if (cleanup?.listingId) {
+          await publishListingUpdated(cleanup.listingId, {
+            action: "quantity_updated",
+          }).catch((publishErr) => {
+            logger.warn("Payment initialization cleanup publish failed", {
+              err: publishErr,
+              listingId: cleanup.listingId,
+              reservationId: hold.reservation.id,
+            });
+          });
+        }
+      } catch (cleanupErr) {
+        logger.error("Payment initialization cleanup failed", {
+          err: cleanupErr,
+          reservationId: hold.reservation.id,
+          listingId: listing_id,
+        });
+      }
+
+      throw paymentErr;
+    }
+
     recordReservationCreated({
-      pickupType: reservation.pickup_type,
-      paymentStatus: reservation.payment_status,
+      pickupType: responseReservation.pickup_type,
+      paymentStatus: responseReservation.payment_status,
       source: "user_reservation",
     });
     logger.info("Reservation created", {
-      reservationId: reservation.id,
+      reservationId: responseReservation.id,
       userId: req.user.id,
       listingId: listing_id,
-      paymentStatus: reservation.payment_status,
+      paymentStatus: responseReservation.payment_status,
     });
+
     await publishListingUpdated(listing_id, { action: "quantity_updated" }).catch(
       (err) => {
         logger.warn("Reservation listing update publish failed", {
           err,
           listingId: listing_id,
-          reservationId: reservation.id,
+          reservationId: responseReservation.id,
         });
       }
     );
 
     res.status(201).json({
-      reservation,
+      reservation: responseReservation,
       payment,
       pricing: {
-        foodAmount,
-        depositAmount,
-        totalAmount: foodAmount + depositAmount,
-        requiresDeposit: depositAmount > 0,
+        foodAmount: hold.foodAmount,
+        depositAmount: hold.depositAmount,
+        totalAmount: hold.foodAmount + hold.depositAmount,
+        requiresDeposit: hold.depositAmount > 0,
       },
       policy: {
-        ...policy,
-        depositAmount,
-        requiresDeposit: depositAmount > 0,
+        ...hold.policy,
+        depositAmount: hold.depositAmount,
+        requiresDeposit: hold.depositAmount > 0,
       },
     });
-
   } catch (err) {
-    await client.query("ROLLBACK");
-
     if (
       err.code === "23505" ||
       err.constraint === "unique_active_reservation" ||
@@ -326,8 +472,6 @@ exports.createReservation = async (req, res) => {
     res.status(err.statusCode || 400).json({
       error: err.message || "Reservation failed",
     });
-  } finally {
-    client.release();
   }
 };
 

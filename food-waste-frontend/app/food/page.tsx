@@ -22,7 +22,19 @@ export default function FoodMarketplacePage() {
     foodService
       .getActiveFood()
       .then((result) => {
-        if (active) setListings(result.filter(isNormalUserPaidListing));
+        if (active) {
+          const realtimeListings = useRealtimeStore.getState().listings;
+          setListings(
+            mergeListingRows<FoodListingRow>(
+              result.filter(isNormalUserPaidListing),
+              realtimeListings
+            ).filter(
+              (listing) =>
+                isNormalUserPaidListing(listing) &&
+                Number(listing.remaining_quantity ?? 0) > 0
+            )
+          );
+        }
       })
       .catch((err) => {
         if (active) setError(foodService.getErrorMessage(err));

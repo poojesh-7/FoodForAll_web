@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LocateFixed, MapPin, Search } from "lucide-react";
 import FoodCard from "@/components/FoodCard";
 import { isNormalUserPaidListing } from "@/lib/food";
+import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { FoodCardListing } from "@/lib/food";
 
 type NearbyForm = {
@@ -31,6 +33,21 @@ export default function NearbyFoodPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [locationStatus, setLocationStatus] = useState("Location not set");
+  const listingVersion = useRealtimeStore((state) => state.listingVersion);
+  const listingsById = useRealtimeStore((state) => state.listings);
+
+  useEffect(() => {
+    if (!listingVersion) return;
+    queueMicrotask(() =>
+      setResults((current) =>
+        mergeListingRows<FoodCardListing>(current, listingsById).filter(
+          (listing) =>
+            isNormalUserPaidListing(listing) &&
+            Number(listing.remaining_quantity ?? 0) > 0
+        )
+      )
+    );
+  }, [listingVersion, listingsById]);
 
   const search = async (nextForm = form) => {
     if (!nextForm.lat || !nextForm.lng) {
@@ -49,7 +66,17 @@ export default function NearbyFoodPage() {
         radius: nextForm.radius,
       });
 
-      setResults(data.filter(isNormalUserPaidListing));
+      const realtimeListings = useRealtimeStore.getState().listings;
+      setResults(
+        mergeListingRows<FoodCardListing>(
+          data.filter(isNormalUserPaidListing),
+          realtimeListings
+        ).filter(
+          (listing) =>
+            isNormalUserPaidListing(listing) &&
+            Number(listing.remaining_quantity ?? 0) > 0
+        )
+      );
       setLocationStatus(`Searching within ${nextForm.radius || "5"} km`);
     } catch (err) {
       setError(foodService.getErrorMessage(err));

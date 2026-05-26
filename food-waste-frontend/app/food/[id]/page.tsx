@@ -24,6 +24,7 @@ import { foodService } from "@/services/food.service";
 import { impactService } from "@/services/impact.service";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import { formatFoodDate, getListingPrice, getRestaurantDisplayName } from "@/lib/food";
 import {
   getReservationPaymentState,
@@ -49,6 +50,17 @@ function delay(ms: number) {
 function getRemainingQuantity(listing: FoodListingRow) {
   const remaining = Number(listing.remaining_quantity ?? listing.quantity ?? 0);
   return Number.isFinite(remaining) ? remaining : 0;
+}
+
+function mergeListingState(
+  current: FoodListingRow | null,
+  update?: FoodListingRow | null
+) {
+  if (!current || !update || String(current.id) !== String(update.id)) {
+    return current;
+  }
+
+  return { ...current, ...update };
 }
 
 function displayValue(value: unknown) {
@@ -103,6 +115,8 @@ export default function FoodDetailPage() {
   const [checkoutMessage, setCheckoutMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const listingVersion = useRealtimeStore((state) => state.listingVersion);
+  const listingsById = useRealtimeStore((state) => state.listings);
 
   useEffect(() => {
     let active = true;
@@ -125,7 +139,10 @@ export default function FoodDetailPage() {
         ]);
 
         if (!active) return;
-        setListing(result);
+        const realtimeListing = result.id
+          ? useRealtimeStore.getState().listings[String(result.id)]
+          : null;
+        setListing(realtimeListing ? { ...result, ...realtimeListing } : result);
         setListingImpact(impact);
         setRatings(listingRatings);
         setProviderRatings(providerSummary);
@@ -142,6 +159,44 @@ export default function FoodDetailPage() {
       active = false;
     };
   }, [params.id]);
+
+  useEffect(() => {
+    if (!listingVersion || !listing?.id) return;
+    const realtimeListing = listingsById[String(listing.id)];
+    if (!realtimeListing) return;
+
+    queueMicrotask(() => {
+      setListing((current) => mergeListingState(current, realtimeListing));
+    });
+  }, [listingVersion, listingsById, listing?.id]);
+
+  const refreshListingSnapshot = async () => {
+    if (!listing?.id) return;
+
+    try {
+      const latest = await foodService.getFoodById(listing.id);
+      const realtimeListing = useRealtimeStore.getState().listings[String(listing.id)];
+      setListing(realtimeListing ? { ...latest, ...realtimeListing } : latest);
+    } catch {
+      // The websocket snapshot remains the primary recovery path for transient refresh failures.
+    }
+  };
+
+  const applyConfirmedLocalHold = (reservedQuantity: number, previousRemaining: number) => {
+    setListing((current) => {
+      if (!current || String(current.id) !== String(params.id)) return current;
+
+      const currentRemaining = getRemainingQuantity(current);
+      if (currentRemaining < previousRemaining) return current;
+
+      const nextRemaining = Math.max(currentRemaining - reservedQuantity, 0);
+      return {
+        ...current,
+        remaining_quantity: nextRemaining,
+        status: nextRemaining > 0 ? current.status : "completed",
+      };
+    });
+  };
 
   useEffect(() => {
     if (!listing?.id || listing.is_free) {
@@ -218,6 +273,7 @@ export default function FoodDetailPage() {
 
     const quantityValue = Number(quantity);
     const maxQuantity = Math.min(getRemainingQuantity(listing), 2);
+    const remainingBeforeHold = getRemainingQuantity(listing);
 
     if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
       setError("Enter a valid quantity.");
@@ -243,6 +299,8 @@ export default function FoodDetailPage() {
         throw new Error("Reservation created without an id.");
       }
 
+      applyConfirmedLocalHold(quantityValue, remainingBeforeHold);
+
       savePaymentSession({
         orderId: result.payment.order_id,
         paymentSessionId: result.payment.payment_session_id,
@@ -266,6 +324,7 @@ export default function FoodDetailPage() {
         await reservationService
           .cancelReservation(result.reservation.id)
           .catch(() => undefined);
+        await refreshListingSnapshot();
         setCheckoutMessage("");
         setError("Payment was not completed. Reservation was not created.");
         return;
@@ -289,6 +348,7 @@ export default function FoodDetailPage() {
       }
 
       if (paymentState === "failed" || paymentState === "expired") {
+        await refreshListingSnapshot();
         setCheckoutMessage("");
         setError("Payment was not completed. Reservation was not created.");
         return;

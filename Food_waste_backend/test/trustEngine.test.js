@@ -12,9 +12,19 @@ const {
 const {
   processTrustEventBatch,
 } = require("../shared/services/trustWorker.service");
+const {
+  buildPaymentTrustEvents,
+  buildReservationTrustEvents,
+  emitBuiltEvents,
+} = require("../shared/services/trustLifecycleEvent.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const EVENT_ID = "22222222-2222-4222-8222-222222222222";
+const PROVIDER_ID = "33333333-3333-4333-8333-333333333333";
+const NGO_ID = "44444444-4444-4444-8444-444444444444";
+const VOLUNTEER_ID = "55555555-5555-4555-8555-555555555555";
+const PAYMENT_ID = "66666666-6666-4666-8666-666666666666";
+const RESERVATION_ID = "77777777-7777-4777-8777-777777777777";
 
 function createEvent(overrides = {}) {
   return {
@@ -268,4 +278,168 @@ test("processTrustEventBatch is safe across repeated worker passes", async () =>
   assert.equal(second.length, 0);
   assert.equal(store.effects.size, 1);
   assert.ok(queries.some((query) => String(query.sql).includes("FOR UPDATE SKIP LOCKED")));
+});
+
+test("reservation completion derives user and provider trust events", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    listing_id: "88888888-8888-4888-8888-888888888888",
+    pickup_type: "self_pickup",
+    status: "picked_up",
+    task_status: "picked_up",
+    completed_at: new Date("2026-01-01T00:00:00.000Z"),
+    payment_id: PAYMENT_ID,
+    payment_status: "paid",
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType).sort(),
+    ["provider_successful_fulfillment", "user_pickup_completed"]
+  );
+  assert.ok(events.every((event) => event.eventKey.includes(RESERVATION_ID)));
+  assert.equal(
+    events.find((event) => event.eventType === "user_pickup_completed").eventPayload.completion_delta,
+    1
+  );
+});
+
+test("payment timeout flow derives user and system events from final reservation state", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "expired_payment",
+    task_status: "self_pickup",
+    payment_status: "expired",
+    payment_id: PAYMENT_ID,
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType).sort(),
+    ["payment_timeout", "user_payment_timeout"]
+  );
+  assert.equal(
+    events.find((event) => event.eventType === "user_payment_timeout").eventPayload.timeout_delta,
+    1
+  );
+});
+
+test("reservation cancellation derives passive cancellation events only", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "cancelled",
+    task_status: "self_pickup",
+    payment_status: "refund_pending",
+    payment_id: PAYMENT_ID,
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, "user_cancelled_reservation");
+  assert.equal(events[0].eventPayload.cancellation_delta, 1);
+});
+
+test("NGO delivery derives NGO, volunteer, and provider completion events", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: NGO_ID,
+    provider_id: PROVIDER_ID,
+    assigned_volunteer_id: VOLUNTEER_ID,
+    pickup_type: "ngo",
+    status: "picked_up",
+    task_status: "delivered",
+    completed_at: new Date("2026-01-01T00:00:00.000Z"),
+    payment_status: "not_required",
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType).sort(),
+    [
+      "ngo_delivery_completed",
+      "provider_successful_fulfillment",
+      "volunteer_delivery_completed",
+    ]
+  );
+});
+
+test("volunteer failure taxonomy distinguishes assignment timeout from delivery failure", () => {
+  const assignmentTimeout = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: NGO_ID,
+    provider_id: PROVIDER_ID,
+    assigned_volunteer_id: VOLUNTEER_ID,
+    pickup_type: "ngo",
+    status: "expired",
+    task_status: "failed",
+    picked_up_at: null,
+  });
+  const deliveryFailure = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: NGO_ID,
+    provider_id: PROVIDER_ID,
+    assigned_volunteer_id: VOLUNTEER_ID,
+    pickup_type: "ngo",
+    status: "expired",
+    task_status: "failed",
+    picked_up_at: new Date("2026-01-01T00:05:00.000Z"),
+  });
+
+  assert.ok(
+    assignmentTimeout.some((event) => event.eventType === "volunteer_assignment_timeout")
+  );
+  assert.ok(deliveryFailure.some((event) => event.eventType === "volunteer_delivery_failed"));
+});
+
+test("payment replay derives deterministic reconciliation and refund event keys", () => {
+  const row = {
+    id: PAYMENT_ID,
+    reservation_id: RESERVATION_ID,
+    user_id: USER_ID,
+    pickup_type: "self_pickup",
+    status: "refunded",
+    refund_status: "refunded",
+    last_reconciled_at: new Date("2026-01-01T00:00:00.000Z"),
+  };
+
+  const first = buildPaymentTrustEvents(row);
+  const replay = buildPaymentTrustEvents(row);
+
+  assert.deepEqual(
+    replay.map((event) => event.eventKey),
+    first.map((event) => event.eventKey)
+  );
+  assert.deepEqual(
+    first.map((event) => event.eventType).sort(),
+    ["payment_reconciled", "refund_processed", "user_refund_completed"]
+  );
+});
+
+test("emitBuiltEvents reports duplicate lifecycle emissions without re-enqueueing", async () => {
+  const seen = new Set();
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "picked_up",
+    task_status: "picked_up",
+    completed_at: new Date("2026-01-01T00:00:00.000Z"),
+  });
+
+  async function appendTrustEvent(event) {
+    const inserted = !seen.has(event.eventKey);
+    seen.add(event.eventKey);
+    return { inserted, event };
+  }
+
+  const first = await emitBuiltEvents(events, { appendTrustEvent });
+  const duplicate = await emitBuiltEvents(events, { appendTrustEvent });
+
+  assert.equal(first.every((result) => result.inserted), true);
+  assert.equal(duplicate.every((result) => !result.inserted), true);
 });

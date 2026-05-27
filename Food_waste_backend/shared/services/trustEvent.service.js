@@ -12,7 +12,8 @@ const {
 } = require("./observability.service");
 const { jobOptions } = require("../utils/queueOptions");
 
-const SUBJECT_TYPES = new Set(["user", "ngo", "volunteer", "provider"]);
+const SYSTEM_SUBJECT_ID = "00000000-0000-4000-8000-000000000000";
+const SUBJECT_TYPES = new Set(["user", "ngo", "volunteer", "provider", "system"]);
 const PROCESSABLE_STATUSES = ["pending", "retry"];
 const MAX_ATTEMPTS = Number(process.env.TRUST_EVENT_MAX_ATTEMPTS || 5);
 
@@ -162,6 +163,10 @@ async function createTrustEventIfMissing(input, options = {}) {
   return appendTrustEvent(input, options);
 }
 
+async function appendTrustEventIfMissing(input, options = {}) {
+  return appendTrustEvent(input, options);
+}
+
 async function claimTrustEvents(client, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit || 25), 100));
   const eventKey = compactText(options.eventKey, 240);
@@ -268,7 +273,7 @@ async function getTrustSubject({ subjectType, subjectId, db = pool }) {
     throw error;
   }
 
-  const [score, restrictions, summary] = await Promise.all([
+  const [score, restrictions, summary, eventTypes, sourceLineage] = await Promise.all([
     db.query(
       `
       SELECT *
@@ -297,12 +302,39 @@ async function getTrustSubject({ subjectType, subjectId, db = pool }) {
       `,
       [subjectType, subjectId]
     ),
+    db.query(
+      `
+      SELECT event_type, COUNT(*)::int AS count, MAX(created_at) AS last_seen_at
+      FROM trust_events
+      WHERE subject_type=$1 AND subject_id=$2
+      GROUP BY event_type
+      ORDER BY count DESC, last_seen_at DESC
+      LIMIT 50
+      `,
+      [subjectType, subjectId]
+    ),
+    db.query(
+      `
+      SELECT source_type, COUNT(*)::int AS count, MAX(created_at) AS last_seen_at
+      FROM trust_events
+      WHERE subject_type=$1 AND subject_id=$2
+      GROUP BY source_type
+      ORDER BY count DESC, last_seen_at DESC
+      LIMIT 20
+      `,
+      [subjectType, subjectId]
+    ),
   ]);
 
   return {
     score: score.rows[0] || null,
+    scoreBreakdown: score.rows[0] || null,
     restrictions: restrictions.rows,
     processing: summary.rows,
+    derivedMetrics: {
+      eventTypes: eventTypes.rows,
+      sourceLineage: sourceLineage.rows,
+    },
   };
 }
 
@@ -330,20 +362,30 @@ async function getTrustEvents({ subjectType, subjectId, limit = 100, db = pool }
 }
 
 async function getTrustProcessingStats(db = pool) {
+  const staleMinutes = Math.max(1, Number(process.env.TRUST_STALE_EVENT_MINUTES || 15));
   const result = await db.query(`
     SELECT
       COUNT(*) FILTER (WHERE processing_status='pending')::int AS pending,
       COUNT(*) FILTER (WHERE processing_status='retry')::int AS retry,
       COUNT(*) FILTER (WHERE processing_status='failed')::int AS failed,
       COUNT(*) FILTER (WHERE processing_status='processed')::int AS processed,
+      COUNT(*) FILTER (
+        WHERE processing_status IN ('pending', 'retry')
+        AND created_at < NOW() - ($1::int * INTERVAL '1 minute')
+      )::int AS stale_unprocessed,
       EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) * 1000 AS oldest_pending_lag_ms
     FROM trust_events
     WHERE processing_status IN ('pending', 'retry', 'failed', 'processed')
-  `);
+  `, [staleMinutes]);
   const stats = result.rows[0] || {};
   setGauge("food_rescue_trust_events_failed", {}, Number(stats.failed || 0));
   setGauge("food_rescue_trust_events_pending", {}, Number(stats.pending || 0));
   setGauge("food_rescue_trust_events_retry", {}, Number(stats.retry || 0));
+  setGauge(
+    "food_rescue_trust_events_stale_unprocessed",
+    {},
+    Number(stats.stale_unprocessed || 0)
+  );
   setGauge(
     "food_rescue_trust_processing_lag_ms",
     {},
@@ -355,6 +397,8 @@ async function getTrustProcessingStats(db = pool) {
 module.exports = {
   MAX_ATTEMPTS,
   SUBJECT_TYPES,
+  SYSTEM_SUBJECT_ID,
+  appendTrustEventIfMissing,
   appendTrustEvent,
   claimTrustEvents,
   createTrustEventIfMissing,

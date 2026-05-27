@@ -1,4 +1,6 @@
 const crypto = require("crypto");
+const logger = require("../utils/logger");
+const { incrementCounter } = require("./metrics.service");
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -103,15 +105,42 @@ function effectHash(event, effect) {
     .digest("hex");
 }
 
+function compactSql(sql) {
+  return String(sql || "").replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+async function queryProjectionStep(client, step, sql, params, event) {
+  try {
+    return await client.query(sql, params);
+  } catch (err) {
+    incrementCounter("food_rescue_trust_projection_sql_failures_total", {
+      step,
+      code: err.code || "unknown",
+    });
+    logger.warn("Trust projection SQL failed", {
+      err,
+      step,
+      eventId: event?.id,
+      eventKey: event?.event_key,
+      eventType: event?.event_type,
+      sql: compactSql(sql),
+    });
+    throw err;
+  }
+}
+
 async function insertEffectOnce(client, event, effect, hash) {
-  const inserted = await client.query(
+  const inserted = await queryProjectionStep(
+    client,
+    "insert_effect",
     `
     INSERT INTO trust_event_effects (event_id, subject_type, subject_id, effect_hash)
     VALUES ($1,$2,$3,$4)
     ON CONFLICT DO NOTHING
     RETURNING event_id
     `,
-    [event.id, effect.subjectType, effect.subjectId, hash]
+    [event.id, effect.subjectType, effect.subjectId, hash],
+    event
   );
 
   return inserted.rows.length > 0;
@@ -133,7 +162,9 @@ async function upsertTrustScore(client, event, effect) {
     effect.explicitRestrictionLevel ?? effect.restrictionLevelDelta
   );
 
-  const result = await client.query(
+  const result = await queryProjectionStep(
+    client,
+    "upsert_score",
     `
     INSERT INTO trust_scores (
       subject_type, subject_id, trust_score, penalty_level,
@@ -203,17 +234,20 @@ async function upsertTrustScore(client, event, effect) {
       effect.restrictionLevelDelta,
       effect.explicitRestrictionLevel,
       eventTime,
-    ]
+    ],
+    event
   );
 
   return result.rows[0] || null;
 }
 
-async function upsertRestriction(client, effect) {
+async function upsertRestriction(client, event, effect) {
   if (!effect.restrictionType && !effect.activeUntil) return null;
 
   const restrictionType = effect.restrictionType || "cooldown";
-  const result = await client.query(
+  const result = await queryProjectionStep(
+    client,
+    "upsert_restriction",
     `
     INSERT INTO trust_restrictions (
       restriction_type, subject_type, subject_id, active_until, metadata
@@ -237,7 +271,8 @@ async function upsertRestriction(client, effect) {
       effect.subjectId,
       effect.activeUntil || effect.cooldownUntil,
       JSON.stringify(effect.metadata || {}),
-    ]
+    ],
+    event
   );
 
   return result.rows[0] || null;
@@ -249,6 +284,16 @@ async function applyTrustEventProjection(client, event) {
   const shouldApply = await insertEffectOnce(client, event, effect, hash);
 
   if (!shouldApply) {
+    incrementCounter("food_rescue_trust_projection_conflicts_total", {
+      event_type: event.event_type || "unknown",
+      subject_type: event.subject_type || "unknown",
+    });
+    logger.info("Trust projection duplicate effect skipped", {
+      eventId: event.id,
+      eventKey: event.event_key,
+      eventType: event.event_type,
+      effectHash: hash,
+    });
     return {
       applied: false,
       effectHash: hash,
@@ -258,7 +303,7 @@ async function applyTrustEventProjection(client, event) {
   }
 
   const score = await upsertTrustScore(client, event, effect);
-  const restriction = await upsertRestriction(client, effect);
+  const restriction = await upsertRestriction(client, event, effect);
 
   return {
     applied: true,

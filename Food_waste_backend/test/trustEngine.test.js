@@ -11,6 +11,7 @@ const {
 } = require("../shared/services/trustProjection.service");
 const {
   processTrustEventBatch,
+  runTrustEventTransaction,
 } = require("../shared/services/trustWorker.service");
 const {
   buildPaymentTrustEvents,
@@ -25,6 +26,7 @@ const NGO_ID = "44444444-4444-4444-8444-444444444444";
 const VOLUNTEER_ID = "55555555-5555-4555-8555-555555555555";
 const PAYMENT_ID = "66666666-6666-4666-8666-666666666666";
 const RESERVATION_ID = "77777777-7777-4777-8777-777777777777";
+const SECOND_EVENT_ID = "99999999-9999-4999-8999-999999999999";
 
 function createEvent(overrides = {}) {
   return {
@@ -278,6 +280,220 @@ test("processTrustEventBatch is safe across repeated worker passes", async () =>
   assert.equal(second.length, 0);
   assert.equal(store.effects.size, 1);
   assert.ok(queries.some((query) => String(query.sql).includes("FOR UPDATE SKIP LOCKED")));
+});
+
+test("trust worker rolls back projection savepoint before retrying failed event", async () => {
+  const badEvent = createEvent({
+    id: EVENT_ID,
+    event_key: "reservation:abc:bad:user",
+  });
+  const goodEvent = createEvent({
+    id: SECOND_EVENT_ID,
+    event_key: "reservation:abc:good:user",
+  });
+  const store = {
+    events: [badEvent, goodEvent],
+    attempts: new Map([
+      [badEvent.id, 0],
+      [goodEvent.id, 0],
+    ]),
+    statuses: new Map([
+      [badEvent.id, "pending"],
+      [goodEvent.id, "pending"],
+    ]),
+    effects: new Set(),
+    failedOnce: false,
+    processed: new Set(),
+    queries: [],
+  };
+
+  function createClient() {
+    const tx = {
+      aborted: false,
+      savepoint: false,
+    };
+
+    return {
+      async query(sql, params = []) {
+        const statement = String(sql);
+        store.queries.push(statement);
+
+        if (
+          tx.aborted &&
+          statement !== "ROLLBACK" &&
+          !statement.startsWith("ROLLBACK TO SAVEPOINT")
+        ) {
+          throw new Error("current transaction is aborted, commands ignored until end of transaction block");
+        }
+
+        if (statement === "BEGIN" || statement.includes("set_config")) {
+          return { rows: [] };
+        }
+        if (statement === "SAVEPOINT trust_event_projection") {
+          tx.savepoint = true;
+          return { rows: [] };
+        }
+        if (statement === "ROLLBACK TO SAVEPOINT trust_event_projection") {
+          tx.aborted = false;
+          tx.savepoint = false;
+          return { rows: [] };
+        }
+        if (statement === "RELEASE SAVEPOINT trust_event_projection") {
+          tx.savepoint = false;
+          return { rows: [] };
+        }
+        if (statement === "COMMIT" || statement === "ROLLBACK") {
+          return { rows: [] };
+        }
+
+        if (statement.includes("FROM trust_events") && statement.includes("FOR UPDATE SKIP LOCKED")) {
+          const exclude = Array.isArray(params[params.length - 1])
+            ? new Set(params[params.length - 1])
+            : new Set();
+          const event = store.events.find(
+            (candidate) =>
+              !exclude.has(candidate.id) &&
+              ["pending", "retry"].includes(store.statuses.get(candidate.id))
+          );
+          return {
+            rows: event
+              ? [
+                  {
+                    ...event,
+                    attempt_count: store.attempts.get(event.id),
+                    processing_status: store.statuses.get(event.id),
+                  },
+                ]
+              : [],
+          };
+        }
+
+        if (statement.includes("UPDATE trust_events") && statement.includes("processing_status='processing'")) {
+          for (const id of params[0]) {
+            store.statuses.set(id, "processing");
+            store.attempts.set(id, (store.attempts.get(id) || 0) + 1);
+          }
+          return { rows: [] };
+        }
+
+        if (statement.includes("INSERT INTO trust_event_effects")) {
+          if (params[0] === badEvent.id && !store.failedOnce) {
+            store.failedOnce = true;
+            tx.aborted = true;
+            const err = new Error("forced projection SQL failure");
+            err.code = "23505";
+            throw err;
+          }
+
+          if (store.effects.has(params[3])) return { rows: [] };
+          store.effects.add(params[3]);
+          return { rows: [{ event_id: params[0] }] };
+        }
+
+        if (statement.includes("INSERT INTO trust_scores")) {
+          return { rows: [{ subject_type: params[0], subject_id: params[1] }] };
+        }
+
+        if (statement.includes("UPDATE trust_events") && statement.includes("processed_at=NOW()")) {
+          store.statuses.set(params[0], "processed");
+          store.processed.add(params[0]);
+          return { rows: [] };
+        }
+
+        if (statement.includes("UPDATE trust_events") && statement.includes("processing_status=$2")) {
+          store.statuses.set(params[0], params[1]);
+          return { rows: [] };
+        }
+
+        if (statement.includes("SELECT") && statement.includes("COUNT(*) FILTER")) {
+          const counts = Array.from(store.statuses.values()).reduce((acc, status) => {
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+          }, {});
+          return {
+            rows: [
+              {
+                pending: counts.pending || 0,
+                retry: counts.retry || 0,
+                failed: counts.failed || 0,
+                processed: counts.processed || 0,
+                oldest_pending_lag_ms: 0,
+              },
+            ],
+          };
+        }
+
+        return { rows: [] };
+      },
+      release() {},
+    };
+  }
+
+  const fakePool = {
+    async connect() {
+      return createClient();
+    },
+    async query(sql, params) {
+      return createClient().query(sql, params);
+    },
+  };
+
+  const results = await processTrustEventBatch({
+    pool: fakePool,
+    limit: 2,
+    maxAttempts: 5,
+    recordOperationalEvent: false,
+  });
+
+  assert.equal(results.length, 2);
+  assert.deepEqual(
+    results.map((result) => result.processed),
+    [false, true]
+  );
+  assert.equal(store.statuses.get(badEvent.id), "retry");
+  assert.equal(store.statuses.get(goodEvent.id), "processed");
+  assert.equal(store.attempts.get(badEvent.id), 1);
+  assert.equal(store.attempts.get(goodEvent.id), 1);
+  assert.ok(
+    store.queries.some((statement) => statement === "ROLLBACK TO SAVEPOINT trust_event_projection")
+  );
+});
+
+test("trust worker transaction wrapper rolls back and releases clients on fatal failure", async () => {
+  const queries = [];
+  let released = false;
+  const client = {
+    async query(sql) {
+      queries.push(String(sql));
+      return { rows: [] };
+    },
+    release() {
+      released = true;
+    },
+  };
+  const fakePool = {
+    async connect() {
+      return client;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      runTrustEventTransaction(
+        fakePool,
+        async () => {
+          const err = new Error("fatal trust transaction failure");
+          err.code = "XX001";
+          throw err;
+        },
+        { maxAttempts: 1, name: "trust_test_failure" }
+      ),
+    /fatal trust transaction failure/
+  );
+
+  assert.ok(queries.includes("BEGIN"));
+  assert.ok(queries.includes("ROLLBACK"));
+  assert.equal(released, true);
 });
 
 test("reservation completion derives user and provider trust events", () => {

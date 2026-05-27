@@ -183,6 +183,20 @@ function getPrometheusMetrics() {
     "# TYPE food_rescue_trust_event_retries_total counter",
     "# HELP food_rescue_trust_derived_events_total Trust events derived from committed lifecycle outcomes.",
     "# TYPE food_rescue_trust_derived_events_total counter",
+    "# HELP food_rescue_trust_duplicate_events_total Duplicate trust ledger events skipped during ingestion.",
+    "# TYPE food_rescue_trust_duplicate_events_total counter",
+    "# HELP food_rescue_trust_projection_conflicts_total Idempotent trust projection conflicts skipped safely.",
+    "# TYPE food_rescue_trust_projection_conflicts_total counter",
+    "# HELP food_rescue_trust_projection_sql_failures_total SQL failures while applying trust projections.",
+    "# TYPE food_rescue_trust_projection_sql_failures_total counter",
+    "# HELP food_rescue_trust_worker_rollbacks_total Trust worker transaction and savepoint rollbacks.",
+    "# TYPE food_rescue_trust_worker_rollbacks_total counter",
+    "# HELP food_rescue_trust_worker_transaction_failures_total Trust worker transaction failures.",
+    "# TYPE food_rescue_trust_worker_transaction_failures_total counter",
+    "# HELP food_rescue_trust_worker_transaction_retries_total Trust worker retryable transaction retries.",
+    "# TYPE food_rescue_trust_worker_transaction_retries_total counter",
+    "# HELP food_rescue_trust_retry_safe_completions_total Trust events completed without duplicate projection side effects.",
+    "# TYPE food_rescue_trust_retry_safe_completions_total counter",
   ];
 
   for (const [key, value] of counters.entries()) {

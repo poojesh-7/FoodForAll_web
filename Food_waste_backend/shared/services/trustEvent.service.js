@@ -127,6 +127,20 @@ async function appendTrustEvent(input, options = {}) {
     result: insertedEvent ? "inserted" : "duplicate",
   });
 
+  if (!insertedEvent) {
+    incrementCounter("food_rescue_trust_duplicate_events_total", {
+      event_type: event.eventType,
+      subject_type: event.subjectType,
+    });
+    logger.debug("Duplicate trust event skipped", {
+      eventKey: event.eventKey,
+      eventType: event.eventType,
+      subjectType: event.subjectType,
+      sourceType: event.sourceType,
+      sourceId: event.sourceId,
+    });
+  }
+
   if (insertedEvent && options.enqueue !== false) {
     await enqueueTrustProcessing(event.eventKey, options).catch((err) => {
       logger.warn("Trust event enqueue failed", { err, eventKey: event.eventKey });
@@ -170,10 +184,15 @@ async function appendTrustEventIfMissing(input, options = {}) {
 async function claimTrustEvents(client, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit || 25), 100));
   const eventKey = compactText(options.eventKey, 240);
-  const params = eventKey ? [eventKey, PROCESSABLE_STATUSES, limit] : [PROCESSABLE_STATUSES, limit];
+  const excludeEventIds = (options.excludeEventIds || [])
+    .map((id) => String(id || ""))
+    .filter(isUuid);
+  const params = eventKey
+    ? [eventKey, PROCESSABLE_STATUSES, limit, excludeEventIds]
+    : [PROCESSABLE_STATUSES, limit, excludeEventIds];
   const where = eventKey
-    ? "event_key=$1 AND processing_status = ANY($2::text[])"
-    : "processing_status = ANY($1::text[])";
+    ? "event_key=$1 AND processing_status = ANY($2::text[]) AND NOT (id = ANY($4::uuid[]))"
+    : "processing_status = ANY($1::text[]) AND NOT (id = ANY($3::uuid[]))";
   const limitParam = eventKey ? "$3" : "$2";
 
   const result = await client.query(

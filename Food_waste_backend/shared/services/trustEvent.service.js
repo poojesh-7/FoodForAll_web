@@ -292,7 +292,7 @@ async function getTrustSubject({ subjectType, subjectId, db = pool }) {
     throw error;
   }
 
-  const [score, restrictions, summary, eventTypes, sourceLineage] = await Promise.all([
+  const [score, restrictions, summary, eventTypes, sourceLineage, trend] = await Promise.all([
     db.query(
       `
       SELECT *
@@ -343,16 +343,61 @@ async function getTrustSubject({ subjectType, subjectId, db = pool }) {
       `,
       [subjectType, subjectId]
     ),
+    db.query(
+      `
+      SELECT date_trunc('day', created_at)::date AS bucket,
+             COUNT(*)::int AS event_count,
+             COALESCE(SUM(
+               CASE
+                 WHEN (event_payload->>'score_delta') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                 THEN (event_payload->>'score_delta')::numeric
+                 ELSE 0
+               END
+             ), 0) AS score_delta,
+             COUNT(*) FILTER (
+               WHERE COALESCE((event_payload->>'failure_delta')::int, 0) > 0
+               OR COALESCE((event_payload->>'timeout_delta')::int, 0) > 0
+             )::int AS negative_events,
+             COUNT(*) FILTER (
+               WHERE COALESCE((event_payload->>'completion_delta')::int, 0) > 0
+               OR COALESCE((event_payload->>'fulfillment_delta')::int, 0) > 0
+             )::int AS success_events
+      FROM trust_events
+      WHERE subject_type=$1 AND subject_id=$2
+      AND created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY bucket
+      ORDER BY bucket ASC
+      `,
+      [subjectType, subjectId]
+    ),
   ]);
+  const scoreRow = score.rows[0] || null;
 
   return {
-    score: score.rows[0] || null,
-    scoreBreakdown: score.rows[0] || null,
+    score: scoreRow,
+    scoreBreakdown: scoreRow,
+    operationalState: scoreRow
+      ? {
+          riskCategory: scoreRow.risk_category || "normal",
+          projectedRestrictionLevel:
+            scoreRow.projected_restriction_level ?? scoreRow.restriction_level ?? 0,
+          projectedCooldownUntil:
+            scoreRow.projected_cooldown_until ?? scoreRow.cooldown_until ?? null,
+          projectedDepositMultiplier:
+            scoreRow.projected_deposit_multiplier ?? scoreRow.deposit_multiplier ?? 1,
+          recoveryProgress: scoreRow.recovery_progress ?? 100,
+          projectedActions: scoreRow.projected_actions || {},
+          recoveryState: scoreRow.recovery_state || {},
+          decayState: scoreRow.decay_state || {},
+          riskState: scoreRow.risk_state || {},
+        }
+      : null,
     restrictions: restrictions.rows,
     processing: summary.rows,
     derivedMetrics: {
       eventTypes: eventTypes.rows,
       sourceLineage: sourceLineage.rows,
+      trend: trend.rows,
     },
   };
 }

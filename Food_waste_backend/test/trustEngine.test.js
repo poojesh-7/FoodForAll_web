@@ -8,6 +8,7 @@ const {
 const {
   applyTrustEventProjection,
   buildTrustEffect,
+  buildTrustProjectionFromEvents,
 } = require("../shared/services/trustProjection.service");
 const {
   processTrustEventBatch,
@@ -48,6 +49,16 @@ function createEvent(overrides = {}) {
     created_at: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   };
+}
+
+function createProjectionEvent(index, eventType, payload, createdAt) {
+  return createEvent({
+    id: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`,
+    event_key: `trust:test:${index}:${eventType}`,
+    event_type: eventType,
+    event_payload: payload,
+    created_at: new Date(createdAt),
+  });
 }
 
 test("appendTrustEvent inserts once and protects duplicate event keys", async () => {
@@ -121,13 +132,138 @@ test("buildTrustEffect normalizes passive projection deltas", () => {
   assert.equal(effect.activeUntil.toISOString(), "2026-01-02T00:00:00.000Z");
 });
 
+test("operational projection escalates passive restriction and cooldown recommendations", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_payment_timeout", {
+      score_delta: -5,
+      failure_delta: 1,
+      timeout_delta: 1,
+    }, "2026-01-01T01:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.trust_score, 85);
+  assert.equal(projection.penalty_level, 5);
+  assert.equal(projection.projected_restriction_level, 3);
+  assert.equal(projection.projected_deposit_multiplier, 2);
+  assert.equal(projection.projected_actions.cooldown_recommended, true);
+  assert.equal(
+    projection.projected_cooldown_until.toISOString(),
+    "2026-01-01T03:00:00.000Z"
+  );
+});
+
+test("operational projection recommends deposit escalation at level 2", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.projected_restriction_level, 2);
+  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(projection.projected_actions.refundable_deposit_recommended, true);
+  assert.equal(projection.projected_actions.enforcement_active, false);
+});
+
+test("consecutive successful completions reduce passive penalties", () => {
+  const events = [
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+  ];
+
+  for (let index = 2; index <= 7; index += 1) {
+    events.push(
+      createProjectionEvent(index, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+      }, `2026-01-0${index}T00:00:00.000Z`)
+    );
+  }
+
+  const projection = buildTrustProjectionFromEvents(events);
+
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.recovery_progress, 100);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 1);
+});
+
+test("stable successful behavior applies passive decay by event time", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_pickup_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+    }, "2026-01-20T00:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.penalty_level, 1);
+  assert.equal(projection.decay_state.decay_credit_this_event, 1);
+  assert.equal(projection.decay_state.score_recovered_this_event, 2);
+  assert.equal(projection.trust_score, 95);
+});
+
+test("projection replay is deterministic regardless of input order", () => {
+  const events = [
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_cancelled_reservation", {
+      score_delta: -2,
+      cancellation_delta: 1,
+    }, "2026-01-02T00:00:00.000Z"),
+    createProjectionEvent(3, "user_pickup_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+    }, "2026-01-03T00:00:00.000Z"),
+  ];
+
+  const replay = buildTrustProjectionFromEvents(events);
+  const shuffledReplay = buildTrustProjectionFromEvents([...events].reverse());
+
+  assert.deepEqual(
+    {
+      score: shuffledReplay.trust_score,
+      penalty: shuffledReplay.penalty_level,
+      level: shuffledReplay.projected_restriction_level,
+      counters: shuffledReplay.score_breakdown.counters,
+      actions: shuffledReplay.projected_actions,
+    },
+    {
+      score: replay.trust_score,
+      penalty: replay.penalty_level,
+      level: replay.projected_restriction_level,
+      counters: replay.score_breakdown.counters,
+      actions: replay.projected_actions,
+    }
+  );
+});
+
 test("applyTrustEventProjection applies score once per effect hash", async () => {
   const calls = [];
+  const event = createEvent();
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
       if (sql.includes("INSERT INTO trust_event_effects")) {
         return { rows: [{ event_id: params[0] }] };
+      }
+      if (sql.includes("FROM trust_events te")) {
+        return { rows: [event] };
       }
       if (sql.includes("INSERT INTO trust_scores")) {
         return {
@@ -140,15 +276,20 @@ test("applyTrustEventProjection applies score once per effect hash", async () =>
           ],
         };
       }
+      if (sql.includes("INSERT INTO trust_restrictions")) {
+        return { rows: [{ restriction_type: "operational_projection" }] };
+      }
       return { rows: [] };
     },
   };
 
-  const result = await applyTrustEventProjection(client, createEvent());
+  const result = await applyTrustEventProjection(client, event);
 
   assert.equal(result.applied, true);
   assert.equal(result.score.trust_score, 100);
-  assert.equal(calls.length, 2);
+  assert.ok(calls.some((call) => String(call.sql).includes("pg_advisory_xact_lock")));
+  assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events te")));
+  assert.ok(calls.some((call) => String(call.sql).includes("INSERT INTO trust_restrictions")));
 });
 
 test("applyTrustEventProjection skips duplicate effects without updating scores", async () => {
@@ -156,6 +297,9 @@ test("applyTrustEventProjection skips duplicate effects without updating scores"
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
       if (sql.includes("INSERT INTO trust_event_effects")) {
         return { rows: [] };
       }
@@ -166,7 +310,8 @@ test("applyTrustEventProjection skips duplicate effects without updating scores"
   const result = await applyTrustEventProjection(client, createEvent());
 
   assert.equal(result.applied, false);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.ok(!calls.some((call) => String(call.sql).includes("INSERT INTO trust_scores")));
 });
 
 test("claimTrustEvents uses SKIP LOCKED and marks claimed rows processing", async () => {

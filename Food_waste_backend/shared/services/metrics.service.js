@@ -197,6 +197,16 @@ function getPrometheusMetrics() {
     "# TYPE food_rescue_trust_worker_transaction_retries_total counter",
     "# HELP food_rescue_trust_retry_safe_completions_total Trust events completed without duplicate projection side effects.",
     "# TYPE food_rescue_trust_retry_safe_completions_total counter",
+    "# HELP food_rescue_trust_projected_restrictions_total Passive trust restriction recommendations projected.",
+    "# TYPE food_rescue_trust_projected_restrictions_total counter",
+    "# HELP food_rescue_trust_projected_cooldowns_total Passive trust cooldown recommendations projected.",
+    "# TYPE food_rescue_trust_projected_cooldowns_total counter",
+    "# HELP food_rescue_trust_projected_suspensions_total Passive trust suspension recommendations projected.",
+    "# TYPE food_rescue_trust_projected_suspensions_total counter",
+    "# HELP food_rescue_trust_score_decay_operations_total Passive trust decay operations applied during projection.",
+    "# TYPE food_rescue_trust_score_decay_operations_total counter",
+    "# HELP food_rescue_trust_recovery_operations_total Passive trust recovery operations applied during projection.",
+    "# TYPE food_rescue_trust_recovery_operations_total counter",
   ];
 
   for (const [key, value] of counters.entries()) {

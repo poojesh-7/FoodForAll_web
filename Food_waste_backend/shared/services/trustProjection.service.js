@@ -2,6 +2,11 @@ const crypto = require("crypto");
 const logger = require("../utils/logger");
 const { incrementCounter } = require("./metrics.service");
 
+const RECOVERY_STREAK_TARGET = 3;
+const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
 function clamp(value, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return min;
@@ -29,6 +34,19 @@ function parseDateOrNull(value) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function isoOrNull(value) {
+  const date = parseDateOrNull(value);
+  return date ? date.toISOString() : null;
+}
+
+function eventTime(event) {
+  return parseDateOrNull(event.created_at) || new Date(0);
+}
+
+function addMs(date, ms) {
+  return new Date(date.getTime() + ms);
 }
 
 function buildTrustEffect(event) {
@@ -129,6 +147,303 @@ async function queryProjectionStep(client, step, sql, params, event) {
   }
 }
 
+function isSuccessEffect(effect) {
+  return (
+    effect.completionDelta > 0 ||
+    effect.fulfillmentDelta > 0 ||
+    effect.refundDelta > 0 ||
+    effect.scoreDelta > 0
+  );
+}
+
+function isNegativeEffect(effect) {
+  return (
+    effect.failureDelta > 0 ||
+    effect.timeoutDelta > 0 ||
+    effect.cancellationDelta > 0 ||
+    effect.scoreDelta < 0
+  );
+}
+
+function penaltyFromEffect(effect) {
+  return Math.max(0, effect.penaltyDelta) +
+    Math.max(0, effect.failureDelta) * 2 +
+    Math.max(0, effect.timeoutDelta) +
+    Math.max(0, effect.cancellationDelta);
+}
+
+function cooldownDurationMs(level, failureStreak) {
+  if (level < 3) return 0;
+  if (level === 3) return failureStreak >= 3 ? 12 * HOUR_MS : 2 * HOUR_MS;
+  if (level === 4) return 12 * HOUR_MS;
+  return 24 * HOUR_MS;
+}
+
+function depositMultiplierForLevel(level) {
+  if (level <= 1) return 1;
+  if (level === 2) return 1.5;
+  if (level === 3) return 2;
+  return 3;
+}
+
+function riskCategoryForLevel(level) {
+  return ["normal", "watch", "elevated", "high", "severe", "critical"][level] || "critical";
+}
+
+function calculateRestrictionLevel({ score, penaltyLevel, failureStreak }) {
+  if (penaltyLevel >= 8 || score <= 45 || failureStreak >= 5) return 5;
+  if (penaltyLevel >= 6 || score <= 55 || failureStreak >= 4) return 4;
+  if (penaltyLevel >= 4 || score <= 70 || failureStreak >= 3) return 3;
+  if (penaltyLevel >= 2 || score <= 85 || failureStreak >= 2) return 2;
+  if (penaltyLevel >= 1 || score < 95) return 1;
+  return 0;
+}
+
+function initialProjection(subjectType, subjectId) {
+  return {
+    subject_type: subjectType,
+    subject_id: subjectId,
+    trust_score: 100,
+    penalty_level: 0,
+    deposit_multiplier: 1,
+    cooldown_until: null,
+    restriction_level: 0,
+    failure_count: 0,
+    cancellation_count: 0,
+    completion_count: 0,
+    timeout_count: 0,
+    fulfillment_count: 0,
+    refund_count: 0,
+    projected_restriction_level: 0,
+    projected_cooldown_until: null,
+    projected_deposit_multiplier: 1,
+    recovery_progress: 100,
+    risk_category: "normal",
+    success_streak: 0,
+    failure_streak: 0,
+    last_success_at: null,
+    last_failure_at: null,
+    last_decay_at: null,
+    last_event_at: null,
+    updated_at: null,
+    score_breakdown: {},
+    projected_actions: {},
+    recovery_state: {},
+    decay_state: {},
+    risk_state: {},
+  };
+}
+
+function calculateOperationalProjection(state, event, effect, context) {
+  const levelFloor = Math.max(
+    0,
+    state.manual_restriction_floor || 0,
+    effect.explicitRestrictionLevel || 0
+  );
+  const level = Math.max(
+    levelFloor,
+    calculateRestrictionLevel({
+      score: state.trust_score,
+      penaltyLevel: state.penalty_level,
+      failureStreak: state.failure_streak,
+    })
+  );
+  const durationMs = cooldownDurationMs(level, state.failure_streak);
+  const cooldownUntil = durationMs ? addMs(context.eventTime, durationMs) : null;
+  const depositMultiplier = Math.max(
+    depositMultiplierForLevel(level),
+    1 + Math.max(0, effect.depositMultiplierDelta)
+  );
+  const riskCategory = riskCategoryForLevel(level);
+  const recoveryProgress =
+    state.penalty_level === 0
+      ? 100
+      : clamp((state.success_streak / RECOVERY_STREAK_TARGET) * 100, 0, 99);
+
+  return {
+    level,
+    cooldownUntil: effect.cooldownUntil || cooldownUntil,
+    depositMultiplier,
+    riskCategory,
+    recoveryProgress,
+    projectedActions: {
+      enforcement_active: false,
+      restriction_level: level,
+      restriction_label: riskCategory,
+      warning_recommended: level >= 1,
+      refundable_deposit_recommended: level >= 2,
+      cooldown_recommended: level >= 3,
+      temporary_suspension_recommended: level >= 4,
+      manual_review_recommended: level >= 5,
+      projected_deposit_multiplier: depositMultiplier,
+      projected_cooldown_until: isoOrNull(effect.cooldownUntil || cooldownUntil),
+    },
+  };
+}
+
+function projectOperationalTrustState(previous, event, effect) {
+  const current = {
+    ...initialProjection(effect.subjectType, effect.subjectId),
+    ...previous,
+  };
+  const currentEventTime = eventTime(event);
+  const success = isSuccessEffect(effect);
+  const negative = isNegativeEffect(effect);
+  const previousLastEvent = parseDateOrNull(current.last_event_at);
+  const decayIntervalMs = Math.max(1, DECAY_INTERVAL_DAYS) * DAY_MS;
+  const stableDecay =
+    success && !negative && previousLastEvent
+      ? Math.floor((currentEventTime.getTime() - previousLastEvent.getTime()) / decayIntervalMs)
+      : 0;
+  const decayCredit = Math.min(Math.max(0, stableDecay), current.penalty_level);
+  const decayScoreRecovery = decayCredit * 2;
+  const penaltyAdded = penaltyFromEffect(effect);
+
+  let successStreak = success && !negative ? current.success_streak + 1 : 0;
+  const failureStreak = negative ? current.failure_streak + 1 : 0;
+  const recoveryCredit =
+    success && !negative && successStreak >= RECOVERY_STREAK_TARGET
+      ? Math.floor(successStreak / RECOVERY_STREAK_TARGET)
+      : 0;
+  if (recoveryCredit > 0) {
+    successStreak %= RECOVERY_STREAK_TARGET;
+  }
+
+  const penaltyLevel = Math.max(
+    0,
+    current.penalty_level +
+      penaltyAdded +
+      Math.max(0, effect.restrictionLevelDelta) -
+      recoveryCredit -
+      decayCredit
+  );
+  const projectedScore = clamp(
+    current.trust_score + effect.scoreDelta + recoveryCredit * 2 + decayScoreRecovery,
+    0,
+    100
+  );
+
+  const next = {
+    ...current,
+    trust_score: projectedScore,
+    penalty_level: penaltyLevel,
+    failure_count: Math.max(0, current.failure_count + Math.max(0, effect.failureDelta)),
+    cancellation_count: Math.max(
+      0,
+      current.cancellation_count + Math.max(0, effect.cancellationDelta)
+    ),
+    completion_count: Math.max(0, current.completion_count + Math.max(0, effect.completionDelta)),
+    timeout_count: Math.max(0, current.timeout_count + Math.max(0, effect.timeoutDelta)),
+    fulfillment_count: Math.max(
+      0,
+      current.fulfillment_count + Math.max(0, effect.fulfillmentDelta)
+    ),
+    refund_count: Math.max(0, current.refund_count + Math.max(0, effect.refundDelta)),
+    success_streak: successStreak,
+    failure_streak: failureStreak,
+    last_success_at: success ? currentEventTime : current.last_success_at,
+    last_failure_at: negative ? currentEventTime : current.last_failure_at,
+    last_decay_at: decayCredit > 0 ? currentEventTime : current.last_decay_at,
+    last_event_at: currentEventTime,
+    manual_restriction_floor: Math.max(
+      current.manual_restriction_floor || 0,
+      effect.explicitRestrictionLevel || 0
+    ),
+  };
+
+  const projection = calculateOperationalProjection(next, event, effect, {
+    eventTime: currentEventTime,
+  });
+
+  next.projected_restriction_level = projection.level;
+  next.restriction_level = projection.level;
+  next.projected_cooldown_until = projection.cooldownUntil;
+  next.cooldown_until = projection.cooldownUntil;
+  next.projected_deposit_multiplier = projection.depositMultiplier;
+  next.deposit_multiplier = projection.depositMultiplier;
+  next.recovery_progress = projection.recoveryProgress;
+  next.risk_category = projection.riskCategory;
+  next.projected_actions = projection.projectedActions;
+  next.score_breakdown = {
+    event_key: event.event_key,
+    event_type: event.event_type,
+    score_delta: effect.scoreDelta,
+    previous_score: current.trust_score,
+    projected_score: projectedScore,
+    penalty_added: penaltyAdded,
+    recovery_credit: recoveryCredit,
+    decay_credit: decayCredit,
+    counters: {
+      failures: next.failure_count,
+      cancellations: next.cancellation_count,
+      completions: next.completion_count,
+      timeouts: next.timeout_count,
+      fulfillments: next.fulfillment_count,
+      refunds: next.refund_count,
+    },
+  };
+  next.recovery_state = {
+    success_streak: next.success_streak,
+    failure_streak: next.failure_streak,
+    recovery_target: RECOVERY_STREAK_TARGET,
+    successes_to_next_recovery:
+      next.penalty_level === 0
+        ? 0
+        : Math.max(0, RECOVERY_STREAK_TARGET - next.success_streak),
+    recovery_credit_this_event: recoveryCredit,
+    recovery_progress: next.recovery_progress,
+    last_success_at: isoOrNull(next.last_success_at),
+    last_failure_at: isoOrNull(next.last_failure_at),
+  };
+  next.decay_state = {
+    interval_days: DECAY_INTERVAL_DAYS,
+    decay_intervals_observed: stableDecay,
+    decay_credit_this_event: decayCredit,
+    score_recovered_this_event: decayScoreRecovery,
+    last_decay_at: isoOrNull(next.last_decay_at),
+  };
+  next.risk_state = {
+    category: next.risk_category,
+    projected_restriction_level: next.projected_restriction_level,
+    projected_deposit_multiplier: next.projected_deposit_multiplier,
+    projected_cooldown_until: isoOrNull(next.projected_cooldown_until),
+    operational_only: true,
+    enforcement_active: false,
+  };
+
+  return next;
+}
+
+function buildTrustProjectionFromEvents(events, subjectType, subjectId) {
+  const ordered = [...events].sort((left, right) => {
+    const leftTime = eventTime(left).getTime();
+    const rightTime = eventTime(right).getTime();
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+  const first = ordered[0];
+  let projection = initialProjection(
+    subjectType || first?.subject_type || "user",
+    subjectId || first?.subject_id || null
+  );
+
+  for (const event of ordered) {
+    projection = projectOperationalTrustState(projection, event, buildTrustEffect(event));
+  }
+
+  return projection;
+}
+
+async function lockTrustSubject(client, effect, event) {
+  await queryProjectionStep(
+    client,
+    "lock_subject",
+    "SELECT pg_advisory_xact_lock(hashtext($1))",
+    [`trust:${effect.subjectType}:${effect.subjectId}`],
+    event
+  );
+}
+
 async function insertEffectOnce(client, event, effect, hash) {
   const inserted = await queryProjectionStep(
     client,
@@ -146,22 +461,29 @@ async function insertEffectOnce(client, event, effect, hash) {
   return inserted.rows.length > 0;
 }
 
-async function upsertTrustScore(client, event, effect) {
-  const eventTime = event.created_at || new Date();
-  const initialScore = clamp(100 + effect.scoreDelta, 0, 100);
-  const initialPenalty = Math.max(0, effect.penaltyDelta);
-  const initialFailure = Math.max(0, effect.failureDelta);
-  const initialCancellation = Math.max(0, effect.cancellationDelta);
-  const initialCompletion = Math.max(0, effect.completionDelta);
-  const initialTimeout = Math.max(0, effect.timeoutDelta);
-  const initialFulfillment = Math.max(0, effect.fulfillmentDelta);
-  const initialRefund = Math.max(0, effect.refundDelta);
-  const initialDepositMultiplier = Math.max(1, 1 + effect.depositMultiplierDelta);
-  const initialRestriction = Math.max(
-    0,
-    effect.explicitRestrictionLevel ?? effect.restrictionLevelDelta
+async function loadAppliedSubjectEvents(client, event, effect) {
+  const result = await queryProjectionStep(
+    client,
+    "load_subject_events",
+    `
+    SELECT te.*
+    FROM trust_events te
+    JOIN trust_event_effects tee
+      ON tee.event_id=te.id
+      AND tee.subject_type=$1
+      AND tee.subject_id=$2
+    WHERE te.subject_type=$1
+    AND te.subject_id=$2
+    ORDER BY te.created_at ASC, te.id ASC
+    `,
+    [effect.subjectType, effect.subjectId],
+    event
   );
 
+  return result.rows;
+}
+
+async function upsertTrustScore(client, event, projection) {
   const result = await queryProjectionStep(
     client,
     "upsert_score",
@@ -171,69 +493,80 @@ async function upsertTrustScore(client, event, effect) {
       deposit_multiplier, cooldown_until, restriction_level,
       failure_count, cancellation_count, completion_count,
       timeout_count, fulfillment_count, refund_count,
+      projected_restriction_level, projected_cooldown_until,
+      projected_deposit_multiplier, recovery_progress, risk_category,
+      success_streak, failure_streak, last_success_at, last_failure_at, last_decay_at,
+      score_breakdown, projected_actions, recovery_state, decay_state, risk_state,
       last_event_at, updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+    VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+      $21,$22,$23,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,
+      $29,NOW()
+    )
     ON CONFLICT (subject_type, subject_id)
     DO UPDATE SET
-      trust_score = LEAST(100, GREATEST(0, trust_scores.trust_score + $15::numeric)),
-      penalty_level = GREATEST(0, trust_scores.penalty_level + $16::integer),
-      deposit_multiplier = GREATEST(1, trust_scores.deposit_multiplier + $17::numeric),
-      failure_count = GREATEST(0, trust_scores.failure_count + $18::integer),
-      cancellation_count = GREATEST(0, trust_scores.cancellation_count + $19::integer),
-      completion_count = GREATEST(0, trust_scores.completion_count + $20::integer),
-      timeout_count = GREATEST(0, trust_scores.timeout_count + $21::integer),
-      fulfillment_count = GREATEST(0, trust_scores.fulfillment_count + $22::integer),
-      refund_count = GREATEST(0, trust_scores.refund_count + $23::integer),
-      cooldown_until = CASE
-        WHEN $24::timestamp IS NULL THEN trust_scores.cooldown_until
-        WHEN trust_scores.cooldown_until IS NULL THEN $24::timestamp
-        WHEN trust_scores.cooldown_until < $24::timestamp THEN $24::timestamp
-        ELSE trust_scores.cooldown_until
-      END,
-      restriction_level = GREATEST(
-        0,
-        GREATEST(
-          trust_scores.restriction_level + $25::integer,
-          COALESCE($26::integer, trust_scores.restriction_level)
-        )
-      ),
-      last_event_at = CASE
-        WHEN trust_scores.last_event_at IS NULL THEN $27::timestamp
-        WHEN trust_scores.last_event_at < $27::timestamp THEN $27::timestamp
-        ELSE trust_scores.last_event_at
-      END,
-      updated_at = NOW()
+      trust_score=EXCLUDED.trust_score,
+      penalty_level=EXCLUDED.penalty_level,
+      deposit_multiplier=EXCLUDED.deposit_multiplier,
+      cooldown_until=EXCLUDED.cooldown_until,
+      restriction_level=EXCLUDED.restriction_level,
+      failure_count=EXCLUDED.failure_count,
+      cancellation_count=EXCLUDED.cancellation_count,
+      completion_count=EXCLUDED.completion_count,
+      timeout_count=EXCLUDED.timeout_count,
+      fulfillment_count=EXCLUDED.fulfillment_count,
+      refund_count=EXCLUDED.refund_count,
+      projected_restriction_level=EXCLUDED.projected_restriction_level,
+      projected_cooldown_until=EXCLUDED.projected_cooldown_until,
+      projected_deposit_multiplier=EXCLUDED.projected_deposit_multiplier,
+      recovery_progress=EXCLUDED.recovery_progress,
+      risk_category=EXCLUDED.risk_category,
+      success_streak=EXCLUDED.success_streak,
+      failure_streak=EXCLUDED.failure_streak,
+      last_success_at=EXCLUDED.last_success_at,
+      last_failure_at=EXCLUDED.last_failure_at,
+      last_decay_at=EXCLUDED.last_decay_at,
+      score_breakdown=EXCLUDED.score_breakdown,
+      projected_actions=EXCLUDED.projected_actions,
+      recovery_state=EXCLUDED.recovery_state,
+      decay_state=EXCLUDED.decay_state,
+      risk_state=EXCLUDED.risk_state,
+      last_event_at=EXCLUDED.last_event_at,
+      updated_at=NOW()
     RETURNING *
     `,
     [
-      effect.subjectType,
-      effect.subjectId,
-      initialScore,
-      initialPenalty,
-      initialDepositMultiplier,
-      effect.cooldownUntil,
-      initialRestriction,
-      initialFailure,
-      initialCancellation,
-      initialCompletion,
-      initialTimeout,
-      initialFulfillment,
-      initialRefund,
-      eventTime,
-      effect.scoreDelta,
-      effect.penaltyDelta,
-      effect.depositMultiplierDelta,
-      effect.failureDelta,
-      effect.cancellationDelta,
-      effect.completionDelta,
-      effect.timeoutDelta,
-      effect.fulfillmentDelta,
-      effect.refundDelta,
-      effect.cooldownUntil,
-      effect.restrictionLevelDelta,
-      effect.explicitRestrictionLevel,
-      eventTime,
+      projection.subject_type,
+      projection.subject_id,
+      projection.trust_score,
+      projection.penalty_level,
+      projection.deposit_multiplier,
+      projection.cooldown_until,
+      projection.restriction_level,
+      projection.failure_count,
+      projection.cancellation_count,
+      projection.completion_count,
+      projection.timeout_count,
+      projection.fulfillment_count,
+      projection.refund_count,
+      projection.projected_restriction_level,
+      projection.projected_cooldown_until,
+      projection.projected_deposit_multiplier,
+      projection.recovery_progress,
+      projection.risk_category,
+      projection.success_streak,
+      projection.failure_streak,
+      projection.last_success_at,
+      projection.last_failure_at,
+      projection.last_decay_at,
+      JSON.stringify(projection.score_breakdown || {}),
+      JSON.stringify(projection.projected_actions || {}),
+      JSON.stringify(projection.recovery_state || {}),
+      JSON.stringify(projection.decay_state || {}),
+      JSON.stringify(projection.risk_state || {}),
+      projection.last_event_at,
     ],
     event
   );
@@ -241,46 +574,79 @@ async function upsertTrustScore(client, event, effect) {
   return result.rows[0] || null;
 }
 
-async function upsertRestriction(client, event, effect) {
-  if (!effect.restrictionType && !effect.activeUntil) return null;
-
-  const restrictionType = effect.restrictionType || "cooldown";
+async function upsertOperationalRestriction(client, event, projection) {
   const result = await queryProjectionStep(
     client,
-    "upsert_restriction",
+    "upsert_operational_restriction",
     `
     INSERT INTO trust_restrictions (
       restriction_type, subject_type, subject_id, active_until, metadata
     )
-    VALUES ($1,$2,$3,$4,$5::jsonb)
+    VALUES ('operational_projection',$1,$2,$3,$4::jsonb)
     ON CONFLICT (restriction_type, subject_type, subject_id)
     DO UPDATE SET
-      active_until = CASE
-        WHEN EXCLUDED.active_until IS NULL THEN trust_restrictions.active_until
-        WHEN trust_restrictions.active_until IS NULL THEN EXCLUDED.active_until
-        WHEN trust_restrictions.active_until < EXCLUDED.active_until THEN EXCLUDED.active_until
-        ELSE trust_restrictions.active_until
-      END,
-      metadata = trust_restrictions.metadata || EXCLUDED.metadata,
-      updated_at = NOW()
+      active_until=EXCLUDED.active_until,
+      metadata=EXCLUDED.metadata,
+      updated_at=NOW()
     RETURNING *
     `,
     [
-      restrictionType,
-      effect.subjectType,
-      effect.subjectId,
-      effect.activeUntil || effect.cooldownUntil,
-      JSON.stringify(effect.metadata || {}),
+      projection.subject_type,
+      projection.subject_id,
+      projection.projected_cooldown_until,
+      JSON.stringify({
+        passive: true,
+        enforcement_active: false,
+        risk_category: projection.risk_category,
+        projected_actions: projection.projected_actions,
+        recovery_state: projection.recovery_state,
+        decay_state: projection.decay_state,
+        score_breakdown: projection.score_breakdown,
+      }),
     ],
     event
   );
 
   return result.rows[0] || null;
+}
+
+function recordOperationalProjectionMetrics(projection) {
+  if (projection.projected_restriction_level > 0) {
+    incrementCounter("food_rescue_trust_projected_restrictions_total", {
+      subject_type: projection.subject_type,
+      level: String(projection.projected_restriction_level),
+      risk_category: projection.risk_category,
+    });
+  }
+  if (projection.projected_actions?.cooldown_recommended) {
+    incrementCounter("food_rescue_trust_projected_cooldowns_total", {
+      subject_type: projection.subject_type,
+      level: String(projection.projected_restriction_level),
+    });
+  }
+  if (projection.projected_actions?.temporary_suspension_recommended) {
+    incrementCounter("food_rescue_trust_projected_suspensions_total", {
+      subject_type: projection.subject_type,
+      risk_category: projection.risk_category,
+    });
+  }
+  if (Number(projection.decay_state?.decay_credit_this_event || 0) > 0) {
+    incrementCounter("food_rescue_trust_score_decay_operations_total", {
+      subject_type: projection.subject_type,
+    });
+  }
+  if (Number(projection.recovery_state?.recovery_credit_this_event || 0) > 0) {
+    incrementCounter("food_rescue_trust_recovery_operations_total", {
+      subject_type: projection.subject_type,
+    });
+  }
 }
 
 async function applyTrustEventProjection(client, event) {
   const effect = buildTrustEffect(event);
   const hash = effectHash(event, effect);
+
+  await lockTrustSubject(client, effect, event);
   const shouldApply = await insertEffectOnce(client, event, effect, hash);
 
   if (!shouldApply) {
@@ -302,13 +668,21 @@ async function applyTrustEventProjection(client, event) {
     };
   }
 
-  const score = await upsertTrustScore(client, event, effect);
-  const restriction = await upsertRestriction(client, event, effect);
+  const appliedEvents = await loadAppliedSubjectEvents(client, event, effect);
+  const projection = buildTrustProjectionFromEvents(
+    appliedEvents,
+    effect.subjectType,
+    effect.subjectId
+  );
+  const score = await upsertTrustScore(client, event, projection);
+  const restriction = await upsertOperationalRestriction(client, event, projection);
+  recordOperationalProjectionMetrics(projection);
 
   return {
     applied: true,
     effect,
     effectHash: hash,
+    projection,
     score,
     restriction,
   };
@@ -317,5 +691,8 @@ async function applyTrustEventProjection(client, event) {
 module.exports = {
   applyTrustEventProjection,
   buildTrustEffect,
+  buildTrustProjectionFromEvents,
+  calculateRestrictionLevel,
   effectHash,
+  projectOperationalTrustState,
 };

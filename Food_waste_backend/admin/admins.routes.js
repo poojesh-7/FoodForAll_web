@@ -22,6 +22,8 @@ router.get("/operations/security-events", adminCtrl.getSecurityEvents);
 router.get("/payments/health", adminCtrl.getPaymentHealth);
 router.get("/queues/health", adminCtrl.getQueueHealth);
 router.post("/queues/:queueName/jobs/:jobId/retry", adminActionLimiter, adminCtrl.retryFailedQueueJob);
+router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
+router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
 router.get("/provider-reports", adminCtrl.getProviderReports);
 router.patch(
   "/provider-reports/:id/validate",

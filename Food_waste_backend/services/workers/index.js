@@ -83,6 +83,7 @@ async function startWorkers() {
   require("../../workers/StartPickupTimeout.worker");
   require("../../workers/paymentTimeout.worker");
   require("../../workers/refund.worker");
+  require("../../workers/trust.worker");
   require("../../workers/operationalCleanup.worker");
   const ngolocationSync = require("../../workers/ngoLocationSync.worker");
   const notificationCleanup = require("../../workers/notificationCleanup.worker");

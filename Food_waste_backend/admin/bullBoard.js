@@ -10,6 +10,7 @@ const alertQueue = require("../queues/expiryAlert.queue");
 const notificationQueue = require("../queues/notification.queue");
 const paymentQueue = require("../queues/payment.queue");
 const refundQueue = require("../queues/refund.queue");
+const trustQueue = require("../queues/trust.queue");
 const deadLetterQueue = require("../queues/deadLetter.queue");
 
 const serverAdapter = new ExpressAdapter();
@@ -24,6 +25,7 @@ createBullBoard({
     new BullMQAdapter(notificationQueue),
     new BullMQAdapter(paymentQueue),
     new BullMQAdapter(refundQueue),
+    new BullMQAdapter(trustQueue),
     new BullMQAdapter(deadLetterQueue),
   ],
   serverAdapter,

@@ -6,6 +6,7 @@ const deliveryQueue = require("../../queues/delivery.queue");
 const notificationQueue = require("../../queues/notification.queue");
 const paymentQueue = require("../../queues/payment.queue");
 const refundQueue = require("../../queues/refund.queue");
+const trustQueue = require("../../queues/trust.queue");
 const operationalCleanupQueue = require("../../queues/operationalCleanup.queue");
 const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { ensureObservabilitySchema, recordAlert } = require("./observability.service");
@@ -23,6 +24,7 @@ const monitoredQueueConfigs = [
   { queue: notificationQueue, workerRequired: true },
   { queue: paymentQueue, workerRequired: true },
   { queue: refundQueue, workerRequired: true },
+  { queue: trustQueue, workerRequired: true },
   { queue: operationalCleanupQueue, workerRequired: true },
   { queue: deadLetterQueue, workerRequired: false, deadLetter: true },
 ];

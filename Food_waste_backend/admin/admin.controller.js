@@ -17,6 +17,12 @@ const {
   listProviderReports,
   validateProviderReport,
 } = require("../shared/services/moderation.service");
+const {
+  SUBJECT_TYPES,
+  getTrustEvents,
+  getTrustSubject,
+  isUuid,
+} = require("../shared/services/trustEvent.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -532,6 +538,54 @@ exports.getSecurityEvents = async (req, res) => {
   } catch (err) {
     logger.error("Failed to fetch security events", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch security events" });
+  }
+};
+
+function validateTrustSubjectParams(req, res) {
+  const { subjectType, subjectId } = req.params;
+
+  if (!SUBJECT_TYPES.has(subjectType) || !isUuid(subjectId)) {
+    res.status(400).json({ error: "Invalid trust subject" });
+    return null;
+  }
+
+  return { subjectType, subjectId };
+}
+
+exports.getTrustSubject = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  try {
+    const trust = await getTrustSubject(subject);
+    res.json({ subject, trust });
+  } catch (err) {
+    logger.error("Failed to fetch trust subject", {
+      err,
+      adminId: req.user?.id,
+      subject,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust subject" });
+  }
+};
+
+exports.getTrustSubjectEvents = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  try {
+    const events = await getTrustEvents({
+      ...subject,
+      limit: req.query.limit,
+    });
+    res.json({ subject, events });
+  } catch (err) {
+    logger.error("Failed to fetch trust events", {
+      err,
+      adminId: req.user?.id,
+      subject,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust events" });
   }
 };
 

@@ -175,6 +175,12 @@ function getPrometheusMetrics() {
     "# TYPE food_rescue_payment_events_total counter",
     "# HELP food_rescue_reservations_created_total Reservation creation events.",
     "# TYPE food_rescue_reservations_created_total counter",
+    "# HELP food_rescue_trust_events_ingested_total Trust ledger ingestion events.",
+    "# TYPE food_rescue_trust_events_ingested_total counter",
+    "# HELP food_rescue_trust_events_processed_total Trust worker processing outcomes.",
+    "# TYPE food_rescue_trust_events_processed_total counter",
+    "# HELP food_rescue_trust_event_retries_total Trust event retry attempts.",
+    "# TYPE food_rescue_trust_event_retries_total counter",
   ];
 
   for (const [key, value] of counters.entries()) {

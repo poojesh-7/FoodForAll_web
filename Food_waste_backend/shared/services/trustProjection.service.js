@@ -6,6 +6,9 @@ const RECOVERY_STREAK_TARGET = 3;
 const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const ANALYTICS_ONLY_EVENT_TYPES = new Set([
+  "provider_listing_expired",
+]);
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -51,6 +54,10 @@ function addMs(date, ms) {
 
 function buildTrustEffect(event) {
   const payload = normalizePayload(event.event_payload);
+  const analyticsOnly =
+    ANALYTICS_ONLY_EVENT_TYPES.has(event.event_type) ||
+    payload.analytics_only === true ||
+    payload.analyticsOnly === true;
   const scoreDelta = numberDelta(payload.score_delta ?? payload.trust_delta ?? payload.scoreDelta);
   const penaltyDelta = intDelta(payload.penalty_delta ?? payload.penaltyDelta);
   const failureDelta = intDelta(payload.failure_delta ?? payload.failureDelta);
@@ -74,24 +81,25 @@ function buildTrustEffect(event) {
   return {
     subjectType: event.subject_type,
     subjectId: event.subject_id,
-    scoreDelta,
-    penaltyDelta,
-    failureDelta,
-    cancellationDelta,
-    completionDelta,
-    timeoutDelta,
-    fulfillmentDelta,
-    refundDelta,
-    depositMultiplierDelta,
-    restrictionLevelDelta,
+    scoreDelta: analyticsOnly ? 0 : scoreDelta,
+    penaltyDelta: analyticsOnly ? 0 : penaltyDelta,
+    failureDelta: analyticsOnly ? 0 : failureDelta,
+    cancellationDelta: analyticsOnly ? 0 : cancellationDelta,
+    completionDelta: analyticsOnly ? 0 : completionDelta,
+    timeoutDelta: analyticsOnly ? 0 : timeoutDelta,
+    fulfillmentDelta: analyticsOnly ? 0 : fulfillmentDelta,
+    refundDelta: analyticsOnly ? 0 : refundDelta,
+    depositMultiplierDelta: analyticsOnly ? 0 : depositMultiplierDelta,
+    restrictionLevelDelta: analyticsOnly ? 0 : restrictionLevelDelta,
     explicitRestrictionLevel:
-      explicitRestrictionLevel === undefined || explicitRestrictionLevel === null
+      analyticsOnly || explicitRestrictionLevel === undefined || explicitRestrictionLevel === null
         ? null
         : Math.max(0, intDelta(explicitRestrictionLevel)),
-    restrictionType: restrictionType ? String(restrictionType).slice(0, 120) : null,
-    activeUntil,
-    cooldownUntil,
+    restrictionType: analyticsOnly || !restrictionType ? null : String(restrictionType).slice(0, 120),
+    activeUntil: analyticsOnly ? null : activeUntil,
+    cooldownUntil: analyticsOnly ? null : cooldownUntil,
     metadata,
+    analyticsOnly,
   };
 }
 
@@ -118,6 +126,7 @@ function effectHash(event, effect) {
         restrictionType: effect.restrictionType,
         activeUntil: effect.activeUntil ? effect.activeUntil.toISOString() : null,
         cooldownUntil: effect.cooldownUntil ? effect.cooldownUntil.toISOString() : null,
+        analyticsOnly: effect.analyticsOnly,
       })
     )
     .digest("hex");
@@ -368,6 +377,7 @@ function projectOperationalTrustState(previous, event, effect) {
     event_key: event.event_key,
     event_type: event.event_type,
     score_delta: effect.scoreDelta,
+    analytics_only: effect.analyticsOnly,
     previous_score: current.trust_score,
     projected_score: projectedScore,
     penalty_added: penaltyAdded,
@@ -435,11 +445,15 @@ function buildTrustProjectionFromEvents(events, subjectType, subjectId) {
 }
 
 async function lockTrustSubject(client, effect, event) {
+  return lockTrustSubjectKey(client, effect.subjectType, effect.subjectId, event);
+}
+
+async function lockTrustSubjectKey(client, subjectType, subjectId, event) {
   await queryProjectionStep(
     client,
     "lock_subject",
     "SELECT pg_advisory_xact_lock(hashtext($1))",
-    [`trust:${effect.subjectType}:${effect.subjectId}`],
+    [`trust:${subjectType}:${subjectId}`],
     event
   );
 }
@@ -477,6 +491,25 @@ async function loadAppliedSubjectEvents(client, event, effect) {
     ORDER BY te.created_at ASC, te.id ASC
     `,
     [effect.subjectType, effect.subjectId],
+    event
+  );
+
+  return result.rows;
+}
+
+async function loadSubjectTrustEventsForReplay(client, event, subjectType, subjectId, statuses) {
+  const result = await queryProjectionStep(
+    client,
+    "load_subject_replay_events",
+    `
+    SELECT *
+    FROM trust_events
+    WHERE subject_type=$1
+    AND subject_id=$2
+    AND processing_status = ANY($3::text[])
+    ORDER BY created_at ASC, id ASC
+    `,
+    [subjectType, subjectId, statuses],
     event
   );
 
@@ -688,6 +721,38 @@ async function applyTrustEventProjection(client, event) {
   };
 }
 
+async function rebuildTrustProjectionForSubject(client, options = {}) {
+  const subjectType = options.subjectType || options.subject_type;
+  const subjectId = options.subjectId || options.subject_id;
+  const statuses = options.statuses || ["processed"];
+  const replayEvent = {
+    id: null,
+    event_key: `trust:rebuild:${subjectType}:${subjectId}`,
+    event_type: "trust_projection_rebuild",
+  };
+
+  await lockTrustSubjectKey(client, subjectType, subjectId, replayEvent);
+  const events = await loadSubjectTrustEventsForReplay(
+    client,
+    replayEvent,
+    subjectType,
+    subjectId,
+    statuses
+  );
+  const projection = buildTrustProjectionFromEvents(events, subjectType, subjectId);
+  const score = await upsertTrustScore(client, replayEvent, projection);
+  const restriction = await upsertOperationalRestriction(client, replayEvent, projection);
+
+  return {
+    subjectType,
+    subjectId,
+    eventCount: events.length,
+    projection,
+    score,
+    restriction,
+  };
+}
+
 module.exports = {
   applyTrustEventProjection,
   buildTrustEffect,
@@ -695,4 +760,5 @@ module.exports = {
   calculateRestrictionLevel,
   effectHash,
   projectOperationalTrustState,
+  rebuildTrustProjectionForSubject,
 };

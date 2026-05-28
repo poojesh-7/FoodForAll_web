@@ -29,7 +29,7 @@ const TRUST_EVENT_RULES = {
   volunteer_delivery_failed: { score_delta: -12, failure_delta: 1, timeout_delta: 1 },
   volunteer_assignment_timeout: { score_delta: -8, failure_delta: 1, timeout_delta: 1 },
 
-  provider_listing_expired: { score_delta: -3, timeout_delta: 1 },
+  provider_listing_expired: { analytics_only: true, trust_impact: "neutral" },
   provider_report_validated: { score_delta: -15, failure_delta: 1 },
   provider_successful_fulfillment: { score_delta: 2, fulfillment_delta: 1 },
 

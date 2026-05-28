@@ -13,7 +13,8 @@
     "migrate": "node scripts/migrate.js up",
     "migrate:rollback": "node scripts/migrate.js down",
     "migrate:verify": "node scripts/verify-migrations.js",
-    "migrate:lint": "node scripts/validate-migration-files.js"
+    "migrate:lint": "node scripts/validate-migration-files.js",
+    "trust:rebuild-providers": "node scripts/rebuild-provider-trust-projections.js"
   },
   "keywords": [],
   "author": "",

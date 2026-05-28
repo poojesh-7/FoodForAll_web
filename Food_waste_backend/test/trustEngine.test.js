@@ -9,12 +9,14 @@ const {
   applyTrustEventProjection,
   buildTrustEffect,
   buildTrustProjectionFromEvents,
+  rebuildTrustProjectionForSubject,
 } = require("../shared/services/trustProjection.service");
 const {
   processTrustEventBatch,
   runTrustEventTransaction,
 } = require("../shared/services/trustWorker.service");
 const {
+  buildListingTrustEvents,
   buildPaymentTrustEvents,
   buildReservationTrustEvents,
   emitBuiltEvents,
@@ -51,13 +53,21 @@ function createEvent(overrides = {}) {
   };
 }
 
-function createProjectionEvent(index, eventType, payload, createdAt) {
+function createProjectionEvent(index, eventType, payload, createdAt, overrides = {}) {
   return createEvent({
     id: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`,
     event_key: `trust:test:${index}:${eventType}`,
     event_type: eventType,
     event_payload: payload,
     created_at: new Date(createdAt),
+    ...overrides,
+  });
+}
+
+function createProviderProjectionEvent(index, eventType, payload, createdAt) {
+  return createProjectionEvent(index, eventType, payload, createdAt, {
+    subject_type: "provider",
+    subject_id: PROVIDER_ID,
   });
 }
 
@@ -168,6 +178,103 @@ test("operational projection recommends deposit escalation at level 2", () => {
   assert.equal(projection.projected_deposit_multiplier, 1.5);
   assert.equal(projection.projected_actions.refundable_deposit_recommended, true);
   assert.equal(projection.projected_actions.enforcement_active, false);
+});
+
+test("expired unsold listings emit analytics-only provider trust events", () => {
+  const events = buildListingTrustEvents({
+    id: "88888888-8888-4888-8888-888888888888",
+    provider_id: PROVIDER_ID,
+    status: "expired",
+    pickup_end_time: new Date("2026-01-01T00:00:00.000Z"),
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, "provider_listing_expired");
+  assert.equal(events[0].subjectType, "provider");
+  assert.equal(events[0].eventPayload.analytics_only, true);
+  assert.equal(events[0].eventPayload.trust_impact, "neutral");
+  assert.equal(events[0].eventPayload.score_delta, undefined);
+  assert.equal(events[0].eventPayload.timeout_delta, undefined);
+
+  const effect = buildTrustEffect({
+    id: EVENT_ID,
+    event_type: events[0].eventType,
+    subject_type: events[0].subjectType,
+    subject_id: events[0].subjectId,
+    event_payload: events[0].eventPayload,
+  });
+
+  assert.equal(effect.analyticsOnly, true);
+  assert.equal(effect.scoreDelta, 0);
+  assert.equal(effect.timeoutDelta, 0);
+  assert.equal(effect.penaltyDelta, 0);
+});
+
+test("provider listing expiry replay is neutral even for legacy negative payloads", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProviderProjectionEvent(1, "provider_listing_expired", {
+      score_delta: -3,
+      timeout_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProviderProjectionEvent(2, "provider_listing_expired", {
+      score_delta: -3,
+      timeout_delta: 1,
+    }, "2026-01-02T00:00:00.000Z"),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(projection.trust_score, 100);
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.timeout_count, 0);
+  assert.equal(projection.failure_streak, 0);
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.projected_deposit_multiplier, 1);
+  assert.equal(projection.projected_cooldown_until, null);
+  assert.equal(projection.projected_actions.cooldown_recommended, false);
+});
+
+test("provider trust remains stable across normal listing expiry lifecycle", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProviderProjectionEvent(1, "provider_listing_expired", {
+      analytics_only: true,
+      trust_impact: "neutral",
+    }, "2026-01-01T00:00:00.000Z"),
+    createProviderProjectionEvent(2, "provider_listing_expired", {
+      analytics_only: true,
+      trust_impact: "neutral",
+    }, "2026-01-03T00:00:00.000Z"),
+    createProviderProjectionEvent(3, "provider_successful_fulfillment", {
+      score_delta: 2,
+      fulfillment_delta: 1,
+    }, "2026-01-04T00:00:00.000Z"),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(projection.trust_score, 100);
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.timeout_count, 0);
+  assert.equal(projection.fulfillment_count, 1);
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.projected_deposit_multiplier, 1);
+});
+
+test("only actionable provider failures affect provider projections", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProviderProjectionEvent(1, "provider_listing_expired", {
+      score_delta: -3,
+      timeout_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProviderProjectionEvent(2, "provider_report_validated", {
+      score_delta: -15,
+      failure_delta: 1,
+    }, "2026-01-02T00:00:00.000Z"),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(projection.trust_score, 85);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.timeout_count, 0);
+  assert.equal(projection.failure_count, 1);
+  assert.equal(projection.projected_restriction_level, 2);
+  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(projection.projected_actions.cooldown_recommended, false);
 });
 
 test("consecutive successful completions reduce passive penalties", () => {
@@ -290,6 +397,61 @@ test("applyTrustEventProjection applies score once per effect hash", async () =>
   assert.ok(calls.some((call) => String(call.sql).includes("pg_advisory_xact_lock")));
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events te")));
   assert.ok(calls.some((call) => String(call.sql).includes("INSERT INTO trust_restrictions")));
+});
+
+test("provider projection rebuild replays trust_events with neutral listing expiry", async () => {
+  const calls = [];
+  const legacyExpiry = createProviderProjectionEvent(1, "provider_listing_expired", {
+    score_delta: -3,
+    timeout_delta: 1,
+  }, "2026-01-01T00:00:00.000Z");
+  const actionableFailure = createProviderProjectionEvent(2, "provider_report_validated", {
+    score_delta: -15,
+    failure_delta: 1,
+  }, "2026-01-02T00:00:00.000Z");
+  const client = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM trust_events") && !sql.includes("JOIN trust_event_effects")) {
+        return { rows: [legacyExpiry, actionableFailure] };
+      }
+      if (sql.includes("INSERT INTO trust_scores")) {
+        return {
+          rows: [
+            {
+              subject_type: params[0],
+              subject_id: params[1],
+              trust_score: params[2],
+              penalty_level: params[3],
+              timeout_count: params[10],
+              projected_restriction_level: params[13],
+              projected_deposit_multiplier: params[15],
+            },
+          ],
+        };
+      }
+      if (sql.includes("INSERT INTO trust_restrictions")) {
+        return { rows: [{ restriction_type: "operational_projection" }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const result = await rebuildTrustProjectionForSubject(client, {
+    subjectType: "provider",
+    subjectId: PROVIDER_ID,
+  });
+
+  assert.equal(result.eventCount, 2);
+  assert.equal(result.score.trust_score, 85);
+  assert.equal(result.score.penalty_level, 2);
+  assert.equal(result.score.timeout_count, 0);
+  assert.equal(result.score.projected_restriction_level, 2);
+  assert.equal(result.score.projected_deposit_multiplier, 1.5);
+  assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
 
 test("applyTrustEventProjection skips duplicate effects without updating scores", async () => {

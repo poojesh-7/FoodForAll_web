@@ -14,6 +14,7 @@ const {
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const { applyPenalty } = require("../shared/services/penalty.service");
+const { retainReliabilityDeposit } = require("../shared/services/payment.service");
 
 
 /*
@@ -121,6 +122,10 @@ const deliveryTimeoutWorker = new Worker(
         reservationId,
         "Volunteer picked food but did not deliver"
       );
+      await retainReliabilityDeposit(client, reservationId, {
+        reservation: r,
+        terminalReason: "volunteer_delivery_failed",
+      });
 
       await client.query("COMMIT");
       await Promise.all([

@@ -67,17 +67,18 @@ function createOperationClient() {
     return {
       id: `77777777-7777-4777-8777-${String(operations.size + 1).padStart(12, "0")}`,
       operation_type: params[0],
-      reservation_id: params[1],
-      payment_session_id: params[2],
-      payment_ownership_id: params[3],
-      actor_user_id: params[4],
-      actor_role: params[5],
-      amount: params[6],
-      currency: params[7],
-      idempotency_key: params[8],
-      status: params[9],
+      operation_source: params[1],
+      reservation_id: params[2],
+      payment_session_id: params[3],
+      payment_ownership_id: params[4],
+      actor_user_id: params[5],
+      actor_role: params[6],
+      amount: params[7],
+      currency: params[8],
+      idempotency_key: params[9],
+      status: params[10],
       retry_count: 0,
-      metadata: JSON.parse(params[10]),
+      metadata: JSON.parse(params[11]),
     };
   }
 

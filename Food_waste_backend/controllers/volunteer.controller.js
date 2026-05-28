@@ -880,7 +880,9 @@ exports.completeTask = async (req, res) => {
 
     // 🔥 cancel delivery timeout
     await deliveryQueue.remove(`delivery-${reservation.id}`);
-    await refundReliabilityDeposit(refundQueue, reservation.id);
+    await refundReliabilityDeposit(refundQueue, reservation.id, {
+      operationSource: "successful_delivery",
+    });
 
     await Promise.all([
       publishReservationUpdated(reservation.id, { action: "delivered" }),

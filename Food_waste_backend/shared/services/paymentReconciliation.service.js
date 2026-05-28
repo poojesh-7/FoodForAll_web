@@ -38,6 +38,9 @@ const {
   operationStatusFromRefundStatus,
 } = require("./refundExecution.service");
 const {
+  prepareLifecycleAccounting,
+} = require("./lifecycleAccounting.service");
+const {
   getReservationSnapshot,
   publishListingUpdated,
   publishPaymentUpdated,
@@ -601,6 +604,26 @@ async function restorePendingReservation(client, reservationId, paymentStatus) {
     `,
     [reservationId, reservationStatus, paymentStatus]
   );
+
+  if (payment) {
+    await prepareLifecycleAccounting({
+      client,
+      reservation,
+      payment,
+      terminalReason: "payment_timeout",
+      lifecycleState: {
+        outcome: "payment_timeout",
+        refundType: "none",
+      },
+      actorContext: {
+        role: "system",
+      },
+      metadata: {
+        service: "paymentReconciliation.service",
+        source: "restore_pending_reservation",
+      },
+    });
+  }
 
   logger.info("Pending reservation restored after payment terminal state", {
     reservationId,
@@ -1355,7 +1378,7 @@ async function publishSideEffects(sideEffects, action = "payment_changed") {
       sideEffects.refundReservationIds.map((reservationId) =>
         refundQueue.add(
           "refund-payment",
-          { reservationId },
+          { reservationId, operationSource: "reconciliation" },
           jobOptions("critical", {
             jobId: `refund-${reservationId}`,
           })

@@ -15,14 +15,12 @@ const {
 const { assertPaymentAuthorization } = require("./authorization.service");
 const {
   createFinancialOwnershipSnapshot,
-  getFinancialOwnership,
 } = require("./financialOwnership.service");
 const {
-  resolveRefundPlan,
-} = require("./refundRouting.service");
+  prepareLifecycleAccounting,
+} = require("./lifecycleAccounting.service");
 const {
   markFinancialOperationStatus,
-  prepareRefundExecution,
 } = require("./refundExecution.service");
 
 function roundMoney(value) {
@@ -237,25 +235,27 @@ function createReliabilityDeposit({ role, amount }) {
   };
 }
 
-async function refundReliabilityDeposit(refundQueue, reservationId) {
+async function refundReliabilityDeposit(refundQueue, reservationId, options = {}) {
   await refundQueue.add(
     "refund-reliability-deposit",
-    { reservationId, refundType: "reliability_deposit" },
+    {
+      reservationId,
+      refundType: "reliability_deposit",
+      operationSource: options.operationSource || options.operation_source || null,
+    },
     jobOptions("critical", {
       jobId: `deposit-refund-${reservationId}`,
     })
   );
 }
 
-async function retainReliabilityDeposit(client, reservationId) {
+async function retainReliabilityDeposit(client, reservationId, options = {}) {
   await ensureRestrictionSchema(client);
   const paymentRes = await client.query(
     `
     SELECT *
     FROM payments
     WHERE reservation_id=$1
-    AND reliability_deposit_amount > 0
-    AND reliability_deposit_status IN ('held','refund_failed')
     ORDER BY created_at NULLS LAST, id
     LIMIT 1
     FOR UPDATE
@@ -266,67 +266,45 @@ async function retainReliabilityDeposit(client, reservationId) {
   if (!paymentRes.rows.length) return;
 
   const payment = paymentRes.rows[0];
-  const ownershipRows = await getFinancialOwnership({
-    db: client,
-    reservationId,
-    paymentSessionId: payment.payment_session_id,
-  });
-
-  if (!ownershipRows.length) {
-    logger.error("Deposit retention blocked by missing payment ownership snapshot", {
-      reservationId,
-      paymentId: payment.id,
-      paymentSessionId: payment.payment_session_id,
-    });
-    void recordAlert({
-      alertKey: `payment:missing_ownership_for_retention:${reservationId}`,
-      category: "payment",
-      severity: "error",
-      message: "Deposit retention missing immutable payment ownership",
-      metadata: {
-        reservationId,
-        paymentId: payment.id,
-      },
-    });
-    throw new Error("payment_ownership snapshot is required for deposit retention");
-  }
-
-  const plan = resolveRefundPlan({
-    reservation: { id: reservationId },
-    payment,
-    paymentOwnership: ownershipRows[0],
-    lifecycleState: {
-      refundType: "reliability_deposit",
-      outcome: "failure",
-    },
-    failureReason: "pickup_or_delivery_failed",
-  });
-  const execution = await prepareRefundExecution({
+  const reservation = {
+    id: reservationId,
+    ...(options.reservation || {}),
+  };
+  const accounting = await prepareLifecycleAccounting({
     client,
-    plan,
-    operationType: "deposit_retention",
+    reservation,
+    payment,
+    terminalReason: options.terminalReason || "user_failed_pickup",
+    actorContext: options.actorContext || { role: "system" },
     metadata: {
       service: "payment.service",
       reason: "reliability_deposit_retained",
     },
   });
 
-  if (!execution.shouldExecute) return;
+  if (accounting.operationType === "lifecycle_accounting") return;
+  if (!accounting.shouldExecute) return;
 
-  await client.query(
+  const retained = await client.query(
     `
     UPDATE payments
     SET reliability_deposit_status='retained',
         reliability_deposit_retained_at=NOW(),
         updated_at=NOW()
     WHERE id=$1
+    AND reliability_deposit_amount > 0
+    AND reliability_deposit_status IN ('held','refund_failed','retained')
     `,
     [payment.id]
   );
 
+  if (!retained.rowCount) {
+    throw new Error("Reliability deposit is not in a retainable state");
+  }
+
   await markFinancialOperationStatus({
     client,
-    operationId: execution.operation.id,
+    operationId: accounting.operation.id,
     status: "retained",
     metadata: {
       retained_at: new Date().toISOString(),
@@ -335,8 +313,9 @@ async function retainReliabilityDeposit(client, reservationId) {
   logger.payment("Reliability deposit retained from ownership snapshot", {
     reservationId,
     paymentId: payment.id,
-    paymentOwnershipId: ownershipRows[0].id,
-    amount: execution.operation.amount,
+    paymentOwnershipId: accounting.paymentOwnership.id,
+    amount: accounting.operation.amount,
+    operationSource: accounting.operationSource,
   });
   void recordOperationalEvent({
     category: "payment",
@@ -345,8 +324,9 @@ async function retainReliabilityDeposit(client, reservationId) {
     metadata: {
       reservationId,
       paymentId: payment.id,
-      paymentOwnershipId: ownershipRows[0].id,
-      amount: execution.operation.amount,
+      paymentOwnershipId: accounting.paymentOwnership.id,
+      amount: accounting.operation.amount,
+      operationSource: accounting.operationSource,
     },
   });
 }

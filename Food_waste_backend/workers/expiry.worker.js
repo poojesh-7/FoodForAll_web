@@ -120,7 +120,10 @@ const expiryWorker = new Worker(
           reason: "Food not picked up before pickup window ended",
           foodCost: Number(reservation.price || 0) * Number(reservation.quantity_reserved || 0),
         });
-        await retainReliabilityDeposit(client, reservation.id);
+        await retainReliabilityDeposit(client, reservation.id, {
+          reservation,
+          terminalReason: "reservation_expired",
+        });
       }
       
       /*

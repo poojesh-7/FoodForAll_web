@@ -15,15 +15,11 @@ const {
   ensurePaymentHardeningSchema,
 } = require("../shared/services/paymentReconciliation.service");
 const {
-  getFinancialOwnership,
-} = require("../shared/services/financialOwnership.service");
-const {
-  resolveRefundPlan,
-} = require("../shared/services/refundRouting.service");
+  prepareLifecycleAccounting,
+} = require("../shared/services/lifecycleAccounting.service");
 const {
   markFinancialOperationStatus,
   operationStatusFromRefundStatus,
-  prepareRefundExecution,
 } = require("../shared/services/refundExecution.service");
 const {
   lockReservationGraph,
@@ -57,25 +53,6 @@ function refundPlanAmount(plan) {
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0) * 100
   ) / 100;
-}
-
-async function loadPaymentOwnership(client, payment) {
-  const rows = await getFinancialOwnership({
-    db: client,
-    reservationId: payment.reservation_id,
-    paymentSessionId: payment.payment_session_id,
-  });
-
-  if (!rows.length) {
-    logger.error("Refund routing blocked by missing payment ownership snapshot", {
-      reservationId: payment.reservation_id,
-      paymentId: payment.id,
-      paymentSessionId: payment.payment_session_id,
-    });
-    throw new Error("payment_ownership snapshot is required for refund routing");
-  }
-
-  return rows[0];
 }
 
 async function markOperationStatusSafely(options) {
@@ -337,7 +314,7 @@ async function persistDepositRefundStatus(reservationId, refundStatus) {
   }
 }
 
-async function prepareDepositRefund(reservationId) {
+async function prepareDepositRefund(reservationId, operationSource) {
   const client = await pool.connect();
 
   try {
@@ -365,36 +342,34 @@ async function prepareDepositRefund(reservationId) {
       return null;
     }
 
-    const paymentOwnership = await loadPaymentOwnership(client, payment);
     const refundId = payment.reliability_deposit_refund_id || crypto.randomUUID();
-    const plan = resolveRefundPlan({
+    const accounting = await prepareLifecycleAccounting({
+      client,
       reservation,
       payment,
-      paymentOwnership,
+      terminalReason:
+        operationSource ||
+        (reservation.pickup_type === "ngo"
+          ? "successful_delivery"
+          : "successful_pickup"),
       lifecycleState: {
         refundType: "reliability_deposit",
         outcome: "success",
       },
-    });
-    const refundAmount = refundPlanAmount(plan);
-
-    if (refundAmount <= 0) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const execution = await prepareRefundExecution({
-      client,
-      plan,
-      operationType: "deposit_refund",
       refundId,
       metadata: {
         queue: "refund-queue",
         worker: "refund.worker",
       },
     });
+    const refundAmount = refundPlanAmount(accounting.plan);
 
-    if (!execution.shouldExecute) {
+    if (refundAmount <= 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (!accounting.shouldExecute) {
       await client.query("ROLLBACK");
       return null;
     }
@@ -421,7 +396,7 @@ async function prepareDepositRefund(reservationId) {
       orderId: payment.order_id,
       refundId,
       amount: refundAmount,
-      operationId: execution.operation.id,
+      operationId: accounting.operation.id,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -431,7 +406,7 @@ async function prepareDepositRefund(reservationId) {
   }
 }
 
-async function prepareRefund(reservationId) {
+async function prepareRefund(reservationId, operationSource) {
   const client = await pool.connect();
 
   try {
@@ -468,36 +443,26 @@ async function prepareRefund(reservationId) {
     }
 
     const refundId = payment.refund_id || crypto.randomUUID();
-    const paymentOwnership = await loadPaymentOwnership(client, payment);
-    const plan = resolveRefundPlan({
+    const accounting = await prepareLifecycleAccounting({
+      client,
       reservation,
       payment,
-      paymentOwnership,
+      terminalReason:
+        operationSource ||
+        (reservation.pickup_type === "ngo" ? "ngo_cancelled" : "user_cancelled"),
       lifecycleState: {
         refundType: "payment",
         outcome: "cancellation",
       },
-      cancellationReason: "reservation_cancelled",
-    });
-    const refundAmount = refundPlanAmount(plan);
-
-    if (refundAmount <= 0) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const execution = await prepareRefundExecution({
-      client,
-      plan,
-      operationType: "payment_refund",
       refundId,
       metadata: {
         queue: "refund-queue",
         worker: "refund.worker",
       },
     });
+    const refundAmount = refundPlanAmount(accounting.plan);
 
-    if (!execution.shouldExecute) {
+    if (refundAmount <= 0 || !accounting.shouldExecute) {
       await client.query("ROLLBACK");
       return null;
     }
@@ -535,7 +500,7 @@ async function prepareRefund(reservationId) {
       orderId: payment.order_id,
       refundId,
       amount: refundAmount,
-      operationId: execution.operation.id,
+      operationId: accounting.operation.id,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -550,7 +515,7 @@ const refundWorker = new Worker(
   withWorkerBoundary("refund-queue", async (job) => {
     const { reservationId, refundType } = job.data;
     if (refundType === "reliability_deposit") {
-      const refund = await prepareDepositRefund(reservationId);
+      const refund = await prepareDepositRefund(reservationId, job.data.operationSource);
 
       if (!refund) return;
 
@@ -610,7 +575,7 @@ const refundWorker = new Worker(
       return;
     }
 
-    const refund = await prepareRefund(reservationId);
+    const refund = await prepareRefund(reservationId, job.data.operationSource);
 
     if (!refund) return;
 

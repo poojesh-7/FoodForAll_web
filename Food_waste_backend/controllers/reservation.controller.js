@@ -29,6 +29,9 @@ const {
 const {
   lifecycleSql,
 } = require("../shared/services/reservationLifecycle.service");
+const {
+  prepareLifecycleAccounting,
+} = require("../shared/services/lifecycleAccounting.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   ensureReservationPaymentContextSchema,
@@ -842,7 +845,11 @@ const legacyCancelReservation = async (req, res) => {
     if (reservation.payment_status === "paid") {
       await refundQueue.add(
         "refund-payment",
-        { reservationId: reservation.id },
+        {
+          reservationId: reservation.id,
+          operationSource:
+            reservation.pickup_type === "ngo" ? "ngo_cancelled" : "user_cancelled",
+        },
         jobOptions("critical", {
           jobId: `refund-${reservation.id}`,
         })
@@ -978,6 +985,26 @@ exports.cancelReservation = async (req, res) => {
         [reservation.id]
       );
 
+      if (payment) {
+        await prepareLifecycleAccounting({
+          client,
+          reservation,
+          payment,
+          terminalReason: "payment_cancelled_before_confirmation",
+          lifecycleState: {
+            outcome: "payment_timeout",
+            refundType: "none",
+          },
+          actorContext: {
+            actorUserId: req.user.id,
+            actorRole: req.user.role,
+          },
+          metadata: {
+            controller: "reservation.cancelReservation",
+          },
+        });
+      }
+
       await client.query("COMMIT");
       committed = true;
 
@@ -996,6 +1023,28 @@ exports.cancelReservation = async (req, res) => {
         throw withStatus("Cannot cancel after volunteer started", 400);
       }
 
+      paymentTimeoutOrderId = payment?.order_id || null;
+
+      if (reservation.payment_status === "paid") {
+        if (!payment) {
+          throw withStatus("Payment record not found for refund", 409);
+        }
+
+        await client.query(
+          `
+          UPDATE payments
+          SET status='refund_pending',
+              refund_status='refund_pending',
+              updated_at=NOW()
+          WHERE id=$1
+          AND status IN ('paid', 'success', 'refund_pending')
+          `,
+          [payment.id]
+        );
+
+        refundReservationId = reservation.id;
+      }
+
       await restoreReservationStockIfHeld(client, reservation, {
         reason: "ngo_reservation_cancelled",
       });
@@ -1003,7 +1052,11 @@ exports.cancelReservation = async (req, res) => {
       await client.query(
         `
         UPDATE reservations
-        SET status='cancelled'
+        SET status='cancelled',
+            payment_status = CASE
+              WHEN payment_status='paid' THEN 'refund_pending'
+              ELSE payment_status
+            END
         WHERE id=$1
         `,
         [reservation.id]
@@ -1089,7 +1142,11 @@ exports.cancelReservation = async (req, res) => {
       try {
         await refundQueue.add(
           "refund-payment",
-          { reservationId: refundReservationId },
+          {
+            reservationId: refundReservationId,
+            operationSource:
+              reservation.pickup_type === "ngo" ? "ngo_cancelled" : "user_cancelled",
+          },
           jobOptions("critical", {
             jobId: `refund-${refundReservationId}`,
           })
@@ -1279,7 +1336,9 @@ exports.markAsPickedUp = async (req, res) => {
 
       logger.info("Delivery timeout scheduled", { reservationId: id });
     } else {
-      await refundReliabilityDeposit(refundQueue, updatedReservation.id);
+      await refundReliabilityDeposit(refundQueue, updatedReservation.id, {
+        operationSource: "successful_pickup",
+      });
     }
 
     res.json({

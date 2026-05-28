@@ -234,6 +234,7 @@ ALTER TABLE "public"."payment_ownership" OWNER TO "postgres";
 CREATE TABLE IF NOT EXISTS "public"."financial_operations" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "operation_type" "text" NOT NULL,
+    "operation_source" "text" DEFAULT 'unspecified'::"text",
     "reservation_id" "uuid",
     "payment_session_id" "text",
     "payment_ownership_id" "uuid",
@@ -761,6 +762,9 @@ CREATE UNIQUE INDEX "idx_payment_ownership_reservation_session_version" ON "publ
 CREATE UNIQUE INDEX "idx_financial_operations_idempotency_key" ON "public"."financial_operations" USING "btree" ("idempotency_key");
 
 
+CREATE INDEX "idx_financial_operations_operation_source" ON "public"."financial_operations" USING "btree" ("operation_source", "created_at" DESC);
+
+
 CREATE INDEX "idx_financial_operations_payment_ownership" ON "public"."financial_operations" USING "btree" ("payment_ownership_id", "created_at" DESC) WHERE ("payment_ownership_id" IS NOT NULL);
 
 
@@ -1201,4 +1205,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-

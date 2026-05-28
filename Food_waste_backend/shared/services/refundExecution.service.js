@@ -77,6 +77,20 @@ function operationActor(plan, operationType) {
   return refundActor(plan);
 }
 
+function lifecycleActor(plan, fallbackRole = "system") {
+  const actorUserId = plan.metadata?.actorUserId || null;
+  const actorRole =
+    plan.metadata?.actorRole ||
+    plan.metadata?.payerRole ||
+    plan.metadata?.refundTargetRole ||
+    fallbackRole;
+
+  return {
+    actorUserId,
+    actorRole,
+  };
+}
+
 function validateRefundPlan(plan) {
   if (!plan || typeof plan !== "object") {
     throw new Error("Refund plan is required");
@@ -136,8 +150,10 @@ function buildIdempotencyKey({ plan, operationType, amount }) {
 function buildFinancialOperationDraft({
   plan,
   operationType,
+  operationSource,
   refundId = null,
   status = "processing",
+  allowZeroAmount = false,
   metadata = {},
 }) {
   validateRefundPlan(plan);
@@ -152,18 +168,31 @@ function buildFinancialOperationDraft({
   }
 
   const amount = operationAmount(plan, normalizedOperationType);
-  if (amount <= 0) {
+  if (amount <= 0 && !allowZeroAmount) {
     throw new Error("Financial operation amount must be positive");
   }
 
-  const actor = operationActor(plan, normalizedOperationType);
+  const actor =
+    normalizedOperationType === "lifecycle_accounting"
+      ? lifecycleActor(plan, metadata.actor_role || "system")
+      : operationActor(plan, normalizedOperationType);
   const currency =
     (plan.refunds || [])[0]?.currency ||
     (plan.retainedAmounts || [])[0]?.currency ||
     "INR";
+  const normalizedOperationSource = compactText(
+    operationSource ||
+      metadata.operation_source ||
+      plan.metadata?.operationSource ||
+      plan.metadata?.terminalReason ||
+      plan.metadata?.lifecycleOutcome,
+    "unspecified",
+    80
+  );
 
   return {
     operation_type: normalizedOperationType,
+    operation_source: normalizedOperationSource,
     reservation_id: plan.metadata.reservationId,
     payment_session_id: plan.metadata.paymentSessionId,
     payment_ownership_id: plan.metadata.paymentOwnershipId,
@@ -182,6 +211,7 @@ function buildFinancialOperationDraft({
       routing_version: plan.metadata.routingVersion,
       refund_scope: plan.metadata.refundScope,
       lifecycle_outcome: plan.metadata.lifecycleOutcome,
+      operation_source: normalizedOperationSource,
       payment_ownership_id: plan.metadata.paymentOwnershipId,
       ownership_version: plan.metadata.ownershipVersion,
       snapshot_hash: plan.metadata.snapshotHash,
@@ -197,16 +227,17 @@ async function insertOperation(client, draft) {
   const result = await client.query(
     `
     INSERT INTO financial_operations (
-      operation_type, reservation_id, payment_session_id, payment_ownership_id,
+      operation_type, operation_source, reservation_id, payment_session_id, payment_ownership_id,
       actor_user_id, actor_role, amount, currency, idempotency_key, status,
       metadata
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
     ON CONFLICT (idempotency_key) DO NOTHING
     RETURNING *
     `,
     [
       draft.operation_type,
+      draft.operation_source,
       draft.reservation_id,
       draft.payment_session_id,
       draft.payment_ownership_id,
@@ -264,7 +295,10 @@ async function prepareRefundExecution({
   client,
   plan,
   operationType,
+  operationSource,
   refundId = null,
+  status = "processing",
+  allowZeroAmount = false,
   metadata = {},
 }) {
   if (!client?.query) throw new Error("Database client is required");
@@ -272,8 +306,10 @@ async function prepareRefundExecution({
   const draft = buildFinancialOperationDraft({
     plan,
     operationType,
+    operationSource,
     refundId,
-    status: "processing",
+    status,
+    allowZeroAmount,
     metadata,
   });
 
@@ -281,10 +317,12 @@ async function prepareRefundExecution({
   if (inserted) {
     incrementCounter("food_rescue_financial_operations_total", {
       operation_type: draft.operation_type,
-      status: "created",
+      status: draft.status === "skipped" ? "skipped" : "created",
+      operation_source: draft.operation_source,
     });
     logger.payment("Financial operation created", {
       operationType: draft.operation_type,
+      operationSource: draft.operation_source,
       reservationId: draft.reservation_id,
       paymentSessionId: draft.payment_session_id,
       paymentOwnershipId: draft.payment_ownership_id,
@@ -296,7 +334,7 @@ async function prepareRefundExecution({
       operation: inserted,
       draft,
       duplicatePrevented: false,
-      shouldExecute: true,
+      shouldExecute: !TERMINAL_OPERATION_STATUSES.has(draft.status),
     };
   }
 
@@ -311,9 +349,11 @@ async function prepareRefundExecution({
   incrementCounter("food_rescue_refund_duplicate_operations_total", {
     operation_type: draft.operation_type,
     status: existing.status || "unknown",
+    operation_source: existing.operation_source || draft.operation_source,
   });
   logger.warn("Duplicate financial operation prevented", {
     operationType: draft.operation_type,
+    operationSource: draft.operation_source,
     reservationId: draft.reservation_id,
     paymentSessionId: draft.payment_session_id,
     paymentOwnershipId: draft.payment_ownership_id,

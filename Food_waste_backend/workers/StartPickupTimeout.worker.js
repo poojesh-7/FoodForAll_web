@@ -15,6 +15,7 @@ const {
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
 const { applyPenalty } = require("../shared/services/penalty.service");
+const { retainReliabilityDeposit } = require("../shared/services/payment.service");
 const {
   lockReservationGraph,
   restoreReservationStockIfHeld,
@@ -126,6 +127,10 @@ const pickupTimeoutWorker = new Worker(
         reservationId,
         "Volunteer failed to reach provider"
       );
+      await retainReliabilityDeposit(client, reservationId, {
+        reservation: r,
+        terminalReason: "volunteer_pickup_failed",
+      });
 
       await client.query("COMMIT");
       await Promise.all([

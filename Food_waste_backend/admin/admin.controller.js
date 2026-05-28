@@ -23,6 +23,13 @@ const {
   getTrustSubject,
   isUuid,
 } = require("../shared/services/trustEvent.service");
+const {
+  getRecentTrustEvents,
+  getTrustAnalytics,
+  getTrustDiagnostics,
+  getTrustObservabilitySummary,
+  getTrustProjectionBreakdown,
+} = require("../shared/services/trustObservability.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -586,6 +593,93 @@ exports.getTrustSubjectEvents = async (req, res) => {
       subject,
     });
     res.status(err.statusCode || 500).json({ error: "Failed to fetch trust events" });
+  }
+};
+
+function trustQueueSlices(queues) {
+  return {
+    trustQueue: queues.find((queue) => queue.name === "trust-queue") || null,
+    deadLetterQueue: queues.find((queue) => queue.name === "dead-letter-queue") || null,
+  };
+}
+
+exports.getTrustObservabilitySummary = async (req, res) => {
+  try {
+    const summary = await getTrustObservabilitySummary(req.query);
+    res.json({ summary });
+  } catch (err) {
+    logger.error("Failed to fetch trust observability summary", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust summary" });
+  }
+};
+
+exports.getRecentTrustEvents = async (req, res) => {
+  try {
+    const events = await getRecentTrustEvents(req.query);
+    res.json(events);
+  } catch (err) {
+    logger.error("Failed to fetch recent trust events", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch recent trust events" });
+  }
+};
+
+exports.getTrustProjectionBreakdown = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  try {
+    const projection = await getTrustProjectionBreakdown(subject);
+    res.json(projection);
+  } catch (err) {
+    logger.error("Failed to fetch trust projection breakdown", {
+      err,
+      adminId: req.user?.id,
+      subject,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust projection" });
+  }
+};
+
+exports.getTrustAnalytics = async (req, res) => {
+  try {
+    const analytics = await getTrustAnalytics(req.query);
+    res.json({ analytics });
+  } catch (err) {
+    logger.error("Failed to fetch trust analytics", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust analytics" });
+  }
+};
+
+exports.getTrustDiagnostics = async (req, res) => {
+  try {
+    const [diagnostics, queues] = await Promise.all([
+      getTrustDiagnostics(req.query),
+      getQueueHealth({ includeJobs: true }),
+    ]);
+    res.json({
+      diagnostics: {
+        ...diagnostics,
+        queue: {
+          ...diagnostics.queue,
+          ...trustQueueSlices(queues),
+        },
+      },
+    });
+  } catch (err) {
+    logger.error("Failed to fetch trust diagnostics", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust diagnostics" });
   }
 };
 

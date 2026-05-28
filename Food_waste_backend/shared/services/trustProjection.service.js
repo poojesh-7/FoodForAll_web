@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 const logger = require("../utils/logger");
-const { incrementCounter } = require("./metrics.service");
+const {
+  incrementCounter,
+  observeHistogram,
+} = require("./metrics.service");
 
 const RECOVERY_STREAK_TARGET = 3;
 const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
@@ -722,6 +725,7 @@ async function applyTrustEventProjection(client, event) {
 }
 
 async function rebuildTrustProjectionForSubject(client, options = {}) {
+  const startedAt = Date.now();
   const subjectType = options.subjectType || options.subject_type;
   const subjectId = options.subjectId || options.subject_id;
   const statuses = options.statuses || ["processed"];
@@ -731,26 +735,47 @@ async function rebuildTrustProjectionForSubject(client, options = {}) {
     event_type: "trust_projection_rebuild",
   };
 
-  await lockTrustSubjectKey(client, subjectType, subjectId, replayEvent);
-  const events = await loadSubjectTrustEventsForReplay(
-    client,
-    replayEvent,
-    subjectType,
-    subjectId,
-    statuses
-  );
-  const projection = buildTrustProjectionFromEvents(events, subjectType, subjectId);
-  const score = await upsertTrustScore(client, replayEvent, projection);
-  const restriction = await upsertOperationalRestriction(client, replayEvent, projection);
+  try {
+    await lockTrustSubjectKey(client, subjectType, subjectId, replayEvent);
+    const events = await loadSubjectTrustEventsForReplay(
+      client,
+      replayEvent,
+      subjectType,
+      subjectId,
+      statuses
+    );
+    const projection = buildTrustProjectionFromEvents(events, subjectType, subjectId);
+    const score = await upsertTrustScore(client, replayEvent, projection);
+    const restriction = await upsertOperationalRestriction(client, replayEvent, projection);
 
-  return {
-    subjectType,
-    subjectId,
-    eventCount: events.length,
-    projection,
-    score,
-    restriction,
-  };
+    incrementCounter("food_rescue_trust_projection_rebuilds_total", {
+      subject_type: subjectType,
+      status: "success",
+    });
+    observeHistogram("food_rescue_trust_projection_rebuild_duration_ms", {
+      subject_type: subjectType,
+      status: "success",
+    }, Date.now() - startedAt);
+
+    return {
+      subjectType,
+      subjectId,
+      eventCount: events.length,
+      projection,
+      score,
+      restriction,
+    };
+  } catch (err) {
+    incrementCounter("food_rescue_trust_projection_rebuilds_total", {
+      subject_type: subjectType || "unknown",
+      status: "failure",
+    });
+    observeHistogram("food_rescue_trust_projection_rebuild_duration_ms", {
+      subject_type: subjectType || "unknown",
+      status: "failure",
+    }, Date.now() - startedAt);
+    throw err;
+  }
 }
 
 module.exports = {

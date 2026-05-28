@@ -15,7 +15,15 @@ const {
 const { assertPaymentAuthorization } = require("./authorization.service");
 const {
   createFinancialOwnershipSnapshot,
+  getFinancialOwnership,
 } = require("./financialOwnership.service");
+const {
+  resolveRefundPlan,
+} = require("./refundRouting.service");
+const {
+  markFinancialOperationStatus,
+  prepareRefundExecution,
+} = require("./refundExecution.service");
 
 function roundMoney(value) {
   const number = Number(value);
@@ -241,18 +249,106 @@ async function refundReliabilityDeposit(refundQueue, reservationId) {
 
 async function retainReliabilityDeposit(client, reservationId) {
   await ensureRestrictionSchema(client);
+  const paymentRes = await client.query(
+    `
+    SELECT *
+    FROM payments
+    WHERE reservation_id=$1
+    AND reliability_deposit_amount > 0
+    AND reliability_deposit_status IN ('held','refund_failed')
+    ORDER BY created_at NULLS LAST, id
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [reservationId]
+  );
+
+  if (!paymentRes.rows.length) return;
+
+  const payment = paymentRes.rows[0];
+  const ownershipRows = await getFinancialOwnership({
+    db: client,
+    reservationId,
+    paymentSessionId: payment.payment_session_id,
+  });
+
+  if (!ownershipRows.length) {
+    logger.error("Deposit retention blocked by missing payment ownership snapshot", {
+      reservationId,
+      paymentId: payment.id,
+      paymentSessionId: payment.payment_session_id,
+    });
+    void recordAlert({
+      alertKey: `payment:missing_ownership_for_retention:${reservationId}`,
+      category: "payment",
+      severity: "error",
+      message: "Deposit retention missing immutable payment ownership",
+      metadata: {
+        reservationId,
+        paymentId: payment.id,
+      },
+    });
+    throw new Error("payment_ownership snapshot is required for deposit retention");
+  }
+
+  const plan = resolveRefundPlan({
+    reservation: { id: reservationId },
+    payment,
+    paymentOwnership: ownershipRows[0],
+    lifecycleState: {
+      refundType: "reliability_deposit",
+      outcome: "failure",
+    },
+    failureReason: "pickup_or_delivery_failed",
+  });
+  const execution = await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "deposit_retention",
+    metadata: {
+      service: "payment.service",
+      reason: "reliability_deposit_retained",
+    },
+  });
+
+  if (!execution.shouldExecute) return;
+
   await client.query(
     `
     UPDATE payments
     SET reliability_deposit_status='retained',
         reliability_deposit_retained_at=NOW(),
         updated_at=NOW()
-    WHERE reservation_id=$1
-    AND reliability_deposit_amount > 0
-    AND reliability_deposit_status IN ('held','refund_failed')
+    WHERE id=$1
     `,
-    [reservationId]
+    [payment.id]
   );
+
+  await markFinancialOperationStatus({
+    client,
+    operationId: execution.operation.id,
+    status: "retained",
+    metadata: {
+      retained_at: new Date().toISOString(),
+    },
+  });
+  logger.payment("Reliability deposit retained from ownership snapshot", {
+    reservationId,
+    paymentId: payment.id,
+    paymentOwnershipId: ownershipRows[0].id,
+    amount: execution.operation.amount,
+  });
+  void recordOperationalEvent({
+    category: "payment",
+    severity: "info",
+    eventName: "reliability_deposit_retained",
+    metadata: {
+      reservationId,
+      paymentId: payment.id,
+      paymentOwnershipId: ownershipRows[0].id,
+      amount: execution.operation.amount,
+    },
+  });
 }
 
 async function cancelPayment(client, reservationId) {

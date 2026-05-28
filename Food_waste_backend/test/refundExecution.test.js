@@ -1,0 +1,272 @@
+const assert = require("node:assert/strict");
+const test = require("node:test");
+
+const {
+  resolveRefundPlan,
+} = require("../shared/services/refundRouting.service");
+const {
+  buildFinancialOperationDraft,
+  markFinancialOperationStatus,
+  markFinancialOperationStatusByRefundId,
+  prepareRefundExecution,
+  validateRefundPlan,
+} = require("../shared/services/refundExecution.service");
+
+const USER_ID = "11111111-1111-4111-8111-111111111111";
+const PROVIDER_ID = "33333333-3333-4333-8333-333333333333";
+const RESERVATION_ID = "55555555-5555-4555-8555-555555555555";
+const OWNERSHIP_ID = "66666666-6666-4666-8666-666666666666";
+
+function ownership(overrides = {}) {
+  return {
+    id: OWNERSHIP_ID,
+    reservation_id: RESERVATION_ID,
+    payment_session_id: "session_f2_execution",
+    payer_user_id: USER_ID,
+    payer_role: "user",
+    provider_id: PROVIDER_ID,
+    beneficiary_user_id: PROVIDER_ID,
+    beneficiary_role: "provider",
+    deposit_owner_user_id: USER_ID,
+    deposit_owner_role: "user",
+    refund_target_user_id: USER_ID,
+    refund_target_role: "user",
+    food_amount: 100,
+    deposit_amount: 20,
+    currency: "INR",
+    ownership_version: 1,
+    snapshot_hash: "snapshot-hash",
+    ...overrides,
+  };
+}
+
+function cancellationPlan() {
+  return resolveRefundPlan({
+    paymentOwnership: ownership(),
+    lifecycleState: {
+      refundType: "payment",
+      outcome: "cancellation",
+    },
+  });
+}
+
+function depositPlan() {
+  return resolveRefundPlan({
+    paymentOwnership: ownership(),
+    lifecycleState: {
+      refundType: "reliability_deposit",
+      outcome: "success",
+    },
+  });
+}
+
+function createOperationClient() {
+  const operations = new Map();
+
+  function rowFromInsert(params) {
+    return {
+      id: `77777777-7777-4777-8777-${String(operations.size + 1).padStart(12, "0")}`,
+      operation_type: params[0],
+      reservation_id: params[1],
+      payment_session_id: params[2],
+      payment_ownership_id: params[3],
+      actor_user_id: params[4],
+      actor_role: params[5],
+      amount: params[6],
+      currency: params[7],
+      idempotency_key: params[8],
+      status: params[9],
+      retry_count: 0,
+      metadata: JSON.parse(params[10]),
+    };
+  }
+
+  function mergeMetadata(row, rawMetadata) {
+    row.metadata = {
+      ...(row.metadata || {}),
+      ...JSON.parse(rawMetadata || "{}"),
+    };
+  }
+
+  return {
+    operations,
+    async query(sql, params = []) {
+      const text = String(sql);
+
+      if (text.includes("INSERT INTO financial_operations")) {
+        const row = rowFromInsert(params);
+        if (operations.has(row.idempotency_key)) return { rows: [] };
+        operations.set(row.idempotency_key, row);
+        return { rows: [row] };
+      }
+
+      if (text.includes("FROM financial_operations")) {
+        return { rows: [operations.get(params[0])].filter(Boolean) };
+      }
+
+      if (text.includes("WHERE metadata->>'refund_id'=$1")) {
+        const rows = Array.from(operations.values()).filter(
+          (row) => row.metadata?.refund_id === params[0]
+        );
+        for (const row of rows) {
+          row.status = params[1];
+          mergeMetadata(row, params[2]);
+        }
+        return { rows };
+      }
+
+      if (text.includes("UPDATE financial_operations")) {
+        const row = Array.from(operations.values()).find(
+          (operation) =>
+            operation.id === params[0] ||
+            operation.idempotency_key === params[0]
+        );
+        if (!row) return { rows: [] };
+
+        if (text.includes("retry_count=retry_count + 1")) {
+          row.status = "processing";
+          row.retry_count += 1;
+          mergeMetadata(row, params[1]);
+        } else {
+          row.status = params[1];
+          mergeMetadata(row, params[2]);
+        }
+
+        return { rows: [row] };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+}
+
+test("financial operation draft is deterministic and ownership-lined", () => {
+  const plan = cancellationPlan();
+  const first = buildFinancialOperationDraft({
+    plan,
+    operationType: "payment_refund",
+    refundId: "refund-1",
+  });
+  const second = buildFinancialOperationDraft({
+    plan,
+    operationType: "payment_refund",
+    refundId: "refund-2",
+  });
+
+  assert.equal(first.amount, 120);
+  assert.equal(first.actor_user_id, USER_ID);
+  assert.equal(first.actor_role, "user");
+  assert.equal(first.payment_ownership_id, OWNERSHIP_ID);
+  assert.equal(first.idempotency_key, second.idempotency_key);
+  assert.equal(first.metadata.routing_source, "payment_ownership");
+});
+
+test("refund execution is idempotent across retries and terminal duplicates", async () => {
+  const client = createOperationClient();
+  const plan = cancellationPlan();
+  const first = await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "payment_refund",
+    refundId: "refund-payment-1",
+  });
+  const retry = await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "payment_refund",
+    refundId: "refund-payment-1",
+  });
+
+  assert.equal(first.shouldExecute, true);
+  assert.equal(first.duplicatePrevented, false);
+  assert.equal(retry.shouldExecute, true);
+  assert.equal(retry.duplicatePrevented, true);
+  assert.equal(retry.operation.retry_count, 1);
+  assert.equal(client.operations.size, 1);
+
+  await markFinancialOperationStatus({
+    client,
+    operationId: first.operation.id,
+    status: "succeeded",
+    metadata: { gateway_status: "SUCCESS" },
+  });
+
+  const replay = await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "payment_refund",
+    refundId: "refund-payment-1",
+  });
+
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(replay.shouldExecute, false);
+  assert.equal(client.operations.size, 1);
+});
+
+test("concurrent duplicate preparation creates one financial operation", async () => {
+  const client = createOperationClient();
+  const plan = depositPlan();
+  const results = await Promise.all([
+    prepareRefundExecution({
+      client,
+      plan,
+      operationType: "deposit_refund",
+      refundId: "refund-deposit-1",
+    }),
+    prepareRefundExecution({
+      client,
+      plan,
+      operationType: "deposit_refund",
+      refundId: "refund-deposit-1",
+    }),
+  ]);
+
+  assert.equal(client.operations.size, 1);
+  assert.equal(results.filter((result) => result.duplicatePrevented).length, 1);
+  assert.equal(results.every((result) => result.shouldExecute), true);
+});
+
+test("webhook replay status updates are safe and repeatable", async () => {
+  const client = createOperationClient();
+  const plan = depositPlan();
+  await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "deposit_refund",
+    refundId: "refund-deposit-webhook",
+  });
+
+  const first = await markFinancialOperationStatusByRefundId({
+    client,
+    refundId: "refund-deposit-webhook",
+    status: "succeeded",
+    metadata: { source: "cashfree_webhook" },
+  });
+  const replay = await markFinancialOperationStatusByRefundId({
+    client,
+    refundId: "refund-deposit-webhook",
+    status: "succeeded",
+    metadata: { source: "cashfree_webhook_replay" },
+  });
+
+  assert.equal(first.length, 1);
+  assert.equal(replay.length, 1);
+  assert.equal(replay[0].status, "succeeded");
+  assert.equal(replay[0].metadata.source, "cashfree_webhook_replay");
+});
+
+test("refund execution rejects provider refund ownership", () => {
+  const plan = cancellationPlan();
+  const invalid = {
+    ...plan,
+    refunds: [
+      {
+        ...plan.refunds[0],
+        actorUserId: PROVIDER_ID,
+        actorRole: "provider",
+      },
+    ],
+  };
+
+  assert.throws(() => validateRefundPlan(invalid), /Provider cannot be a refund recipient/);
+});

@@ -231,6 +231,32 @@ CREATE TABLE IF NOT EXISTS "public"."payment_ownership" (
 ALTER TABLE "public"."payment_ownership" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."financial_operations" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "operation_type" "text" NOT NULL,
+    "reservation_id" "uuid",
+    "payment_session_id" "text",
+    "payment_ownership_id" "uuid",
+    "actor_user_id" "uuid",
+    "actor_role" "text",
+    "amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "idempotency_key" "text" NOT NULL,
+    "status" "text" DEFAULT 'planned'::"text" NOT NULL,
+    "retry_count" integer DEFAULT 0 NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "financial_operations_amount_nonnegative" CHECK (("amount" >= (0)::numeric)),
+    CONSTRAINT "financial_operations_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "financial_operations_retry_count_nonnegative" CHECK (("retry_count" >= 0)),
+    CONSTRAINT "financial_operations_status_valid" CHECK (("status" = ANY (ARRAY['planned'::"text", 'processing'::"text", 'succeeded'::"text", 'failed'::"text", 'skipped'::"text", 'retained'::"text"])))
+);
+
+
+ALTER TABLE "public"."financial_operations" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."penalties" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "user_id" "uuid",
@@ -488,6 +514,10 @@ ALTER TABLE ONLY "public"."payment_ownership"
     ADD CONSTRAINT "payment_ownership_pkey" PRIMARY KEY ("id");
 
 
+ALTER TABLE ONLY "public"."financial_operations"
+    ADD CONSTRAINT "financial_operations_pkey" PRIMARY KEY ("id");
+
+
 
 ALTER TABLE ONLY "public"."penalties"
     ADD CONSTRAINT "penalties_pkey" PRIMARY KEY ("id");
@@ -728,6 +758,21 @@ CREATE INDEX "idx_payment_ownership_reservation" ON "public"."payment_ownership"
 CREATE UNIQUE INDEX "idx_payment_ownership_reservation_session_version" ON "public"."payment_ownership" USING "btree" ("reservation_id", "payment_session_id", "ownership_version");
 
 
+CREATE UNIQUE INDEX "idx_financial_operations_idempotency_key" ON "public"."financial_operations" USING "btree" ("idempotency_key");
+
+
+CREATE INDEX "idx_financial_operations_payment_ownership" ON "public"."financial_operations" USING "btree" ("payment_ownership_id", "created_at" DESC) WHERE ("payment_ownership_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_financial_operations_payment_session" ON "public"."financial_operations" USING "btree" ("payment_session_id", "created_at" DESC) WHERE ("payment_session_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_financial_operations_reservation" ON "public"."financial_operations" USING "btree" ("reservation_id", "created_at" DESC) WHERE ("reservation_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_financial_operations_status" ON "public"."financial_operations" USING "btree" ("status", "updated_at" DESC);
+
+
 
 CREATE UNIQUE INDEX "idx_payments_transaction_id_unique" ON "public"."payments" USING "btree" ("transaction_id") WHERE ("transaction_id" IS NOT NULL);
 
@@ -912,6 +957,18 @@ ALTER TABLE ONLY "public"."payment_ownership"
 
 ALTER TABLE ONLY "public"."payment_ownership"
     ADD CONSTRAINT "payment_ownership_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."financial_operations"
+    ADD CONSTRAINT "financial_operations_actor_user_id_fkey" FOREIGN KEY ("actor_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."financial_operations"
+    ADD CONSTRAINT "financial_operations_payment_ownership_id_fkey" FOREIGN KEY ("payment_ownership_id") REFERENCES "public"."payment_ownership"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."financial_operations"
+    ADD CONSTRAINT "financial_operations_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE RESTRICT;
 
 
 
@@ -1144,5 +1201,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-
 

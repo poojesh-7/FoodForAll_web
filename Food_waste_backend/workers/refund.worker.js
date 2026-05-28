@@ -15,6 +15,17 @@ const {
   ensurePaymentHardeningSchema,
 } = require("../shared/services/paymentReconciliation.service");
 const {
+  getFinancialOwnership,
+} = require("../shared/services/financialOwnership.service");
+const {
+  resolveRefundPlan,
+} = require("../shared/services/refundRouting.service");
+const {
+  markFinancialOperationStatus,
+  operationStatusFromRefundStatus,
+  prepareRefundExecution,
+} = require("../shared/services/refundExecution.service");
+const {
   lockReservationGraph,
 } = require("../shared/services/reservationConsistency.service");
 
@@ -37,6 +48,46 @@ function normalizeRefundStatus(status) {
   }
 
   return "refund_pending";
+}
+
+function refundPlanAmount(plan) {
+  return Math.round(
+    (plan.refunds || []).reduce((sum, refund) => {
+      const amount = Number(refund.amount);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0) * 100
+  ) / 100;
+}
+
+async function loadPaymentOwnership(client, payment) {
+  const rows = await getFinancialOwnership({
+    db: client,
+    reservationId: payment.reservation_id,
+    paymentSessionId: payment.payment_session_id,
+  });
+
+  if (!rows.length) {
+    logger.error("Refund routing blocked by missing payment ownership snapshot", {
+      reservationId: payment.reservation_id,
+      paymentId: payment.id,
+      paymentSessionId: payment.payment_session_id,
+    });
+    throw new Error("payment_ownership snapshot is required for refund routing");
+  }
+
+  return rows[0];
+}
+
+async function markOperationStatusSafely(options) {
+  try {
+    await markFinancialOperationStatus(options);
+  } catch (err) {
+    logger.warn("Financial operation status update failed", {
+      err,
+      operationId: options.operationId,
+      status: options.status,
+    });
+  }
 }
 
 async function markRefundFailed(reservationId) {
@@ -293,7 +344,7 @@ async function prepareDepositRefund(reservationId) {
     await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
-    const { payment } = await lockReservationGraph(client, reservationId, {
+    const { reservation, payment } = await lockReservationGraph(client, reservationId, {
       lockPayments: true,
     });
 
@@ -314,16 +365,48 @@ async function prepareDepositRefund(reservationId) {
       return null;
     }
 
+    const paymentOwnership = await loadPaymentOwnership(client, payment);
     const refundId = payment.reliability_deposit_refund_id || crypto.randomUUID();
+    const plan = resolveRefundPlan({
+      reservation,
+      payment,
+      paymentOwnership,
+      lifecycleState: {
+        refundType: "reliability_deposit",
+        outcome: "success",
+      },
+    });
+    const refundAmount = refundPlanAmount(plan);
 
-      await client.query(
-        `
-        UPDATE payments
-        SET reliability_deposit_status='refund_pending',
-            reliability_deposit_refund_id=$1,
-            reliability_deposit_refund_attempts=COALESCE(reliability_deposit_refund_attempts, 0) + 1,
-            updated_at=NOW()
-        WHERE id=$2
+    if (refundAmount <= 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const execution = await prepareRefundExecution({
+      client,
+      plan,
+      operationType: "deposit_refund",
+      refundId,
+      metadata: {
+        queue: "refund-queue",
+        worker: "refund.worker",
+      },
+    });
+
+    if (!execution.shouldExecute) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      `
+      UPDATE payments
+      SET reliability_deposit_status='refund_pending',
+          reliability_deposit_refund_id=$1,
+          reliability_deposit_refund_attempts=COALESCE(reliability_deposit_refund_attempts, 0) + 1,
+          updated_at=NOW()
+      WHERE id=$2
       `,
       [refundId, payment.id]
     );
@@ -337,7 +420,8 @@ async function prepareDepositRefund(reservationId) {
     return {
       orderId: payment.order_id,
       refundId,
-      amount,
+      amount: refundAmount,
+      operationId: execution.operation.id,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -384,6 +468,39 @@ async function prepareRefund(reservationId) {
     }
 
     const refundId = payment.refund_id || crypto.randomUUID();
+    const paymentOwnership = await loadPaymentOwnership(client, payment);
+    const plan = resolveRefundPlan({
+      reservation,
+      payment,
+      paymentOwnership,
+      lifecycleState: {
+        refundType: "payment",
+        outcome: "cancellation",
+      },
+      cancellationReason: "reservation_cancelled",
+    });
+    const refundAmount = refundPlanAmount(plan);
+
+    if (refundAmount <= 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const execution = await prepareRefundExecution({
+      client,
+      plan,
+      operationType: "payment_refund",
+      refundId,
+      metadata: {
+        queue: "refund-queue",
+        worker: "refund.worker",
+      },
+    });
+
+    if (!execution.shouldExecute) {
+      await client.query("ROLLBACK");
+      return null;
+    }
 
     await client.query(
       `
@@ -417,7 +534,8 @@ async function prepareRefund(reservationId) {
     return {
       orderId: payment.order_id,
       refundId,
-      amount: Number(payment.amount),
+      amount: refundAmount,
+      operationId: execution.operation.id,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -450,6 +568,15 @@ const refundWorker = new Worker(
 
         const refundStatus = normalizeRefundStatus(response.data?.refund_status);
         await persistDepositRefundStatus(reservationId, refundStatus);
+        await markOperationStatusSafely({
+          client: pool,
+          operationId: refund.operationId,
+          status: operationStatusFromRefundStatus(refundStatus),
+          metadata: {
+            refund_id: refund.refundId,
+            gateway_status: response.data?.refund_status || null,
+          },
+        });
       } catch (err) {
         const attempts = job.opts.attempts || 5;
         const isLastAttempt = job.attemptsMade + 1 >= attempts;
@@ -465,6 +592,16 @@ const refundWorker = new Worker(
 
         if (isLastAttempt) {
           await markDepositRefundFailed(reservationId);
+          await markOperationStatusSafely({
+            client: pool,
+            operationId: refund.operationId,
+            status: "failed",
+            metadata: {
+              refund_id: refund.refundId,
+              error: err?.message,
+              attempts_made: job.attemptsMade + 1,
+            },
+          });
         }
 
         throw err;
@@ -491,6 +628,15 @@ const refundWorker = new Worker(
 
       const refundStatus = normalizeRefundStatus(response.data?.refund_status);
       await persistRefundStatus(reservationId, refundStatus);
+      await markOperationStatusSafely({
+        client: pool,
+        operationId: refund.operationId,
+        status: operationStatusFromRefundStatus(refundStatus),
+        metadata: {
+          refund_id: refund.refundId,
+          gateway_status: response.data?.refund_status || null,
+        },
+      });
     } catch (err) {
       const attempts = job.opts.attempts || 5;
       const isLastAttempt = job.attemptsMade + 1 >= attempts;
@@ -506,6 +652,16 @@ const refundWorker = new Worker(
 
       if (isLastAttempt) {
         await markRefundFailed(reservationId);
+        await markOperationStatusSafely({
+          client: pool,
+          operationId: refund.operationId,
+          status: "failed",
+          metadata: {
+            refund_id: refund.refundId,
+            error: err?.message,
+            attempts_made: job.attemptsMade + 1,
+          },
+        });
       }
 
       throw err;

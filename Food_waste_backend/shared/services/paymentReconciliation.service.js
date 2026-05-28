@@ -34,6 +34,10 @@ const {
   restoreReservationStockIfHeld,
 } = require("./reservationConsistency.service");
 const {
+  markFinancialOperationStatusByRefundId,
+  operationStatusFromRefundStatus,
+} = require("./refundExecution.service");
+const {
   getReservationSnapshot,
   publishListingUpdated,
   publishPaymentUpdated,
@@ -1126,6 +1130,12 @@ async function processRefundEvent(client, refund, sideEffects) {
         `,
         [payment.id]
       );
+      await markFinancialOperationStatusByRefundId({
+        client,
+        refundId: refund_id,
+        status: "succeeded",
+        metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+      });
       sideEffects.changedReservationIds.add(payment.reservation_id);
       return;
     }
@@ -1142,6 +1152,12 @@ async function processRefundEvent(client, refund, sideEffects) {
         `,
         [payment.id]
       );
+      await markFinancialOperationStatusByRefundId({
+        client,
+        refundId: refund_id,
+        status: "failed",
+        metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+      });
       sideEffects.changedReservationIds.add(payment.reservation_id);
       return;
     }
@@ -1157,6 +1173,12 @@ async function processRefundEvent(client, refund, sideEffects) {
       `,
       [payment.id]
     );
+    await markFinancialOperationStatusByRefundId({
+      client,
+      refundId: refund_id,
+      status: "processing",
+      metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+    });
     sideEffects.changedReservationIds.add(payment.reservation_id);
     return;
   }
@@ -1185,6 +1207,12 @@ async function processRefundEvent(client, refund, sideEffects) {
       `UPDATE reservations SET payment_status='refunded' WHERE id=$1`,
       [payment.reservation_id]
     );
+    await markFinancialOperationStatusByRefundId({
+      client,
+      refundId: refund_id,
+      status: "succeeded",
+      metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+    });
     sideEffects.changedReservationIds.add(payment.reservation_id);
     return;
   }
@@ -1211,6 +1239,12 @@ async function processRefundEvent(client, refund, sideEffects) {
       `,
       [payment.reservation_id]
     );
+    await markFinancialOperationStatusByRefundId({
+      client,
+      refundId: refund_id,
+      status: "failed",
+      metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+    });
     sideEffects.changedReservationIds.add(payment.reservation_id);
     return;
   }
@@ -1237,6 +1271,12 @@ async function processRefundEvent(client, refund, sideEffects) {
       `,
       [payment.reservation_id]
     );
+    await markFinancialOperationStatusByRefundId({
+      client,
+      refundId: refund_id,
+      status: operationStatusFromRefundStatus("refund_pending"),
+      metadata: { gateway_status: refund_status, source: "cashfree_webhook" },
+    });
     sideEffects.changedReservationIds.add(payment.reservation_id);
   }
 }

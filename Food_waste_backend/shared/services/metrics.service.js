@@ -173,6 +173,8 @@ function getPrometheusMetrics() {
     "# TYPE food_rescue_queue_jobs_total counter",
     "# HELP food_rescue_payment_events_total Payment lifecycle events observed by the API/workers.",
     "# TYPE food_rescue_payment_events_total counter",
+    "# HELP food_rescue_payment_ownership_snapshots_total Immutable financial ownership snapshot creation outcomes.",
+    "# TYPE food_rescue_payment_ownership_snapshots_total counter",
     "# HELP food_rescue_reservations_created_total Reservation creation events.",
     "# TYPE food_rescue_reservations_created_total counter",
     "# HELP food_rescue_trust_events_ingested_total Trust ledger ingestion events.",

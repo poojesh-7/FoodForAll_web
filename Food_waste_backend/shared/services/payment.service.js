@@ -13,6 +13,9 @@ const {
   ensurePaymentHardeningSchema,
 } = require("./paymentReconciliation.service");
 const { assertPaymentAuthorization } = require("./authorization.service");
+const {
+  createFinancialOwnershipSnapshot,
+} = require("./financialOwnership.service");
 
 function roundMoney(value) {
   const number = Number(value);
@@ -84,12 +87,13 @@ async function createPayment({
       );
       const rowAmount = roundMoney(foodAmount + depositAmount);
 
-      await client.query(
+      const paymentRow = await client.query(
         `
         INSERT INTO payments
         (reservation_id, order_id, payment_session_id, amount, status,
          food_amount, reliability_deposit_amount, reliability_deposit_status)
         VALUES ($1,$2,$3,$4,'pending',$5,$6,$7)
+        RETURNING *
         `,
         [
           reservation.id,
@@ -101,6 +105,21 @@ async function createPayment({
           depositAmount > 0 ? "held" : "not_required",
         ]
       );
+
+      await createFinancialOwnershipSnapshot({
+        client,
+        user,
+        payer: user,
+        reservation,
+        payment: paymentRow.rows[0],
+        foodAmount,
+        depositAmount,
+        currency: "INR",
+        sourceMetadata: {
+          order_id: orderId,
+          payment_session_id: paymentSessionId,
+        },
+      });
     }
 
     const expiryTime = new Date(Date.now() + 10 * 60 * 1000);

@@ -198,6 +198,39 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
 ALTER TABLE "public"."payments" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."payment_ownership" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "reservation_id" "uuid" NOT NULL,
+    "payment_session_id" "text" NOT NULL,
+    "payer_user_id" "uuid" NOT NULL,
+    "payer_role" "text" NOT NULL,
+    "provider_id" "uuid",
+    "beneficiary_user_id" "uuid",
+    "beneficiary_role" "text",
+    "platform_account_id" "text",
+    "deposit_owner_user_id" "uuid",
+    "deposit_owner_role" "text",
+    "refund_target_user_id" "uuid",
+    "refund_target_role" "text",
+    "commission_receiver_user_id" "uuid",
+    "commission_receiver_role" "text",
+    "food_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "deposit_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "commission_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "ownership_version" integer DEFAULT 1 NOT NULL,
+    "snapshot_hash" "text" NOT NULL,
+    "source_metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "payment_ownership_amounts_nonnegative" CHECK ((("food_amount" >= (0)::numeric) AND ("deposit_amount" >= (0)::numeric) AND ("commission_amount" >= (0)::numeric))),
+    CONSTRAINT "payment_ownership_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "payment_ownership_version_positive" CHECK (("ownership_version" > 0))
+);
+
+
+ALTER TABLE "public"."payment_ownership" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."penalties" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "user_id" "uuid",
@@ -382,6 +415,21 @@ CREATE TABLE IF NOT EXISTS "public"."worker_heartbeats" (
 ALTER TABLE "public"."worker_heartbeats" OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."prevent_payment_ownership_mutation"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'payment_ownership rows are immutable';
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_payment_ownership_mutation"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_payment_ownership_immutable" BEFORE UPDATE OR DELETE ON "public"."payment_ownership" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_payment_ownership_mutation"();
+
+
 ALTER TABLE ONLY "public"."cashfree_webhook_events"
     ADD CONSTRAINT "cashfree_webhook_events_idempotency_key_key" UNIQUE ("idempotency_key");
 
@@ -434,6 +482,10 @@ ALTER TABLE ONLY "public"."payments"
 
 ALTER TABLE ONLY "public"."payments"
     ADD CONSTRAINT "payments_pkey" PRIMARY KEY ("id");
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_pkey" PRIMARY KEY ("id");
 
 
 
@@ -658,6 +710,24 @@ CREATE INDEX "idx_payments_reservation" ON "public"."payments" USING "btree" ("r
 CREATE INDEX "idx_payments_reservation_status_updated" ON "public"."payments" USING "btree" ("reservation_id", "status", "updated_at" DESC);
 
 
+CREATE INDEX "idx_payment_ownership_payer" ON "public"."payment_ownership" USING "btree" ("payer_user_id", "payer_role", "created_at" DESC);
+
+
+CREATE INDEX "idx_payment_ownership_payment_session" ON "public"."payment_ownership" USING "btree" ("payment_session_id", "created_at" DESC);
+
+
+CREATE INDEX "idx_payment_ownership_provider" ON "public"."payment_ownership" USING "btree" ("provider_id", "created_at" DESC) WHERE ("provider_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_payment_ownership_refund_target" ON "public"."payment_ownership" USING "btree" ("refund_target_user_id", "refund_target_role", "created_at" DESC) WHERE ("refund_target_user_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_payment_ownership_reservation" ON "public"."payment_ownership" USING "btree" ("reservation_id", "created_at" DESC);
+
+
+CREATE UNIQUE INDEX "idx_payment_ownership_reservation_session_version" ON "public"."payment_ownership" USING "btree" ("reservation_id", "payment_session_id", "ownership_version");
+
+
 
 CREATE UNIQUE INDEX "idx_payments_transaction_id_unique" ON "public"."payments" USING "btree" ("transaction_id") WHERE ("transaction_id" IS NOT NULL);
 
@@ -814,6 +884,34 @@ ALTER TABLE ONLY "public"."notifications"
 
 ALTER TABLE ONLY "public"."payments"
     ADD CONSTRAINT "payments_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_beneficiary_user_id_fkey" FOREIGN KEY ("beneficiary_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_commission_receiver_user_id_fkey" FOREIGN KEY ("commission_receiver_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_deposit_owner_user_id_fkey" FOREIGN KEY ("deposit_owner_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_payer_user_id_fkey" FOREIGN KEY ("payer_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_provider_id_fkey" FOREIGN KEY ("provider_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_refund_target_user_id_fkey" FOREIGN KEY ("refund_target_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."payment_ownership"
+    ADD CONSTRAINT "payment_ownership_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE RESTRICT;
 
 
 
@@ -1046,10 +1144,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-
-
-
-
-
 
 

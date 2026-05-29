@@ -11,6 +11,10 @@ const {
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const {
   ensurePaymentHardeningSchema,
+  markPaymentOrderAttemptDbInserted,
+  markPaymentOrderAttemptFailed,
+  markPaymentOrderAttemptGatewayCreated,
+  recordPaymentOrderAttempt,
 } = require("./paymentReconciliation.service");
 const { assertPaymentAuthorization } = require("./authorization.service");
 const {
@@ -53,6 +57,14 @@ async function createPayment({
   }
 
   try {
+    await recordPaymentOrderAttempt({
+      orderId,
+      user,
+      reservations,
+      amount: totalAmount,
+      currency: "INR",
+    });
+
     logger.payment("Payment order creation initiated", {
       userId: user?.id,
       orderId,
@@ -74,6 +86,11 @@ async function createPayment({
     });
 
     const paymentSessionId = response.data.payment_session_id;
+    await markPaymentOrderAttemptGatewayCreated({
+      orderId,
+      paymentSessionId,
+      gatewayResponse: response.data,
+    });
 
     const fallbackFoodAmount =
       reservations.length === 1 ? roundMoney(totalFoodAmount ?? totalAmount) : 0;
@@ -128,6 +145,8 @@ async function createPayment({
       });
     }
 
+    await markPaymentOrderAttemptDbInserted({ orderId });
+
     const expiryTime = new Date(Date.now() + 10 * 60 * 1000);
 
     for (const reservation of reservations) {
@@ -137,19 +156,38 @@ async function createPayment({
       );
     }
 
-    await paymentQueue.add(
-      "payment-timeout",
-      {
-        reservationIds: reservations.map((reservation) => reservation.id),
-        userId: user?.id,
-        orderId,
-        paymentSessionId,
-      },
-      jobOptions("critical", {
-        delay: 10 * 60 * 1000,
-        jobId: `payment-batch-${orderId}`,
-      })
-    );
+    await paymentQueue
+      .add(
+        "payment-timeout",
+        {
+          reservationIds: reservations.map((reservation) => reservation.id),
+          userId: user?.id,
+          orderId,
+          paymentSessionId,
+        },
+        jobOptions("critical", {
+          delay: 10 * 60 * 1000,
+          jobId: `payment-batch-${orderId}`,
+        })
+      )
+      .catch((err) => {
+        logger.error("Payment timeout enqueue failed; reconciliation sweep will recover", {
+          err,
+          orderId,
+          reservationIds: reservations.map((reservation) => reservation.id),
+        });
+        void recordAlert({
+          alertKey: "payment:timeout_enqueue_failure",
+          category: "payment",
+          severity: "error",
+          message: "Payment timeout queue enqueue failed",
+          metadata: {
+            orderId,
+            reservationIds: reservations.map((reservation) => reservation.id),
+            message: err?.message,
+          },
+        });
+      });
 
     void recordOperationalEvent({
       category: "payment",
@@ -170,6 +208,12 @@ async function createPayment({
       reliability_deposit_amount: roundMoney(reliabilityDepositAmount),
     };
   } catch (err) {
+    await markPaymentOrderAttemptFailed({ orderId, err }).catch((markErr) => {
+      logger.warn("Payment order attempt failure mark failed", {
+        err: markErr,
+        orderId,
+      });
+    });
     const paymentError = new PaymentError("Cashfree order creation failed", {
       details: { orderId },
     });

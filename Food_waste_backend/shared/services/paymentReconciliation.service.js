@@ -34,6 +34,14 @@ const {
   restoreReservationStockIfHeld,
 } = require("./reservationConsistency.service");
 const {
+  createFinancialOwnershipSnapshot,
+  roundMoney,
+} = require("./financialOwnership.service");
+const {
+  normalizeRefundStatusFromGateway,
+  shouldApplyRefundWebhook,
+} = require("./financialStateMachine.service");
+const {
   markFinancialOperationStatusByRefundId,
   operationStatusFromRefundStatus,
 } = require("./refundExecution.service");
@@ -57,6 +65,9 @@ const WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
 const WEBHOOK_PROCESSING_LOCK_TTL_SECONDS = 5 * 60;
 const WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 const PAYMENT_RECONCILIATION_LIMIT = 100;
+const PAYMENT_ORDER_ATTEMPT_RECOVERY_LIMIT = 50;
+const REFUND_RECONCILIATION_LIMIT = 50;
+const REFUND_RECONCILIATION_STALE_MINUTES = 10;
 
 let schemaReady;
 
@@ -131,11 +142,13 @@ function verifyCashfreeWebhookSignature({ rawBody, signature, timestamp }) {
   }
 }
 
-async function ensurePaymentHardeningSchema(client = pool) {
+async function ensurePaymentHardeningSchema(_client = pool) {
   if (shouldSkipRuntimeSchemaMutation()) {
     schemaReady = schemaReady || Promise.resolve();
     return schemaReady;
   }
+
+  const client = pool;
 
   if (!schemaReady || client !== pool) {
     const run = async () => {
@@ -163,7 +176,10 @@ async function ensurePaymentHardeningSchema(client = pool) {
         ADD COLUMN IF NOT EXISTS reconciliation_status TEXT NULL,
         ADD COLUMN IF NOT EXISTS reconciliation_attempts INTEGER DEFAULT 0,
         ADD COLUMN IF NOT EXISTS refund_attempts INTEGER DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS reliability_deposit_refund_attempts INTEGER DEFAULT 0
+        ADD COLUMN IF NOT EXISTS reliability_deposit_refund_attempts INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS payment_terminal_at TIMESTAMP NULL,
+        ADD COLUMN IF NOT EXISTS refund_terminal_at TIMESTAMP NULL,
+        ADD COLUMN IF NOT EXISTS financial_state_version INTEGER NOT NULL DEFAULT 0
       `);
 
       await client.query(`
@@ -187,6 +203,62 @@ async function ensurePaymentHardeningSchema(client = pool) {
       `);
 
       await client.query(`
+        CREATE TABLE IF NOT EXISTS payment_order_attempts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          order_id TEXT NOT NULL UNIQUE,
+          payer_user_id UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+          reservation_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+          amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+          currency TEXT NOT NULL DEFAULT 'INR',
+          status TEXT NOT NULL DEFAULT 'creating',
+          payment_session_id TEXT NULL,
+          reservation_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+          gateway_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+          failure_reason TEXT NULL,
+          recovery_attempts INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          recovered_at TIMESTAMP NULL
+        )
+      `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS cashfree_webhook_audit_log (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          idempotency_key TEXT NULL,
+          event_type TEXT NULL,
+          order_id TEXT NULL,
+          cf_payment_id TEXT NULL,
+          refund_id TEXT NULL,
+          processing_status TEXT NOT NULL,
+          payload_hash TEXT NOT NULL,
+          signature_present BOOLEAN NOT NULL DEFAULT false,
+          webhook_timestamp TEXT NULL,
+          rejection_reason TEXT NULL,
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          received_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS financial_state_transitions (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE RESTRICT,
+          reservation_id UUID NULL REFERENCES reservations(id) ON DELETE RESTRICT,
+          order_id TEXT NULL,
+          old_payment_status TEXT NULL,
+          new_payment_status TEXT NULL,
+          old_refund_status TEXT NULL,
+          new_refund_status TEXT NULL,
+          old_deposit_status TEXT NULL,
+          new_deposit_status TEXT NULL,
+          transition_source TEXT NOT NULL DEFAULT 'database_trigger',
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      await client.query(`
         DO $$
         DECLARE
           target record;
@@ -203,6 +275,26 @@ async function ensurePaymentHardeningSchema(client = pool) {
               ('cashfree_webhook_events', 'payload_hash'),
               ('cashfree_webhook_events', 'signature'),
               ('cashfree_webhook_events', 'webhook_timestamp'),
+              ('cashfree_webhook_audit_log', 'idempotency_key'),
+              ('cashfree_webhook_audit_log', 'event_type'),
+              ('cashfree_webhook_audit_log', 'order_id'),
+              ('cashfree_webhook_audit_log', 'cf_payment_id'),
+              ('cashfree_webhook_audit_log', 'refund_id'),
+              ('cashfree_webhook_audit_log', 'processing_status'),
+              ('cashfree_webhook_audit_log', 'payload_hash'),
+              ('cashfree_webhook_audit_log', 'webhook_timestamp'),
+              ('payment_order_attempts', 'order_id'),
+              ('payment_order_attempts', 'payment_session_id'),
+              ('payment_order_attempts', 'status'),
+              ('payment_order_attempts', 'currency'),
+              ('financial_state_transitions', 'order_id'),
+              ('financial_state_transitions', 'old_payment_status'),
+              ('financial_state_transitions', 'new_payment_status'),
+              ('financial_state_transitions', 'old_refund_status'),
+              ('financial_state_transitions', 'new_refund_status'),
+              ('financial_state_transitions', 'old_deposit_status'),
+              ('financial_state_transitions', 'new_deposit_status'),
+              ('financial_state_transitions', 'transition_source'),
               ('payments', 'order_id'),
               ('payments', 'payment_session_id'),
               ('payments', 'transaction_id'),
@@ -247,6 +339,45 @@ async function ensurePaymentHardeningSchema(client = pool) {
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_cashfree_webhook_events_status
         ON cashfree_webhook_events (status, received_at DESC)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_cashfree_webhook_audit_order
+        ON cashfree_webhook_audit_log (order_id, received_at DESC)
+        WHERE order_id IS NOT NULL
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_cashfree_webhook_audit_refund
+        ON cashfree_webhook_audit_log (refund_id, received_at DESC)
+        WHERE refund_id IS NOT NULL
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_cashfree_webhook_audit_status
+        ON cashfree_webhook_audit_log (processing_status, received_at DESC)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_payment_order_attempts_status_updated
+        ON payment_order_attempts (status, updated_at)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_payment_order_attempts_payer
+        ON payment_order_attempts (payer_user_id, created_at DESC)
+        WHERE payer_user_id IS NOT NULL
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_financial_state_transitions_payment
+        ON financial_state_transitions (payment_id, created_at DESC)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_financial_state_transitions_reservation
+        ON financial_state_transitions (reservation_id, created_at DESC)
+        WHERE reservation_id IS NOT NULL
       `);
 
       await client.query(`
@@ -302,6 +433,174 @@ async function ensurePaymentHardeningSchema(client = pool) {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_deposit_refund_id_unique
         ON payments (reliability_deposit_refund_id)
         WHERE reliability_deposit_refund_id IS NOT NULL
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE FUNCTION prevent_cashfree_webhook_audit_mutation()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          RAISE EXCEPTION 'cashfree_webhook_audit_log rows are immutable';
+        END;
+        $$;
+      `);
+
+      await client.query(`
+        DROP TRIGGER IF EXISTS trg_cashfree_webhook_audit_immutable ON cashfree_webhook_audit_log;
+        CREATE TRIGGER trg_cashfree_webhook_audit_immutable
+          BEFORE UPDATE OR DELETE ON cashfree_webhook_audit_log
+          FOR EACH ROW
+          EXECUTE FUNCTION prevent_cashfree_webhook_audit_mutation();
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE FUNCTION prevent_financial_state_transition_mutation()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          RAISE EXCEPTION 'financial_state_transitions rows are immutable';
+        END;
+        $$;
+      `);
+
+      await client.query(`
+        DROP TRIGGER IF EXISTS trg_financial_state_transitions_immutable ON financial_state_transitions;
+        CREATE TRIGGER trg_financial_state_transitions_immutable
+          BEFORE UPDATE OR DELETE ON financial_state_transitions
+          FOR EACH ROW
+          EXECUTE FUNCTION prevent_financial_state_transition_mutation();
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE FUNCTION guard_payment_financial_state_transition()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          old_status TEXT := COALESCE(OLD.status, 'created');
+          new_status TEXT := COALESCE(NEW.status, old_status);
+          old_refund_status TEXT := COALESCE(OLD.refund_status, 'not_requested');
+          new_refund_status TEXT := COALESCE(NEW.refund_status, old_refund_status);
+          old_deposit_status TEXT := COALESCE(OLD.reliability_deposit_status, 'not_required');
+          new_deposit_status TEXT := COALESCE(NEW.reliability_deposit_status, old_deposit_status);
+        BEGIN
+          IF old_status = 'refunded' AND new_status <> 'refunded' THEN
+            RAISE EXCEPTION 'Illegal payment state transition from refunded to %', new_status;
+          END IF;
+
+          IF old_status = 'paid' AND new_status IN ('created','pending','failed','expired') THEN
+            RAISE EXCEPTION 'Illegal payment state transition from paid to %', new_status;
+          END IF;
+
+          IF old_status = 'refund_pending' AND new_status IN ('created','pending','paid','failed','expired') THEN
+            RAISE EXCEPTION 'Illegal payment state transition from refund_pending to %', new_status;
+          END IF;
+
+          IF old_status = 'refund_failed' AND new_status IN ('created','pending','paid','failed','expired') THEN
+            RAISE EXCEPTION 'Illegal payment state transition from refund_failed to %', new_status;
+          END IF;
+
+          IF old_status IN ('failed','expired') AND new_status IN ('created','pending','paid') THEN
+            RAISE EXCEPTION 'Illegal payment state transition from % to %', old_status, new_status;
+          END IF;
+
+          IF old_refund_status = 'refunded' AND new_refund_status <> 'refunded' THEN
+            RAISE EXCEPTION 'Illegal refund status transition from refunded to %', new_refund_status;
+          END IF;
+
+          IF old_refund_status = 'refund_failed' AND new_refund_status = 'refund_pending'
+             AND new_status <> 'refund_pending' THEN
+            RAISE EXCEPTION 'Illegal stale refund status transition from refund_failed to refund_pending';
+          END IF;
+
+          IF old_deposit_status IN ('refunded','retained')
+             AND new_deposit_status <> old_deposit_status THEN
+            RAISE EXCEPTION 'Illegal reliability deposit transition from % to %',
+              old_deposit_status,
+              new_deposit_status;
+          END IF;
+
+          IF new_status IN ('paid','failed','expired','refunded','refund_failed')
+             AND OLD.payment_terminal_at IS NULL THEN
+            NEW.payment_terminal_at = NOW();
+          END IF;
+
+          IF new_status IN ('refunded','refund_failed')
+             AND OLD.refund_terminal_at IS NULL THEN
+            NEW.refund_terminal_at = NOW();
+          END IF;
+
+          IF old_status IS DISTINCT FROM new_status
+             OR old_refund_status IS DISTINCT FROM new_refund_status
+             OR old_deposit_status IS DISTINCT FROM new_deposit_status THEN
+            NEW.financial_state_version = COALESCE(OLD.financial_state_version, 0) + 1;
+          END IF;
+
+          RETURN NEW;
+        END;
+        $$;
+      `);
+
+      await client.query(`
+        DROP TRIGGER IF EXISTS trg_payments_financial_state_guard ON payments;
+        CREATE TRIGGER trg_payments_financial_state_guard
+          BEFORE UPDATE ON payments
+          FOR EACH ROW
+          EXECUTE FUNCTION guard_payment_financial_state_transition();
+      `);
+
+      await client.query(`
+        CREATE OR REPLACE FUNCTION log_payment_financial_state_transition()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          IF OLD.status IS DISTINCT FROM NEW.status
+             OR OLD.refund_status IS DISTINCT FROM NEW.refund_status
+             OR OLD.reliability_deposit_status IS DISTINCT FROM NEW.reliability_deposit_status THEN
+            INSERT INTO financial_state_transitions (
+              payment_id,
+              reservation_id,
+              order_id,
+              old_payment_status,
+              new_payment_status,
+              old_refund_status,
+              new_refund_status,
+              old_deposit_status,
+              new_deposit_status,
+              metadata
+            )
+            VALUES (
+              NEW.id,
+              NEW.reservation_id,
+              NEW.order_id,
+              OLD.status,
+              NEW.status,
+              OLD.refund_status,
+              NEW.refund_status,
+              OLD.reliability_deposit_status,
+              NEW.reliability_deposit_status,
+              jsonb_build_object(
+                'gateway_status', NEW.gateway_status,
+                'reconciliation_status', NEW.reconciliation_status,
+                'financial_state_version', NEW.financial_state_version
+              )
+            );
+          END IF;
+
+          RETURN NEW;
+        END;
+        $$;
+      `);
+
+      await client.query(`
+        DROP TRIGGER IF EXISTS trg_payments_financial_state_transition_log ON payments;
+        CREATE TRIGGER trg_payments_financial_state_transition_log
+          AFTER UPDATE ON payments
+          FOR EACH ROW
+          EXECUTE FUNCTION log_payment_financial_state_transition();
       `);
     };
 
@@ -392,37 +691,220 @@ function getWebhookEventFields(body) {
 
 async function wasWebhookProcessed(idempotencyKey) {
   if (!idempotencyKey) return false;
-  return Boolean(await redis.get(`cashfree:webhook:${idempotencyKey}`));
+  try {
+    return Boolean(await redis.get(`cashfree:webhook:${idempotencyKey}`));
+  } catch (err) {
+    logger.warn("Cashfree webhook Redis idempotency lookup failed", {
+      err,
+      idempotencyKey,
+    });
+    return false;
+  }
 }
 
 async function reserveWebhookProcessing(idempotencyKey) {
   if (!idempotencyKey) return true;
 
-  const result = await redis.set(
-    `cashfree:webhook-lock:${idempotencyKey}`,
-    "1",
-    {
-      EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS,
-      NX: true,
-    }
-  );
+  try {
+    const result = await redis.set(
+      `cashfree:webhook-lock:${idempotencyKey}`,
+      "1",
+      {
+        EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS,
+        NX: true,
+      }
+    );
 
-  return result === "OK";
+    return result === "OK";
+  } catch (err) {
+    logger.warn("Cashfree webhook Redis lock unavailable; falling back to DB idempotency", {
+      err,
+      idempotencyKey,
+    });
+    return true;
+  }
 }
 
 async function markWebhookProcessedInRedis(idempotencyKey) {
   if (!idempotencyKey) return;
 
-  await redis.setEx(
-    `cashfree:webhook:${idempotencyKey}`,
-    WEBHOOK_IDEMPOTENCY_TTL_SECONDS,
-    "1"
-  );
+  try {
+    await redis.setEx(
+      `cashfree:webhook:${idempotencyKey}`,
+      WEBHOOK_IDEMPOTENCY_TTL_SECONDS,
+      "1"
+    );
+  } catch (err) {
+    logger.warn("Cashfree webhook Redis processed mark failed", {
+      err,
+      idempotencyKey,
+    });
+  }
 }
 
 async function releaseWebhookProcessing(idempotencyKey) {
   if (!idempotencyKey) return;
   await redis.del(`cashfree:webhook-lock:${idempotencyKey}`);
+}
+
+async function recordWebhookAudit(event, processingStatus, options = {}) {
+  await ensurePaymentHardeningSchema();
+  await pool.query(
+    `
+    INSERT INTO cashfree_webhook_audit_log (
+      idempotency_key,
+      event_type,
+      order_id,
+      cf_payment_id,
+      refund_id,
+      processing_status,
+      payload_hash,
+      signature_present,
+      webhook_timestamp,
+      rejection_reason,
+      metadata
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+    `,
+    [
+      event?.idempotencyKey || null,
+      event?.eventType || null,
+      event?.orderId || null,
+      event?.cfPaymentId || null,
+      event?.refundId || null,
+      processingStatus,
+      event?.payloadHash || crypto.createHash("sha256").update("").digest("hex"),
+      Boolean(event?.signature),
+      event?.timestamp || null,
+      options.rejectionReason || null,
+      JSON.stringify(options.metadata || {}),
+    ]
+  );
+}
+
+async function recordWebhookAuditSafe(event, processingStatus, options = {}) {
+  try {
+    await recordWebhookAudit(event, processingStatus, options);
+  } catch (err) {
+    logger.warn("Cashfree webhook immutable audit write failed", {
+      err,
+      idempotencyKey: event?.idempotencyKey,
+      processingStatus,
+    });
+  }
+}
+
+function reservationAttemptSnapshot(reservations) {
+  return (reservations || []).map((reservation) => ({
+    id: reservation.id,
+    listing_id: reservation.listing_id,
+    user_id: reservation.user_id,
+    pickup_type: reservation.pickup_type,
+    food_amount: roundMoney(reservation.food_amount),
+    reliability_deposit_amount: roundMoney(
+      reservation.reliability_deposit_amount
+    ),
+  }));
+}
+
+async function recordPaymentOrderAttempt({
+  orderId,
+  user,
+  reservations,
+  amount,
+  currency = "INR",
+}) {
+  await pool.query(
+    `
+    INSERT INTO payment_order_attempts (
+      order_id,
+      payer_user_id,
+      reservation_ids,
+      amount,
+      currency,
+      status,
+      reservation_snapshot
+    )
+    VALUES ($1,$2,$3::uuid[],$4,$5,'creating',$6::jsonb)
+    ON CONFLICT (order_id)
+    DO UPDATE SET updated_at=NOW()
+    `,
+    [
+      orderId,
+      user?.id || null,
+      (reservations || []).map((reservation) => reservation.id),
+      roundMoney(amount),
+      currency,
+      JSON.stringify(reservationAttemptSnapshot(reservations)),
+    ]
+  );
+}
+
+async function markPaymentOrderAttemptGatewayCreated({
+  orderId,
+  paymentSessionId,
+  gatewayResponse,
+}) {
+  await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET status='gateway_created',
+        payment_session_id=$2,
+        gateway_response=$3::jsonb,
+        failure_reason=NULL,
+        updated_at=NOW()
+    WHERE order_id=$1
+    `,
+    [
+      orderId,
+      paymentSessionId || null,
+      JSON.stringify(gatewayResponse || {}),
+    ]
+  );
+}
+
+async function markPaymentOrderAttemptDbInserted({ orderId }) {
+  await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET status='db_inserted',
+        failure_reason=NULL,
+        updated_at=NOW()
+    WHERE order_id=$1
+    AND status IN ('creating','gateway_created','recovery_pending')
+    `,
+    [orderId]
+  );
+}
+
+async function markPaymentOrderAttemptCommitted({ orderId }) {
+  await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET status='committed',
+        failure_reason=NULL,
+        updated_at=NOW()
+    WHERE order_id=$1
+    AND status <> 'committed'
+    `,
+    [orderId]
+  );
+}
+
+async function markPaymentOrderAttemptFailed({ orderId, err }) {
+  await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET status=CASE
+          WHEN payment_session_id IS NULL THEN 'failed'
+          ELSE 'recovery_pending'
+        END,
+        failure_reason=$2,
+        updated_at=NOW()
+    WHERE order_id=$1
+    `,
+    [orderId, String(err?.message || err || "unknown failure").slice(0, 1000)]
+  );
 }
 
 async function reserveWebhookEvent(client, event) {
@@ -1102,9 +1584,10 @@ async function processFailedOrder(client, orderId, orderStatus, sideEffects) {
   }
 }
 
-async function processRefundEvent(client, refund, sideEffects) {
+async function processRefundEvent(client, refund, sideEffects, options = {}) {
   const { refund_id } = refund || {};
   const refund_status = String(refund?.refund_status || "").toUpperCase();
+  const normalizedRefundStatus = normalizeRefundStatusFromGateway(refund_status);
   if (!refund_id) return;
 
   const paymentRef = await client.query(
@@ -1139,9 +1622,24 @@ async function processRefundEvent(client, refund, sideEffects) {
   const isDepositRefund = payment.reliability_deposit_refund_id === refund_id;
 
   if (isDepositRefund) {
-    if (payment.reliability_deposit_status === "refunded") return;
+    if (
+      !shouldApplyRefundWebhook({
+        currentStatus: payment.reliability_deposit_status,
+        incomingStatus: normalizedRefundStatus,
+        allowRetryTransition: options.allowRetryTransition,
+      })
+    ) {
+      logger.payment("Stale reliability deposit refund webhook ignored", {
+        reservationId: payment.reservation_id,
+        paymentId: payment.id,
+        refundId: refund_id,
+        currentStatus: payment.reliability_deposit_status,
+        incomingStatus: normalizedRefundStatus,
+      });
+      return;
+    }
 
-    if (refund_status === "SUCCESS") {
+    if (normalizedRefundStatus === "refunded") {
       await client.query(
         `
         UPDATE payments
@@ -1163,7 +1661,7 @@ async function processRefundEvent(client, refund, sideEffects) {
       return;
     }
 
-    if (refund_status === "FAILED") {
+    if (normalizedRefundStatus === "refund_failed") {
       await client.query(
         `
         UPDATE payments
@@ -1207,13 +1705,24 @@ async function processRefundEvent(client, refund, sideEffects) {
   }
 
   if (
-    payment.refund_status === "refunded" ||
+    !shouldApplyRefundWebhook({
+      currentStatus: payment.refund_status || payment.status,
+      incomingStatus: normalizedRefundStatus,
+      allowRetryTransition: options.allowRetryTransition,
+    }) ||
     payment.status === "refunded"
   ) {
+    logger.payment("Stale payment refund webhook ignored", {
+      reservationId: payment.reservation_id,
+      paymentId: payment.id,
+      refundId: refund_id,
+      currentStatus: payment.refund_status || payment.status,
+      incomingStatus: normalizedRefundStatus,
+    });
     return;
   }
 
-  if (refund_status === "SUCCESS") {
+  if (normalizedRefundStatus === "refunded") {
     await client.query(
       `
       UPDATE payments
@@ -1240,7 +1749,7 @@ async function processRefundEvent(client, refund, sideEffects) {
     return;
   }
 
-  if (refund_status === "FAILED") {
+  if (normalizedRefundStatus === "refund_failed") {
     await client.query(
       `
       UPDATE payments
@@ -1419,12 +1928,31 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
   const signature = getHeaderValue(headers, "x-webhook-signature");
   const timestamp = getHeaderValue(headers, "x-webhook-timestamp");
   const rawBuffer = toRawBody(rawBody);
+  const payloadHash = crypto.createHash("sha256").update(rawBuffer).digest("hex");
   recordPaymentEvent({
     eventName: "cashfree_webhook_received",
     status: "received",
   });
 
-  verifyCashfreeWebhookSignature({ rawBody: rawBuffer, signature, timestamp });
+  try {
+    verifyCashfreeWebhookSignature({ rawBody: rawBuffer, signature, timestamp });
+  } catch (err) {
+    await recordWebhookAuditSafe(
+      {
+        idempotencyKey: payloadHash,
+        payloadHash,
+        signature,
+        timestamp,
+      },
+      "rejected",
+      {
+        rejectionReason: err?.message,
+        metadata: { phase: "signature_verification" },
+      }
+    );
+    throw err;
+  }
+
   logger.payment("Cashfree webhook signature verified", {
     hasSignature: Boolean(signature),
     hasTimestamp: Boolean(timestamp),
@@ -1435,11 +1963,23 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
     body = JSON.parse(rawBodyToString(rawBuffer));
   } catch (err) {
     err.statusCode = 400;
+    await recordWebhookAuditSafe(
+      {
+        idempotencyKey: payloadHash,
+        payloadHash,
+        signature,
+        timestamp,
+      },
+      "rejected",
+      {
+        rejectionReason: "Invalid Cashfree webhook JSON payload",
+        metadata: { phase: "json_parse" },
+      }
+    );
     throw err;
   }
 
   const idempotencyKey = getWebhookIdempotencyKey(headers, rawBuffer, body);
-  const payloadHash = crypto.createHash("sha256").update(rawBuffer).digest("hex");
   const fields = getWebhookEventFields(body);
   const eventRecord = {
     idempotencyKey,
@@ -1454,11 +1994,16 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
   const sideEffects = createSideEffects();
 
   try {
+    await recordWebhookAuditSafe(eventRecord, "received");
+
     if (await wasWebhookProcessed(idempotencyKey)) {
       logger.payment("Cashfree webhook replay ignored from Redis idempotency cache", {
         idempotencyKey,
         orderId: fields.orderId,
         refundId: fields.refundId,
+      });
+      await recordWebhookAuditSafe(eventRecord, "duplicate", {
+        metadata: { source: "redis_idempotency_cache" },
       });
       return { duplicate: true };
     }
@@ -1469,6 +2014,9 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
         idempotencyKey,
         orderId: fields.orderId,
         refundId: fields.refundId,
+      });
+      await recordWebhookAuditSafe(eventRecord, "concurrent_duplicate", {
+        metadata: { source: "redis_processing_lock" },
       });
       return { duplicate: true };
     }
@@ -1503,6 +2051,9 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
         orderId: fields.orderId,
         refundId: fields.refundId,
       });
+      await recordWebhookAuditSafe(eventRecord, "duplicate", {
+        metadata: { source: "database_idempotency_log" },
+      });
       return { duplicate: true };
     }
 
@@ -1524,6 +2075,9 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
         refundId: fields.refundId,
         status: fields.status,
       },
+    });
+    await recordWebhookAuditSafe(eventRecord, "processed", {
+      metadata: { status: fields.status },
     });
 
     return { duplicate: false };
@@ -1549,6 +2103,10 @@ async function handleCashfreeWebhook({ headers, rawBody }) {
     });
     await markWebhookEventFailed(eventRecord, err).catch((markErr) => {
       logger.warn("Cashfree webhook failure mark failed", { err: markErr });
+    });
+    await recordWebhookAuditSafe(eventRecord, "failed", {
+      rejectionReason: err?.message,
+      metadata: { status: fields.status },
     });
     throw err;
   } finally {
@@ -1689,6 +2247,583 @@ async function reconcileOrder({ orderId, source = "manual" }) {
   }
 }
 
+function parseJsonValue(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function attemptReservationIds(attempt) {
+  if (Array.isArray(attempt?.reservation_ids)) return attempt.reservation_ids;
+  return [];
+}
+
+function attemptIsOlderThan(attempt, minutes) {
+  const updatedAt = new Date(attempt?.updated_at || attempt?.created_at || 0);
+  return Date.now() - updatedAt.getTime() > minutes * 60 * 1000;
+}
+
+async function claimRecoverablePaymentOrderAttempts(limit) {
+  const result = await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET status='recovery_pending',
+        recovery_attempts=recovery_attempts + 1,
+        updated_at=NOW()
+    WHERE id IN (
+      SELECT id
+      FROM payment_order_attempts
+      WHERE status IN ('creating','gateway_created','db_inserted','recovery_pending','failed')
+      AND updated_at < NOW() - INTERVAL '2 minutes'
+      ORDER BY updated_at ASC
+      LIMIT $1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *
+    `,
+    [limit]
+  );
+
+  return result.rows;
+}
+
+async function paymentRowsExistForAttempt(attempt) {
+  const result = await pool.query(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM payments
+    WHERE order_id=$1
+    `,
+    [attempt.order_id]
+  );
+
+  return Number(result.rows[0]?.count || 0) > 0;
+}
+
+async function restoreAttemptReservationsWithoutPaymentRows(attempt, reason) {
+  const sideEffects = createSideEffects();
+  const ids = attemptReservationIds(attempt);
+
+  await withTransaction(
+    pool,
+    async (client) => {
+      await ensurePaymentHardeningSchema(client);
+
+      for (const reservationId of ids) {
+        const existingPayment = await client.query(
+          `
+          SELECT id
+          FROM payments
+          WHERE reservation_id=$1 OR order_id=$2
+          LIMIT 1
+          `,
+          [reservationId, attempt.order_id]
+        );
+
+        if (existingPayment.rows.length) continue;
+
+        const { reservation } = await lockReservationGraph(client, reservationId, {
+          lockPayments: false,
+        });
+
+        if (
+          !reservation ||
+          reservation.status !== "payment_pending" ||
+          reservation.payment_status !== "pending"
+        ) {
+          continue;
+        }
+
+        await restoreReservationStockIfHeld(client, reservation, { reason });
+        await client.query(
+          `
+          UPDATE reservations
+          SET status='payment_failed',
+              payment_status='failed',
+              payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+                jsonb_build_object(
+                  'payment_terminal_at', NOW(),
+                  'payment_terminal_source', $2::text,
+                  'recovered_order_id', $3::text
+                )
+          WHERE id=$1
+          AND status='payment_pending'
+          AND payment_status='pending'
+          `,
+          [reservationId, reason, attempt.order_id]
+        );
+
+        sideEffects.changedReservationIds.add(reservationId);
+        sideEffects.changedListingIds.add(reservation.listing_id);
+      }
+
+      await client.query(
+        `
+        UPDATE payment_order_attempts
+        SET status='abandoned',
+            failure_reason=$2,
+            recovered_at=NOW(),
+            updated_at=NOW()
+        WHERE id=$1
+        `,
+        [attempt.id, reason]
+      );
+    },
+    {
+      name: "payment_order_attempt_restore",
+      maxAttempts: 4,
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 20000,
+    }
+  );
+
+  await publishSideEffects(sideEffects, "payment_recovery");
+
+  return {
+    orderId: attempt.order_id,
+    restoredReservations: sideEffects.changedReservationIds.size,
+  };
+}
+
+async function materializeMissingPaymentsForAttempt(attempt, paymentDetails = {}) {
+  const sideEffects = createSideEffects();
+  const snapshotRows = parseJsonValue(attempt.reservation_snapshot, []);
+  const snapshotById = new Map(
+    (Array.isArray(snapshotRows) ? snapshotRows : []).map((row) => [
+      String(row.id),
+      row,
+    ])
+  );
+
+  await withTransaction(
+    pool,
+    async (client) => {
+      await ensurePaymentHardeningSchema(client);
+
+      const existing = await client.query(
+        `
+        SELECT id
+        FROM payments
+        WHERE order_id=$1
+        LIMIT 1
+        `,
+        [attempt.order_id]
+      );
+      if (existing.rows.length) {
+        await client.query(
+          `
+          UPDATE payment_order_attempts
+          SET status='committed',
+              recovered_at=COALESCE(recovered_at, NOW()),
+              updated_at=NOW()
+          WHERE id=$1
+          `,
+          [attempt.id]
+        );
+        return;
+      }
+
+      const payerResult = attempt.payer_user_id
+        ? await client.query(`SELECT * FROM users WHERE id=$1`, [
+            attempt.payer_user_id,
+          ])
+        : { rows: [] };
+      const payer = payerResult.rows[0] || null;
+
+      for (const reservationId of attemptReservationIds(attempt)) {
+        const { reservation } = await lockReservationGraph(client, reservationId, {
+          lockPayments: false,
+        });
+
+        if (!reservation) continue;
+
+        const item = snapshotById.get(String(reservationId)) || {};
+        const foodAmount = roundMoney(item.food_amount);
+        const depositAmount = roundMoney(item.reliability_deposit_amount);
+        const amount = roundMoney(foodAmount + depositAmount);
+
+        const inserted = await client.query(
+          `
+          INSERT INTO payments (
+            reservation_id,
+            order_id,
+            payment_session_id,
+            amount,
+            status,
+            food_amount,
+            reliability_deposit_amount,
+            reliability_deposit_status,
+            reconciliation_status
+          )
+          VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,'recovered_missing_payment_row')
+          RETURNING *
+          `,
+          [
+            reservationId,
+            attempt.order_id,
+            attempt.payment_session_id,
+            amount,
+            foodAmount,
+            depositAmount,
+            depositAmount > 0 ? "held" : "not_required",
+          ]
+        );
+
+        await createFinancialOwnershipSnapshot({
+          client,
+          user:
+            payer ||
+            {
+              id: attempt.payer_user_id || reservation.user_id,
+              role: reservation.pickup_type === "ngo" ? "ngo" : "user",
+            },
+          payer:
+            payer ||
+            {
+              id: attempt.payer_user_id || reservation.user_id,
+              role: reservation.pickup_type === "ngo" ? "ngo" : "user",
+            },
+          reservation,
+          payment: inserted.rows[0],
+          foodAmount,
+          depositAmount,
+          currency: attempt.currency || "INR",
+          sourceMetadata: {
+            order_id: attempt.order_id,
+            payment_session_id: attempt.payment_session_id,
+            recovery_source: "payment_order_attempt",
+          },
+        });
+      }
+
+      await processPaidOrder(
+        client,
+        attempt.order_id,
+        paymentDetails,
+        sideEffects
+      );
+
+      await client.query(
+        `
+        UPDATE payment_order_attempts
+        SET status='recovered',
+            failure_reason=NULL,
+            recovered_at=NOW(),
+            updated_at=NOW()
+        WHERE id=$1
+        `,
+        [attempt.id]
+      );
+    },
+    {
+      name: "payment_order_attempt_materialize",
+      maxAttempts: 4,
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 30000,
+    }
+  );
+
+  await publishSideEffects(sideEffects, "payment_recovered");
+
+  return {
+    orderId: attempt.order_id,
+    recoveredPayments: attemptReservationIds(attempt).length,
+  };
+}
+
+async function recoverPaymentOrderAttempt(attempt) {
+  if (await paymentRowsExistForAttempt(attempt)) {
+    await markPaymentOrderAttemptCommitted({ orderId: attempt.order_id });
+    return {
+      orderId: attempt.order_id,
+      status: "committed",
+      recovered: false,
+    };
+  }
+
+  if (!attempt.payment_session_id) {
+    if (attemptIsOlderThan(attempt, 10)) {
+      return restoreAttemptReservationsWithoutPaymentRows(
+        attempt,
+        "payment_order_creation_crash"
+      );
+    }
+
+    return {
+      orderId: attempt.order_id,
+      status: "creating",
+      recovered: false,
+    };
+  }
+
+  let gateway;
+  try {
+    gateway = await fetchCashfreeOrderState(attempt.order_id);
+  } catch (err) {
+    logger.error("Payment order attempt gateway recovery failed", {
+      err,
+      orderId: attempt.order_id,
+    });
+
+    if (attemptIsOlderThan(attempt, 10)) {
+      await recordAlert({
+        alertKey: `payment:order_attempt_gateway_unknown:${attempt.order_id}`,
+        category: "payment",
+        severity: "error",
+        message: "Payment order attempt has no local rows and gateway state is unknown",
+        metadata: { orderId: attempt.order_id, message: err?.message },
+      });
+    }
+
+    await pool.query(
+      `
+      UPDATE payment_order_attempts
+      SET failure_reason=$2,
+          updated_at=NOW()
+      WHERE id=$1
+      `,
+      [
+        attempt.id,
+        String(err?.message || err || "gateway recovery failed").slice(0, 1000),
+      ]
+    );
+    return {
+      orderId: attempt.order_id,
+      status: "gateway_unknown",
+      recovered: false,
+    };
+  }
+
+  if (paidStatuses.has(gateway.status)) {
+    return materializeMissingPaymentsForAttempt(
+      attempt,
+      gateway.paymentDetails || {}
+    );
+  }
+
+  if (failedStatuses.has(gateway.status)) {
+    return restoreAttemptReservationsWithoutPaymentRows(
+      attempt,
+      `gateway_${String(gateway.status || "failed").toLowerCase()}`
+    );
+  }
+
+  await pool.query(
+    `
+    UPDATE payment_order_attempts
+    SET failure_reason=NULL,
+        updated_at=NOW()
+    WHERE id=$1
+    `,
+    [attempt.id]
+  );
+
+  return {
+    orderId: attempt.order_id,
+    status: "pending_gateway",
+    recovered: false,
+  };
+}
+
+async function recoverPaymentOrderAttempts(options = {}) {
+  const limit = options.limit || PAYMENT_ORDER_ATTEMPT_RECOVERY_LIMIT;
+  await ensurePaymentHardeningSchema();
+
+  const attempts = await claimRecoverablePaymentOrderAttempts(limit);
+  const results = [];
+
+  for (const attempt of attempts) {
+    try {
+      results.push(await recoverPaymentOrderAttempt(attempt));
+    } catch (err) {
+      logger.error("Payment order attempt recovery item failed", {
+        err,
+        orderId: attempt.order_id,
+      });
+      void recordOperationalEvent({
+        category: "payment",
+        severity: "error",
+        eventName: "payment_order_attempt_recovery_failed",
+        metadata: { orderId: attempt.order_id, message: err?.message },
+      });
+    }
+  }
+
+  return results;
+}
+
+async function fetchCashfreeRefundState(orderId, refundId) {
+  if (!orderId || !refundId) return null;
+
+  if (typeof cashfree.PGOrderFetchRefund === "function") {
+    const response = await cashfree.PGOrderFetchRefund(orderId, refundId);
+    return response.data || null;
+  }
+
+  if (typeof cashfree.PGOrderFetchRefunds === "function") {
+    const response = await cashfree.PGOrderFetchRefunds(orderId);
+    const refunds = Array.isArray(response.data) ? response.data : [];
+    return (
+      refunds.find((refund) => String(refund.refund_id) === String(refundId)) ||
+      null
+    );
+  }
+
+  logger.warn("Cashfree SDK does not expose refund fetch API; refund reconciliation deferred", {
+    orderId,
+    refundId,
+  });
+  return null;
+}
+
+async function reconcileRefundAgainstGateway({
+  orderId,
+  refundId,
+  source = "manual",
+}) {
+  const refund = await fetchCashfreeRefundState(orderId, refundId);
+
+  if (!refund?.refund_status) {
+    void recordOperationalEvent({
+      category: "payment",
+      severity: "warning",
+      eventName: "refund_gateway_state_unknown",
+      metadata: { orderId, refundId, source },
+    });
+    return {
+      orderId,
+      refundId,
+      gatewayStatus: "UNKNOWN",
+      resolved: false,
+    };
+  }
+
+  const sideEffects = createSideEffects();
+  await withTransaction(
+    pool,
+    async (client) => {
+      await ensurePaymentHardeningSchema(client);
+      await processRefundEvent(client, refund, sideEffects, {
+        allowRetryTransition: true,
+      });
+    },
+    {
+      name: `refund_reconcile:${source}`,
+      maxAttempts: 4,
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 20000,
+    }
+  );
+
+  await publishSideEffects(sideEffects, "refund_reconciled");
+
+  const normalized = normalizeRefundStatusFromGateway(refund.refund_status);
+  void recordOperationalEvent({
+    category: "payment",
+    severity: "info",
+    eventName: "refund_gateway_reconciled",
+    metadata: {
+      orderId,
+      refundId,
+      source,
+      gatewayStatus: refund.refund_status,
+      normalizedStatus: normalized,
+    },
+  });
+
+  return {
+    orderId,
+    refundId,
+    gatewayStatus: refund.refund_status,
+    normalizedStatus: normalized,
+    resolved: normalized !== "refund_pending",
+  };
+}
+
+async function claimPendingRefunds(limit) {
+  const result = await pool.query(
+    `
+    SELECT id,
+           reservation_id,
+           order_id,
+           refund_id,
+           reliability_deposit_refund_id,
+           status,
+           refund_status,
+           reliability_deposit_status,
+           updated_at,
+           last_reconciled_at
+    FROM payments
+    WHERE (
+      refund_id IS NOT NULL
+      AND status IN ('refund_pending','refund_failed')
+      AND COALESCE(last_reconciled_at, updated_at, created_at) < NOW() - ($2::int * INTERVAL '1 minute')
+    )
+    OR (
+      reliability_deposit_refund_id IS NOT NULL
+      AND reliability_deposit_status IN ('refund_pending','refund_failed')
+      AND COALESCE(last_reconciled_at, updated_at, created_at) < NOW() - ($2::int * INTERVAL '1 minute')
+    )
+    ORDER BY COALESCE(last_reconciled_at, updated_at, created_at) ASC
+    LIMIT $1
+    `,
+    [limit, REFUND_RECONCILIATION_STALE_MINUTES]
+  );
+
+  return result.rows;
+}
+
+async function reconcilePendingRefunds(options = {}) {
+  const limit = options.limit || REFUND_RECONCILIATION_LIMIT;
+  await ensurePaymentHardeningSchema();
+
+  const rows = await claimPendingRefunds(limit);
+  const results = [];
+
+  for (const row of rows) {
+    for (const refundId of [
+      row.refund_id,
+      row.reliability_deposit_refund_id,
+    ].filter(Boolean)) {
+      try {
+        results.push(
+          await reconcileRefundAgainstGateway({
+            orderId: row.order_id,
+            refundId,
+            source: options.source || "refund_sweep",
+          })
+        );
+      } catch (err) {
+        logger.error("Pending refund reconciliation failed", {
+          err,
+          orderId: row.order_id,
+          refundId,
+          paymentId: row.id,
+        });
+        await pool.query(
+          `
+          UPDATE payments
+          SET reconciliation_status='refund_gateway_unknown',
+              reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1,
+              last_reconciled_at=NOW(),
+              updated_at=NOW()
+          WHERE id=$1
+          `,
+          [row.id]
+        );
+      }
+    }
+  }
+
+  return results;
+}
+
 async function reconcileStalePaymentSessions(options = {}) {
   const {
     reservationIds = null,
@@ -1778,9 +2913,20 @@ async function reconcileStalePaymentSessions(options = {}) {
 
 module.exports = {
   ensurePaymentHardeningSchema,
+  fetchCashfreeRefundState,
   handleCashfreeWebhook,
+  markPaymentOrderAttemptDbInserted,
+  markPaymentOrderAttemptFailed,
+  markPaymentOrderAttemptGatewayCreated,
+  markPaymentOrderAttemptCommitted,
+  normalizeRefundStatusFromGateway,
+  recordPaymentOrderAttempt,
   reconcileOrder,
+  reconcilePendingRefunds,
+  reconcileRefundAgainstGateway,
   reconcileStalePaymentSessions,
+  recoverPaymentOrderAttempts,
   restorePendingReservation,
+  shouldApplyRefundWebhook,
   verifyCashfreeWebhookSignature,
 };

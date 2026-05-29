@@ -49,6 +49,27 @@ CREATE TABLE IF NOT EXISTS "public"."cashfree_webhook_events" (
 ALTER TABLE "public"."cashfree_webhook_events" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."cashfree_webhook_audit_log" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "idempotency_key" "text",
+    "event_type" "text",
+    "order_id" "text",
+    "cf_payment_id" "text",
+    "refund_id" "text",
+    "processing_status" "text" NOT NULL,
+    "payload_hash" "text" NOT NULL,
+    "signature_present" boolean DEFAULT false NOT NULL,
+    "webhook_timestamp" "text",
+    "rejection_reason" "text",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "received_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "cashfree_webhook_audit_status_valid" CHECK (("processing_status" = ANY (ARRAY['received'::"text", 'duplicate'::"text", 'concurrent_duplicate'::"text", 'processed'::"text", 'failed'::"text", 'rejected'::"text"])))
+);
+
+
+ALTER TABLE "public"."cashfree_webhook_audit_log" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."food_listings" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "provider_id" "uuid",
@@ -164,6 +185,31 @@ CREATE TABLE IF NOT EXISTS "public"."operational_events" (
 ALTER TABLE "public"."operational_events" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."payment_order_attempts" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "order_id" "text" NOT NULL,
+    "payer_user_id" "uuid",
+    "reservation_ids" "uuid"[] DEFAULT ARRAY[]::"uuid"[] NOT NULL,
+    "amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "status" "text" DEFAULT 'creating'::"text" NOT NULL,
+    "payment_session_id" "text",
+    "reservation_snapshot" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "gateway_response" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "failure_reason" "text",
+    "recovery_attempts" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    "recovered_at" timestamp without time zone,
+    CONSTRAINT "payment_order_attempts_amount_nonnegative" CHECK (("amount" >= (0)::numeric)),
+    CONSTRAINT "payment_order_attempts_recovery_attempts_nonnegative" CHECK (("recovery_attempts" >= 0)),
+    CONSTRAINT "payment_order_attempts_status_valid" CHECK (("status" = ANY (ARRAY['creating'::"text", 'gateway_created'::"text", 'db_inserted'::"text", 'committed'::"text", 'recovery_pending'::"text", 'recovered'::"text", 'abandoned'::"text", 'manual_review_required'::"text", 'failed'::"text"])))
+);
+
+
+ALTER TABLE "public"."payment_order_attempts" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."payments" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "reservation_id" "uuid",
@@ -191,6 +237,9 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
     "reconciliation_attempts" integer DEFAULT 0,
     "refund_attempts" integer DEFAULT 0,
     "reliability_deposit_refund_attempts" integer DEFAULT 0,
+    "payment_terminal_at" timestamp without time zone,
+    "refund_terminal_at" timestamp without time zone,
+    "financial_state_version" integer DEFAULT 0 NOT NULL,
     CONSTRAINT "payments_status_check" CHECK (("status" = ANY (ARRAY['created'::"text", 'pending'::"text", 'paid'::"text", 'failed'::"text", 'refunded'::"text", 'expired'::"text", 'refund_pending'::"text", 'refund_failed'::"text"])))
 );
 
@@ -256,6 +305,26 @@ CREATE TABLE IF NOT EXISTS "public"."financial_operations" (
 
 
 ALTER TABLE "public"."financial_operations" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."financial_state_transitions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "payment_id" "uuid" NOT NULL,
+    "reservation_id" "uuid",
+    "order_id" "text",
+    "old_payment_status" "text",
+    "new_payment_status" "text",
+    "old_refund_status" "text",
+    "new_refund_status" "text",
+    "old_deposit_status" "text",
+    "new_deposit_status" "text",
+    "transition_source" "text" DEFAULT 'database_trigger'::"text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."financial_state_transitions" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."penalties" (
@@ -457,6 +526,158 @@ ALTER FUNCTION "public"."prevent_payment_ownership_mutation"() OWNER TO "postgre
 CREATE TRIGGER "trg_payment_ownership_immutable" BEFORE UPDATE OR DELETE ON "public"."payment_ownership" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_payment_ownership_mutation"();
 
 
+CREATE OR REPLACE FUNCTION "public"."prevent_cashfree_webhook_audit_mutation"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'cashfree_webhook_audit_log rows are immutable';
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_cashfree_webhook_audit_mutation"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_cashfree_webhook_audit_immutable" BEFORE UPDATE OR DELETE ON "public"."cashfree_webhook_audit_log" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_cashfree_webhook_audit_mutation"();
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_financial_state_transition_mutation"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'financial_state_transitions rows are immutable';
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_financial_state_transition_mutation"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_financial_state_transitions_immutable" BEFORE UPDATE OR DELETE ON "public"."financial_state_transitions" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_financial_state_transition_mutation"();
+
+
+CREATE OR REPLACE FUNCTION "public"."guard_payment_financial_state_transition"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+DECLARE
+  old_status TEXT := COALESCE(OLD.status, 'created');
+  new_status TEXT := COALESCE(NEW.status, old_status);
+  old_refund_status TEXT := COALESCE(OLD.refund_status, 'not_requested');
+  new_refund_status TEXT := COALESCE(NEW.refund_status, old_refund_status);
+  old_deposit_status TEXT := COALESCE(OLD.reliability_deposit_status, 'not_required');
+  new_deposit_status TEXT := COALESCE(NEW.reliability_deposit_status, old_deposit_status);
+BEGIN
+  IF old_status = 'refunded' AND new_status <> 'refunded' THEN
+    RAISE EXCEPTION 'Illegal payment state transition from refunded to %', new_status;
+  END IF;
+
+  IF old_status = 'paid' AND new_status IN ('created','pending','failed','expired') THEN
+    RAISE EXCEPTION 'Illegal payment state transition from paid to %', new_status;
+  END IF;
+
+  IF old_status = 'refund_pending' AND new_status IN ('created','pending','paid','failed','expired') THEN
+    RAISE EXCEPTION 'Illegal payment state transition from refund_pending to %', new_status;
+  END IF;
+
+  IF old_status = 'refund_failed' AND new_status IN ('created','pending','paid','failed','expired') THEN
+    RAISE EXCEPTION 'Illegal payment state transition from refund_failed to %', new_status;
+  END IF;
+
+  IF old_status IN ('failed','expired') AND new_status IN ('created','pending','paid') THEN
+    RAISE EXCEPTION 'Illegal payment state transition from % to %', old_status, new_status;
+  END IF;
+
+  IF old_refund_status = 'refunded' AND new_refund_status <> 'refunded' THEN
+    RAISE EXCEPTION 'Illegal refund status transition from refunded to %', new_refund_status;
+  END IF;
+
+  IF old_refund_status = 'refund_failed' AND new_refund_status = 'refund_pending'
+     AND new_status <> 'refund_pending' THEN
+    RAISE EXCEPTION 'Illegal stale refund status transition from refund_failed to refund_pending';
+  END IF;
+
+  IF old_deposit_status IN ('refunded','retained')
+     AND new_deposit_status <> old_deposit_status THEN
+    RAISE EXCEPTION 'Illegal reliability deposit transition from % to %',
+      old_deposit_status,
+      new_deposit_status;
+  END IF;
+
+  IF new_status IN ('paid','failed','expired','refunded','refund_failed')
+     AND OLD.payment_terminal_at IS NULL THEN
+    NEW.payment_terminal_at = NOW();
+  END IF;
+
+  IF new_status IN ('refunded','refund_failed')
+     AND OLD.refund_terminal_at IS NULL THEN
+    NEW.refund_terminal_at = NOW();
+  END IF;
+
+  IF old_status IS DISTINCT FROM new_status
+     OR old_refund_status IS DISTINCT FROM new_refund_status
+     OR old_deposit_status IS DISTINCT FROM new_deposit_status THEN
+    NEW.financial_state_version = COALESCE(OLD.financial_state_version, 0) + 1;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."guard_payment_financial_state_transition"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_payments_financial_state_guard" BEFORE UPDATE ON "public"."payments" FOR EACH ROW EXECUTE FUNCTION "public"."guard_payment_financial_state_transition"();
+
+
+CREATE OR REPLACE FUNCTION "public"."log_payment_financial_state_transition"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  IF OLD.status IS DISTINCT FROM NEW.status
+     OR OLD.refund_status IS DISTINCT FROM NEW.refund_status
+     OR OLD.reliability_deposit_status IS DISTINCT FROM NEW.reliability_deposit_status THEN
+    INSERT INTO financial_state_transitions (
+      payment_id,
+      reservation_id,
+      order_id,
+      old_payment_status,
+      new_payment_status,
+      old_refund_status,
+      new_refund_status,
+      old_deposit_status,
+      new_deposit_status,
+      metadata
+    )
+    VALUES (
+      NEW.id,
+      NEW.reservation_id,
+      NEW.order_id,
+      OLD.status,
+      NEW.status,
+      OLD.refund_status,
+      NEW.refund_status,
+      OLD.reliability_deposit_status,
+      NEW.reliability_deposit_status,
+      jsonb_build_object(
+        'gateway_status', NEW.gateway_status,
+        'reconciliation_status', NEW.reconciliation_status,
+        'financial_state_version', NEW.financial_state_version
+      )
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_payment_financial_state_transition"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_payments_financial_state_transition_log" AFTER UPDATE ON "public"."payments" FOR EACH ROW EXECUTE FUNCTION "public"."log_payment_financial_state_transition"();
+
+
 ALTER TABLE ONLY "public"."cashfree_webhook_events"
     ADD CONSTRAINT "cashfree_webhook_events_idempotency_key_key" UNIQUE ("idempotency_key");
 
@@ -464,6 +685,10 @@ ALTER TABLE ONLY "public"."cashfree_webhook_events"
 
 ALTER TABLE ONLY "public"."cashfree_webhook_events"
     ADD CONSTRAINT "cashfree_webhook_events_pkey" PRIMARY KEY ("id");
+
+
+ALTER TABLE ONLY "public"."cashfree_webhook_audit_log"
+    ADD CONSTRAINT "cashfree_webhook_audit_log_pkey" PRIMARY KEY ("id");
 
 
 
@@ -501,6 +726,14 @@ ALTER TABLE ONLY "public"."operational_events"
     ADD CONSTRAINT "operational_events_pkey" PRIMARY KEY ("id");
 
 
+ALTER TABLE ONLY "public"."payment_order_attempts"
+    ADD CONSTRAINT "payment_order_attempts_order_id_key" UNIQUE ("order_id");
+
+
+ALTER TABLE ONLY "public"."payment_order_attempts"
+    ADD CONSTRAINT "payment_order_attempts_pkey" PRIMARY KEY ("id");
+
+
 
 ALTER TABLE ONLY "public"."payments"
     ADD CONSTRAINT "payments_order_id_key" UNIQUE ("order_id");
@@ -517,6 +750,10 @@ ALTER TABLE ONLY "public"."payment_ownership"
 
 ALTER TABLE ONLY "public"."financial_operations"
     ADD CONSTRAINT "financial_operations_pkey" PRIMARY KEY ("id");
+
+
+ALTER TABLE ONLY "public"."financial_state_transitions"
+    ADD CONSTRAINT "financial_state_transitions_pkey" PRIMARY KEY ("id");
 
 
 
@@ -641,6 +878,15 @@ CREATE INDEX "idx_cashfree_webhook_events_order_recent" ON "public"."cashfree_we
 CREATE INDEX "idx_cashfree_webhook_events_status" ON "public"."cashfree_webhook_events" USING "btree" ("status", "received_at" DESC);
 
 
+CREATE INDEX "idx_cashfree_webhook_audit_order" ON "public"."cashfree_webhook_audit_log" USING "btree" ("order_id", "received_at" DESC) WHERE ("order_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_cashfree_webhook_audit_refund" ON "public"."cashfree_webhook_audit_log" USING "btree" ("refund_id", "received_at" DESC) WHERE ("refund_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_cashfree_webhook_audit_status" ON "public"."cashfree_webhook_audit_log" USING "btree" ("processing_status", "received_at" DESC);
+
+
 
 CREATE INDEX "idx_food_listings_active_scan" ON "public"."food_listings" USING "btree" ("pickup_end_time", "remaining_quantity", "created_at" DESC) WHERE ((("status")::"text" = 'active'::"text") AND ("is_deleted" = false));
 
@@ -703,6 +949,12 @@ CREATE INDEX "idx_operational_events_correlation" ON "public"."operational_event
 
 
 CREATE INDEX "idx_operational_events_created" ON "public"."operational_events" USING "btree" ("created_at" DESC);
+
+
+CREATE INDEX "idx_payment_order_attempts_payer" ON "public"."payment_order_attempts" USING "btree" ("payer_user_id", "created_at" DESC) WHERE ("payer_user_id" IS NOT NULL);
+
+
+CREATE INDEX "idx_payment_order_attempts_status_updated" ON "public"."payment_order_attempts" USING "btree" ("status", "updated_at");
 
 
 
@@ -775,6 +1027,12 @@ CREATE INDEX "idx_financial_operations_reservation" ON "public"."financial_opera
 
 
 CREATE INDEX "idx_financial_operations_status" ON "public"."financial_operations" USING "btree" ("status", "updated_at" DESC);
+
+
+CREATE INDEX "idx_financial_state_transitions_payment" ON "public"."financial_state_transitions" USING "btree" ("payment_id", "created_at" DESC);
+
+
+CREATE INDEX "idx_financial_state_transitions_reservation" ON "public"."financial_state_transitions" USING "btree" ("reservation_id", "created_at" DESC) WHERE ("reservation_id" IS NOT NULL);
 
 
 
@@ -935,6 +1193,10 @@ ALTER TABLE ONLY "public"."payments"
     ADD CONSTRAINT "payments_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE CASCADE;
 
 
+ALTER TABLE ONLY "public"."payment_order_attempts"
+    ADD CONSTRAINT "payment_order_attempts_payer_user_id_fkey" FOREIGN KEY ("payer_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
+
+
 ALTER TABLE ONLY "public"."payment_ownership"
     ADD CONSTRAINT "payment_ownership_beneficiary_user_id_fkey" FOREIGN KEY ("beneficiary_user_id") REFERENCES "public"."users"("id") ON DELETE RESTRICT;
 
@@ -973,6 +1235,14 @@ ALTER TABLE ONLY "public"."financial_operations"
 
 ALTER TABLE ONLY "public"."financial_operations"
     ADD CONSTRAINT "financial_operations_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."financial_state_transitions"
+    ADD CONSTRAINT "financial_state_transitions_payment_id_fkey" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE RESTRICT;
+
+
+ALTER TABLE ONLY "public"."financial_state_transitions"
+    ADD CONSTRAINT "financial_state_transitions_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE RESTRICT;
 
 
 
@@ -1078,6 +1348,11 @@ GRANT ALL ON TABLE "public"."cashfree_webhook_events" TO "authenticated";
 GRANT ALL ON TABLE "public"."cashfree_webhook_events" TO "service_role";
 
 
+GRANT ALL ON TABLE "public"."cashfree_webhook_audit_log" TO "anon";
+GRANT ALL ON TABLE "public"."cashfree_webhook_audit_log" TO "authenticated";
+GRANT ALL ON TABLE "public"."cashfree_webhook_audit_log" TO "service_role";
+
+
 
 GRANT ALL ON TABLE "public"."food_listings" TO "anon";
 GRANT ALL ON TABLE "public"."food_listings" TO "authenticated";
@@ -1114,10 +1389,20 @@ GRANT ALL ON TABLE "public"."operational_events" TO "authenticated";
 GRANT ALL ON TABLE "public"."operational_events" TO "service_role";
 
 
+GRANT ALL ON TABLE "public"."payment_order_attempts" TO "anon";
+GRANT ALL ON TABLE "public"."payment_order_attempts" TO "authenticated";
+GRANT ALL ON TABLE "public"."payment_order_attempts" TO "service_role";
+
+
 
 GRANT ALL ON TABLE "public"."payments" TO "anon";
 GRANT ALL ON TABLE "public"."payments" TO "authenticated";
 GRANT ALL ON TABLE "public"."payments" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."financial_state_transitions" TO "anon";
+GRANT ALL ON TABLE "public"."financial_state_transitions" TO "authenticated";
+GRANT ALL ON TABLE "public"."financial_state_transitions" TO "service_role";
 
 
 

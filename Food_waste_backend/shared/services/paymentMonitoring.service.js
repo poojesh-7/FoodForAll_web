@@ -4,7 +4,15 @@ const { ensurePaymentHardeningSchema } = require("./paymentReconciliation.servic
 async function getPaymentHealth() {
   await ensurePaymentHardeningSchema();
 
-  const [payments, webhooks, stale, diagnostics] = await Promise.all([
+  const [
+    payments,
+    webhooks,
+    stale,
+    diagnostics,
+    orderAttempts,
+    refunds,
+    transitions,
+  ] = await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status='pending')::int AS pending,
@@ -59,12 +67,52 @@ async function getPaymentHealth() {
       FROM payments p
       LEFT JOIN reservations r ON r.id=p.reservation_id
     `),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('creating','gateway_created','db_inserted','recovery_pending'))::int AS recoverable,
+        COUNT(*) FILTER (WHERE status='manual_review_required')::int AS manual_review_required,
+        COUNT(*) FILTER (
+          WHERE status IN ('creating','gateway_created','db_inserted','recovery_pending')
+          AND updated_at < NOW() - INTERVAL '10 minutes'
+        )::int AS stuck
+      FROM payment_order_attempts
+    `),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE refund_id IS NOT NULL
+          AND status IN ('refund_pending','refund_failed')
+          AND COALESCE(last_reconciled_at, updated_at, created_at) < NOW() - INTERVAL '10 minutes'
+        )::int AS stale_payment_refunds,
+        COUNT(*) FILTER (
+          WHERE reliability_deposit_refund_id IS NOT NULL
+          AND reliability_deposit_status IN ('refund_pending','refund_failed')
+          AND COALESCE(last_reconciled_at, updated_at, created_at) < NOW() - INTERVAL '10 minutes'
+        )::int AS stale_deposit_refunds,
+        COUNT(*) FILTER (
+          WHERE status='refund_pending'
+          AND refund_id IS NULL
+        )::int AS orphan_refund_pending_without_refund_id
+      FROM payments
+    `),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS transitions_24h,
+        COUNT(*) FILTER (
+          WHERE new_payment_status IN ('refund_pending','refund_failed','refunded')
+          AND created_at > NOW() - INTERVAL '24 hours'
+        )::int AS refund_transitions_24h
+      FROM financial_state_transitions
+    `),
   ]);
 
   return {
     summary: payments.rows[0],
     webhooks: webhooks.rows[0],
     diagnostics: diagnostics.rows[0],
+    order_attempts: orderAttempts.rows[0],
+    refunds: refunds.rows[0],
+    transitions: transitions.rows[0],
     stale_sessions: stale.rows,
   };
 }

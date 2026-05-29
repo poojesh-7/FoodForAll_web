@@ -139,11 +139,22 @@ async function getPaymentHealthCheck() {
   const webhookFailures = Number(payments.webhooks?.failed || 0);
   const staleSessions = Number(payments.summary?.stale_sessions || 0);
   const mismatches = Number(payments.diagnostics?.reservation_payment_mismatches || 0);
+  const stuckOrderAttempts = Number(payments.order_attempts?.stuck || 0);
+  const stalePaymentRefunds = Number(payments.refunds?.stale_payment_refunds || 0);
+  const staleDepositRefunds = Number(payments.refunds?.stale_deposit_refunds || 0);
   setGauge("food_rescue_payment_stale_sessions", {}, staleSessions);
   setGauge("food_rescue_payment_webhook_failures_24h", {}, webhookFailures);
 
   return {
-    status: webhookFailures > 0 || staleSessions > 0 || mismatches > 0 ? "degraded" : "healthy",
+    status:
+      webhookFailures > 0 ||
+      staleSessions > 0 ||
+      mismatches > 0 ||
+      stuckOrderAttempts > 0 ||
+      stalePaymentRefunds > 0 ||
+      staleDepositRefunds > 0
+        ? "degraded"
+        : "healthy",
     timestamp: new Date().toISOString(),
     payments,
   };

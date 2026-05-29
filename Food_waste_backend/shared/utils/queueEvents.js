@@ -1,5 +1,6 @@
 const logger = require("./logger");
 const deadLetterQueue = require("../../queues/deadLetter.queue");
+const { classifyDeadLetter } = require("./queueFailureClassification");
 const { runWithContext, contextFromJob } = require("./requestContext");
 const {
   registerManagedInterval,
@@ -17,6 +18,8 @@ const HEARTBEAT_INTERVAL_MS = Number(
 );
 
 function enqueueDeadLetter(workerName, job, err) {
+  const classification = classifyDeadLetter(workerName, job, err);
+
   return deadLetterQueue
     .add(
       "retry-exhausted",
@@ -30,6 +33,7 @@ function enqueueDeadLetter(workerName, job, err) {
         stacktrace: job?.stacktrace || [],
         attemptsMade: job?.attemptsMade,
         failedAt: new Date().toISOString(),
+        classification,
       },
       {
         jobId: `${workerName}:${job?.id}:retry-exhausted`,
@@ -152,13 +156,14 @@ function registerWorkerEvents(worker, workerName) {
         },
       });
       if (retryExhausted) {
+        const classification = classifyDeadLetter(workerName, job, err);
         void enqueueDeadLetter(workerName, job, err);
         void recordAlert({
           alertKey: `${workerName}:retry_exhausted`,
           category: "queue",
           severity: "error",
           message: `Retry exhausted in ${workerName}`,
-          metadata: { jobId: job?.id, jobName: job?.name },
+          metadata: { jobId: job?.id, jobName: job?.name, classification },
         });
       }
     });
@@ -226,5 +231,6 @@ function registerWorkerEvents(worker, workerName) {
 }
 
 module.exports = {
+  classifyDeadLetter,
   registerWorkerEvents,
 };

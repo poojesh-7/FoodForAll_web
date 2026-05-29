@@ -5,7 +5,7 @@ const pool = require("../shared/config/db");
 const cashfree = require("../shared/config/cashfree");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
-const { workerOptions } = require("../shared/utils/queueOptions");
+const { jobOptions, workerOptions } = require("../shared/utils/queueOptions");
 const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const {
   publishPaymentUpdated,
@@ -13,6 +13,8 @@ const {
 } = require("../shared/services/realtime.service");
 const {
   ensurePaymentHardeningSchema,
+  reconcilePendingRefunds,
+  reconcileRefundAgainstGateway,
 } = require("../shared/services/paymentReconciliation.service");
 const {
   prepareLifecycleAccounting,
@@ -27,6 +29,8 @@ const {
 
 logger.info("Refund worker started");
 
+const refundQueue = require("../queues/refund.queue");
+
 const FINAL_REFUND_STATES = new Set(["refunded"]);
 const REFUNDABLE_PAYMENT_STATES = new Set([
   "paid",
@@ -34,6 +38,21 @@ const REFUNDABLE_PAYMENT_STATES = new Set([
   "refund_pending",
   "refund_failed",
 ]);
+
+refundQueue
+  .add(
+    "refund-reconciliation-sweep",
+    {},
+    jobOptions("critical", {
+      jobId: "refund-reconciliation-sweep",
+      repeat: { every: 10 * 60 * 1000 },
+      removeOnComplete: { age: 60 * 60, count: 24 },
+      removeOnFail: { age: 24 * 60 * 60, count: 100 },
+    })
+  )
+  .catch((err) => {
+    logger.warn("Refund reconciliation sweep scheduling failed", { err });
+  });
 
 function normalizeRefundStatus(status) {
   const normalized = String(status || "").toUpperCase();
@@ -64,6 +83,26 @@ async function markOperationStatusSafely(options) {
       operationId: options.operationId,
       status: options.status,
     });
+  }
+}
+
+async function reconcileRefundErrorWithGateway(refund, source) {
+  try {
+    const reconciled = await reconcileRefundAgainstGateway({
+      orderId: refund.orderId,
+      refundId: refund.refundId,
+      source,
+    });
+
+    return reconciled.gatewayStatus !== "UNKNOWN" ? reconciled : null;
+  } catch (err) {
+    logger.warn("Refund error gateway reconciliation failed", {
+      err,
+      orderId: refund.orderId,
+      refundId: refund.refundId,
+      source,
+    });
+    return null;
   }
 }
 
@@ -513,6 +552,14 @@ async function prepareRefund(reservationId, operationSource) {
 const refundWorker = new Worker(
   "refund-queue",
   withWorkerBoundary("refund-queue", async (job) => {
+    if (job.name === "refund-reconciliation-sweep") {
+      const results = await reconcilePendingRefunds();
+      logger.info("Refund reconciliation sweep completed", {
+        reconciledRefunds: results.length,
+      });
+      return;
+    }
+
     const { reservationId, refundType } = job.data;
     if (refundType === "reliability_deposit") {
       const refund = await prepareDepositRefund(reservationId, job.data.operationSource);
@@ -555,16 +602,34 @@ const refundWorker = new Worker(
           attempts,
         });
 
-        if (isLastAttempt) {
-          await markDepositRefundFailed(reservationId);
+        const reconciled = await reconcileRefundErrorWithGateway(
+          refund,
+          "deposit_refund_worker_error"
+        );
+        if (reconciled) {
           await markOperationStatusSafely({
             client: pool,
             operationId: refund.operationId,
-            status: "failed",
+            status: operationStatusFromRefundStatus(reconciled.normalizedStatus),
+            metadata: {
+              refund_id: refund.refundId,
+              gateway_status: reconciled.gatewayStatus,
+              recovered_after_error: true,
+            },
+          });
+          return;
+        }
+
+        if (isLastAttempt) {
+          await markOperationStatusSafely({
+            client: pool,
+            operationId: refund.operationId,
+            status: "processing",
             metadata: {
               refund_id: refund.refundId,
               error: err?.message,
               attempts_made: job.attemptsMade + 1,
+              gateway_status: "unknown_after_retry_exhaustion",
             },
           });
         }
@@ -615,16 +680,34 @@ const refundWorker = new Worker(
         attempts,
       });
 
-      if (isLastAttempt) {
-        await markRefundFailed(reservationId);
+      const reconciled = await reconcileRefundErrorWithGateway(
+        refund,
+        "payment_refund_worker_error"
+      );
+      if (reconciled) {
         await markOperationStatusSafely({
           client: pool,
           operationId: refund.operationId,
-          status: "failed",
+          status: operationStatusFromRefundStatus(reconciled.normalizedStatus),
+          metadata: {
+            refund_id: refund.refundId,
+            gateway_status: reconciled.gatewayStatus,
+            recovered_after_error: true,
+          },
+        });
+        return;
+      }
+
+      if (isLastAttempt) {
+        await markOperationStatusSafely({
+          client: pool,
+          operationId: refund.operationId,
+          status: "processing",
           metadata: {
             refund_id: refund.refundId,
             error: err?.message,
             attempts_made: job.attemptsMade + 1,
+            gateway_status: "unknown_after_retry_exhaustion",
           },
         });
       }

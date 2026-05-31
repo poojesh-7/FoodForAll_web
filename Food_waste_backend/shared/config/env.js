@@ -128,6 +128,13 @@ const envSchema = z.object({
   JSON_BODY_LIMIT: optionalString,
   URLENCODED_BODY_LIMIT: optionalString,
   METRICS_TOKEN: optionalString,
+  PLATFORM_COMMISSION_PERCENT: z.preprocess(
+    (value) => {
+      const raw = String(value || "5").trim();
+      return raw ? Number(raw) : 5;
+    },
+    z.number().min(0).max(100)
+  ),
   TRUST_PROXY_HOPS: z.preprocess(
     (value) => {
       const raw = String(value || "1").trim();
@@ -423,6 +430,7 @@ function applyNormalizedEnv(env) {
   process.env.SOCKET_PING_TIMEOUT_MS = String(env.SOCKET_PING_TIMEOUT_MS);
   process.env.QUEUE_WORKER_CONCURRENCY = String(env.QUEUE_WORKER_CONCURRENCY);
   process.env.MAX_UPLOAD_BYTES = String(env.MAX_UPLOAD_BYTES);
+  process.env.PLATFORM_COMMISSION_PERCENT = String(env.PLATFORM_COMMISSION_PERCENT);
 
   if (!process.env.JSON_BODY_LIMIT) {
     process.env.JSON_BODY_LIMIT = env.JSON_BODY_LIMIT || "256kb";

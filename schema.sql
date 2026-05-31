@@ -307,6 +307,132 @@ CREATE TABLE IF NOT EXISTS "public"."financial_operations" (
 ALTER TABLE "public"."financial_operations" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."settlement_batches" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() PRIMARY KEY,
+    "batch_reference" "text" NOT NULL UNIQUE,
+    "status" "text" DEFAULT 'planned'::"text" NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "provider_total" numeric(12,2) DEFAULT 0 NOT NULL,
+    "commission_total" numeric(12,2) DEFAULT 0 NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "settlement_batches_amounts_nonnegative" CHECK ((("provider_total" >= (0)::numeric) AND ("commission_total" >= (0)::numeric))),
+    CONSTRAINT "settlement_batches_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "settlement_batches_status_valid" CHECK (("status" = ANY (ARRAY['planned'::"text", 'allocated'::"text", 'closed'::"text", 'cancelled'::"text"])))
+);
+
+
+ALTER TABLE "public"."settlement_batches" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."settlement_allocation_snapshots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() PRIMARY KEY,
+    "reservation_id" "uuid" NOT NULL REFERENCES "public"."reservations"("id") ON DELETE RESTRICT,
+    "payment_id" "uuid" REFERENCES "public"."payments"("id") ON DELETE RESTRICT,
+    "payment_session_id" "text" NOT NULL,
+    "payment_ownership_id" "uuid" NOT NULL REFERENCES "public"."payment_ownership"("id") ON DELETE RESTRICT,
+    "commission_percent" numeric(6,3) DEFAULT 0 NOT NULL,
+    "commission_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "provider_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "platform_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "deposit_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "tax_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "food_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "total_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "settlement_version" integer DEFAULT 1 NOT NULL,
+    "idempotency_key" "text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "settlement_allocation_amounts_nonnegative" CHECK ((("commission_amount" >= (0)::numeric) AND ("provider_amount" >= (0)::numeric) AND ("platform_amount" >= (0)::numeric) AND ("deposit_amount" >= (0)::numeric) AND ("tax_amount" >= (0)::numeric) AND ("food_amount" >= (0)::numeric) AND ("total_amount" >= (0)::numeric))),
+    CONSTRAINT "settlement_allocation_commission_percent_nonnegative" CHECK (("commission_percent" >= (0)::numeric)),
+    CONSTRAINT "settlement_allocation_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "settlement_allocation_version_positive" CHECK (("settlement_version" > 0))
+);
+
+
+ALTER TABLE "public"."settlement_allocation_snapshots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."provider_settlements" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() PRIMARY KEY,
+    "provider_id" "uuid" NOT NULL REFERENCES "public"."users"("id") ON DELETE RESTRICT,
+    "reservation_id" "uuid" NOT NULL REFERENCES "public"."reservations"("id") ON DELETE RESTRICT,
+    "payment_id" "uuid" REFERENCES "public"."payments"("id") ON DELETE RESTRICT,
+    "payment_session_id" "text" NOT NULL,
+    "settlement_allocation_id" "uuid" NOT NULL REFERENCES "public"."settlement_allocation_snapshots"("id") ON DELETE RESTRICT,
+    "settlement_batch_id" "uuid" REFERENCES "public"."settlement_batches"("id") ON DELETE RESTRICT,
+    "amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "commission_amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "status" "text" DEFAULT 'allocated'::"text" NOT NULL,
+    "idempotency_key" "text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "provider_settlements_amounts_nonnegative" CHECK ((("amount" >= (0)::numeric) AND ("commission_amount" >= (0)::numeric))),
+    CONSTRAINT "provider_settlements_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "provider_settlements_status_valid" CHECK (("status" = ANY (ARRAY['allocated'::"text", 'batched'::"text", 'settled'::"text", 'cancelled'::"text"])))
+);
+
+
+ALTER TABLE "public"."provider_settlements" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."financial_ledger_entries" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() PRIMARY KEY,
+    "reservation_id" "uuid" NOT NULL REFERENCES "public"."reservations"("id") ON DELETE RESTRICT,
+    "payment_id" "uuid" REFERENCES "public"."payments"("id") ON DELETE RESTRICT,
+    "payment_session_id" "text" NOT NULL,
+    "payment_ownership_id" "uuid" REFERENCES "public"."payment_ownership"("id") ON DELETE RESTRICT,
+    "settlement_allocation_id" "uuid" REFERENCES "public"."settlement_allocation_snapshots"("id") ON DELETE RESTRICT,
+    "provider_settlement_id" "uuid" REFERENCES "public"."provider_settlements"("id") ON DELETE RESTRICT,
+    "settlement_batch_id" "uuid" REFERENCES "public"."settlement_batches"("id") ON DELETE RESTRICT,
+    "event_type" "text" NOT NULL,
+    "amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "actor_user_id" "uuid" REFERENCES "public"."users"("id") ON DELETE RESTRICT,
+    "actor_role" "text",
+    "counterparty_user_id" "uuid" REFERENCES "public"."users"("id") ON DELETE RESTRICT,
+    "counterparty_role" "text",
+    "refund_id" "text",
+    "source_type" "text" DEFAULT 'system'::"text" NOT NULL,
+    "source_id" "text",
+    "idempotency_key" "text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "financial_ledger_entries_amount_nonnegative" CHECK (("amount" >= (0)::numeric)),
+    CONSTRAINT "financial_ledger_entries_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "financial_ledger_entries_event_type_valid" CHECK (("event_type" = ANY (ARRAY['payment_collected'::"text", 'food_payment_settled'::"text", 'platform_commission'::"text", 'deposit_collected'::"text", 'deposit_refunded'::"text", 'deposit_retained'::"text", 'refund_issued'::"text", 'refund_failed'::"text", 'refund_retried'::"text", 'settlement_allocated'::"text"])))
+);
+
+
+ALTER TABLE "public"."financial_ledger_entries" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."financial_refund_terminal_records" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() PRIMARY KEY,
+    "reservation_id" "uuid" NOT NULL REFERENCES "public"."reservations"("id") ON DELETE RESTRICT,
+    "payment_session_id" "text" NOT NULL,
+    "payment_id" "uuid" REFERENCES "public"."payments"("id") ON DELETE RESTRICT,
+    "refund_type" "text" NOT NULL,
+    "refund_id" "text",
+    "terminal_status" "text" NOT NULL,
+    "amount" numeric(12,2) DEFAULT 0 NOT NULL,
+    "currency" "text" DEFAULT 'INR'::"text" NOT NULL,
+    "idempotency_key" "text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp without time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "financial_refund_terminal_amount_nonnegative" CHECK (("amount" >= (0)::numeric)),
+    CONSTRAINT "financial_refund_terminal_currency_present" CHECK (("length"("trim"("currency")) > 0)),
+    CONSTRAINT "financial_refund_terminal_status_valid" CHECK (("terminal_status" = ANY (ARRAY['refunded'::"text", 'retained'::"text"])))
+);
+
+
+ALTER TABLE "public"."financial_refund_terminal_records" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."financial_state_transitions" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "payment_id" "uuid" NOT NULL,
@@ -554,6 +680,27 @@ ALTER FUNCTION "public"."prevent_financial_state_transition_mutation"() OWNER TO
 
 
 CREATE TRIGGER "trg_financial_state_transitions_immutable" BEFORE UPDATE OR DELETE ON "public"."financial_state_transitions" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_financial_state_transition_mutation"();
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_financial_ledger_mutation"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'financial ledger and settlement snapshot rows are immutable';
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_financial_ledger_mutation"() OWNER TO "postgres";
+
+
+CREATE TRIGGER "trg_settlement_allocation_immutable" BEFORE UPDATE OR DELETE ON "public"."settlement_allocation_snapshots" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_financial_ledger_mutation"();
+
+
+CREATE TRIGGER "trg_financial_ledger_entries_immutable" BEFORE UPDATE OR DELETE ON "public"."financial_ledger_entries" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_financial_ledger_mutation"();
+
+
+CREATE TRIGGER "trg_financial_refund_terminal_immutable" BEFORE UPDATE OR DELETE ON "public"."financial_refund_terminal_records" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_financial_ledger_mutation"();
 
 
 CREATE OR REPLACE FUNCTION "public"."guard_payment_financial_state_transition"() RETURNS "trigger"
@@ -1029,6 +1176,48 @@ CREATE INDEX "idx_financial_operations_reservation" ON "public"."financial_opera
 CREATE INDEX "idx_financial_operations_status" ON "public"."financial_operations" USING "btree" ("status", "updated_at" DESC);
 
 
+CREATE UNIQUE INDEX "idx_settlement_allocation_idempotency_key" ON "public"."settlement_allocation_snapshots" USING "btree" ("idempotency_key");
+
+
+CREATE UNIQUE INDEX "idx_settlement_allocation_reservation_session_version" ON "public"."settlement_allocation_snapshots" USING "btree" ("reservation_id", "payment_session_id", "settlement_version");
+
+
+CREATE INDEX "idx_settlement_allocation_provider" ON "public"."settlement_allocation_snapshots" USING "btree" ("payment_ownership_id", "created_at" DESC);
+
+
+CREATE UNIQUE INDEX "idx_provider_settlements_idempotency_key" ON "public"."provider_settlements" USING "btree" ("idempotency_key");
+
+
+CREATE INDEX "idx_provider_settlements_provider_status" ON "public"."provider_settlements" USING "btree" ("provider_id", "status", "created_at" DESC);
+
+
+CREATE INDEX "idx_provider_settlements_batch" ON "public"."provider_settlements" USING "btree" ("settlement_batch_id", "status") WHERE ("settlement_batch_id" IS NOT NULL);
+
+
+CREATE UNIQUE INDEX "idx_financial_ledger_entries_idempotency_key" ON "public"."financial_ledger_entries" USING "btree" ("idempotency_key");
+
+
+CREATE INDEX "idx_financial_ledger_entries_reservation" ON "public"."financial_ledger_entries" USING "btree" ("reservation_id", "created_at" DESC);
+
+
+CREATE INDEX "idx_financial_ledger_entries_payment_session" ON "public"."financial_ledger_entries" USING "btree" ("payment_session_id", "created_at" DESC);
+
+
+CREATE INDEX "idx_financial_ledger_entries_event_type" ON "public"."financial_ledger_entries" USING "btree" ("event_type", "created_at" DESC);
+
+
+CREATE INDEX "idx_financial_ledger_entries_refund" ON "public"."financial_ledger_entries" USING "btree" ("refund_id", "created_at" DESC) WHERE ("refund_id" IS NOT NULL);
+
+
+CREATE UNIQUE INDEX "idx_financial_refund_terminal_idempotency_key" ON "public"."financial_refund_terminal_records" USING "btree" ("idempotency_key");
+
+
+CREATE UNIQUE INDEX "idx_financial_refund_terminal_once" ON "public"."financial_refund_terminal_records" USING "btree" ("reservation_id", "refund_type") WHERE ("terminal_status" = ANY (ARRAY['refunded'::"text", 'retained'::"text"]));
+
+
+CREATE INDEX "idx_financial_refund_terminal_refund" ON "public"."financial_refund_terminal_records" USING "btree" ("refund_id") WHERE ("refund_id" IS NOT NULL);
+
+
 CREATE INDEX "idx_financial_state_transitions_payment" ON "public"."financial_state_transitions" USING "btree" ("payment_id", "created_at" DESC);
 
 
@@ -1403,6 +1592,31 @@ GRANT ALL ON TABLE "public"."payments" TO "service_role";
 GRANT ALL ON TABLE "public"."financial_state_transitions" TO "anon";
 GRANT ALL ON TABLE "public"."financial_state_transitions" TO "authenticated";
 GRANT ALL ON TABLE "public"."financial_state_transitions" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."settlement_batches" TO "anon";
+GRANT ALL ON TABLE "public"."settlement_batches" TO "authenticated";
+GRANT ALL ON TABLE "public"."settlement_batches" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."settlement_allocation_snapshots" TO "anon";
+GRANT ALL ON TABLE "public"."settlement_allocation_snapshots" TO "authenticated";
+GRANT ALL ON TABLE "public"."settlement_allocation_snapshots" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."provider_settlements" TO "anon";
+GRANT ALL ON TABLE "public"."provider_settlements" TO "authenticated";
+GRANT ALL ON TABLE "public"."provider_settlements" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."financial_ledger_entries" TO "anon";
+GRANT ALL ON TABLE "public"."financial_ledger_entries" TO "authenticated";
+GRANT ALL ON TABLE "public"."financial_ledger_entries" TO "service_role";
+
+
+GRANT ALL ON TABLE "public"."financial_refund_terminal_records" TO "anon";
+GRANT ALL ON TABLE "public"."financial_refund_terminal_records" TO "authenticated";
+GRANT ALL ON TABLE "public"."financial_refund_terminal_records" TO "service_role";
 
 
 

@@ -20,6 +20,7 @@ router.get("/operations/summary", adminCtrl.getOperationalSummary);
 router.get("/operations/alerts", adminCtrl.getOperationalAlerts);
 router.get("/operations/security-events", adminCtrl.getSecurityEvents);
 router.get("/payments/health", adminCtrl.getPaymentHealth);
+router.get("/payments/financial-diagnostics", adminCtrl.getFinancialDiagnostics);
 router.get("/queues/health", adminCtrl.getQueueHealth);
 router.post("/queues/:queueName/jobs/:jobId/retry", adminActionLimiter, adminCtrl.retryFailedQueueJob);
 router.get("/trust/summary", adminCtrl.getTrustObservabilitySummary);

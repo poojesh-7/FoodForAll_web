@@ -13,6 +13,9 @@ const {
 const { getMetricsSnapshot } = require("../shared/services/metrics.service");
 const { getPaymentHealth } = require("../shared/services/paymentMonitoring.service");
 const {
+  getFinancialDiagnostics,
+} = require("../shared/services/financialLedger.service");
+const {
   dismissProviderReport,
   listProviderReports,
   validateProviderReport,
@@ -545,6 +548,19 @@ exports.getSecurityEvents = async (req, res) => {
   } catch (err) {
     logger.error("Failed to fetch security events", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch security events" });
+  }
+};
+
+exports.getFinancialDiagnostics = async (req, res) => {
+  try {
+    const diagnostics = await getFinancialDiagnostics();
+    res.json({ diagnostics });
+  } catch (err) {
+    logger.error("Failed to fetch financial diagnostics", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(500).json({ error: "Failed to fetch financial diagnostics" });
   }
 };
 

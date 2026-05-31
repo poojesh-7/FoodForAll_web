@@ -5,6 +5,9 @@ const {
 const {
   recordAlert,
 } = require("./observability.service");
+const {
+  recordFinancialOperationLedgerStatus,
+} = require("./financialLedger.service");
 
 const TERMINAL_OPERATION_STATUSES = new Set([
   "succeeded",
@@ -375,6 +378,23 @@ async function prepareRefundExecution({
     refund_id: refundId || existing.metadata?.refund_id || null,
   });
 
+  await recordFinancialOperationLedgerStatus({
+    client,
+    operation: retried,
+    status: "processing",
+    refundId: refundId || existing.metadata?.refund_id || null,
+    metadata: {
+      duplicate_retry: true,
+      source: "refund_execution_retry",
+    },
+  }).catch((err) => {
+    logger.warn("F4 refund retry ledger write failed", {
+      err,
+      operationId: retried.id,
+      idempotencyKey: retried.idempotency_key,
+    });
+  });
+
   incrementCounter("food_rescue_refund_retry_operations_total", {
     operation_type: draft.operation_type,
   });
@@ -437,6 +457,20 @@ async function markFinancialOperationStatus({
     status,
   });
 
+  await recordFinancialOperationLedgerStatus({
+    client,
+    operation: result.rows[0],
+    status,
+    refundId: metadata.refund_id || result.rows[0].metadata?.refund_id || null,
+    metadata,
+  }).catch((err) => {
+    logger.warn("F4 financial operation ledger status write failed", {
+      err,
+      operationId: result.rows[0].id,
+      status,
+    });
+  });
+
   return result.rows[0];
 }
 
@@ -475,6 +509,21 @@ async function markFinancialOperationStatusByRefundId({
     incrementCounter("food_rescue_financial_operations_total", {
       operation_type: row.operation_type,
       status,
+    });
+
+    await recordFinancialOperationLedgerStatus({
+      client,
+      operation: row,
+      status,
+      refundId,
+      metadata,
+    }).catch((err) => {
+      logger.warn("F4 refund webhook ledger status write failed", {
+        err,
+        operationId: row.id,
+        refundId,
+        status,
+      });
     });
   }
 

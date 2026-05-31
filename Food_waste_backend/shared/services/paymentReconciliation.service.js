@@ -49,6 +49,10 @@ const {
   prepareLifecycleAccounting,
 } = require("./lifecycleAccounting.service");
 const {
+  ensureSettlementAccountingSchema,
+  recordSettlementAllocation,
+} = require("./financialLedger.service");
+const {
   getReservationSnapshot,
   publishListingUpdated,
   publishPaymentUpdated,
@@ -154,6 +158,7 @@ async function ensurePaymentHardeningSchema(_client = pool) {
     const run = async () => {
       await ensureRestrictionSchema(client);
       await ensureReservationPaymentContextSchema(client);
+      await ensureSettlementAccountingSchema(client);
 
       await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
 
@@ -1555,6 +1560,40 @@ async function processPaidOrder(client, orderId, paymentDetails = {}, sideEffect
     }
 
     if (activated) {
+      await recordSettlementAllocation({
+        client,
+        payment: {
+          ...payment,
+          status: "paid",
+          gateway_status: "PAID",
+          transaction_id: paymentDetails?.cf_payment_id || payment.transaction_id,
+          payment_method: serializePaymentMethod(paymentDetails?.payment_method),
+        },
+        metadata: {
+          source: "payment_reconciliation",
+          order_id: orderId,
+          activated: reservation.status === "payment_pending",
+        },
+      }).catch((err) => {
+        logger.error("F4 settlement allocation recording failed", {
+          err,
+          reservationId: payment.reservation_id,
+          paymentId: payment.id,
+          orderId,
+        });
+        void recordAlert({
+          alertKey: `financial:f4:settlement_allocation_failed:${payment.id}`,
+          category: "payment",
+          severity: "error",
+          message: "F4 settlement allocation recording failed",
+          metadata: {
+            reservationId: payment.reservation_id,
+            paymentId: payment.id,
+            orderId,
+            message: err?.message,
+          },
+        });
+      });
       sideEffects.changedReservationIds.add(payment.reservation_id);
       if (reservation.status === "payment_pending") {
         sideEffects.activatedReservationIds.add(payment.reservation_id);

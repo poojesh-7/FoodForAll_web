@@ -58,6 +58,7 @@ async function createPayment({
 
   try {
     await recordPaymentOrderAttempt({
+      client,
       orderId,
       user,
       reservations,
@@ -87,6 +88,7 @@ async function createPayment({
 
     const paymentSessionId = response.data.payment_session_id;
     await markPaymentOrderAttemptGatewayCreated({
+      client,
       orderId,
       paymentSessionId,
       gatewayResponse: response.data,
@@ -145,7 +147,7 @@ async function createPayment({
       });
     }
 
-    await markPaymentOrderAttemptDbInserted({ orderId });
+    await markPaymentOrderAttemptDbInserted({ client, orderId });
 
     const expiryTime = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -208,7 +210,7 @@ async function createPayment({
       reliability_deposit_amount: roundMoney(reliabilityDepositAmount),
     };
   } catch (err) {
-    await markPaymentOrderAttemptFailed({ orderId, err }).catch((markErr) => {
+    await markPaymentOrderAttemptFailed({ client, orderId, err }).catch((markErr) => {
       logger.warn("Payment order attempt failure mark failed", {
         err: markErr,
         orderId,

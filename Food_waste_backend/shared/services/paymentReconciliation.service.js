@@ -808,13 +808,15 @@ function reservationAttemptSnapshot(reservations) {
 }
 
 async function recordPaymentOrderAttempt({
+  client = pool,
   orderId,
   user,
   reservations,
   amount,
   currency = "INR",
 }) {
-  await pool.query(
+  const db = client || pool;
+  await db.query(
     `
     INSERT INTO payment_order_attempts (
       order_id,
@@ -841,11 +843,13 @@ async function recordPaymentOrderAttempt({
 }
 
 async function markPaymentOrderAttemptGatewayCreated({
+  client = pool,
   orderId,
   paymentSessionId,
   gatewayResponse,
 }) {
-  await pool.query(
+  const db = client || pool;
+  await db.query(
     `
     UPDATE payment_order_attempts
     SET status='gateway_created',
@@ -863,8 +867,9 @@ async function markPaymentOrderAttemptGatewayCreated({
   );
 }
 
-async function markPaymentOrderAttemptDbInserted({ orderId }) {
-  await pool.query(
+async function markPaymentOrderAttemptDbInserted({ client = pool, orderId }) {
+  const db = client || pool;
+  await db.query(
     `
     UPDATE payment_order_attempts
     SET status='db_inserted',
@@ -891,8 +896,9 @@ async function markPaymentOrderAttemptCommitted({ orderId }) {
   );
 }
 
-async function markPaymentOrderAttemptFailed({ orderId, err }) {
-  await pool.query(
+async function markPaymentOrderAttemptFailed({ client = pool, orderId, err }) {
+  const db = client || pool;
+  await db.query(
     `
     UPDATE payment_order_attempts
     SET status=CASE
@@ -2279,8 +2285,16 @@ async function claimRecoverablePaymentOrderAttempts(limit) {
     WHERE id IN (
       SELECT id
       FROM payment_order_attempts
-      WHERE status IN ('creating','gateway_created','db_inserted','recovery_pending','failed')
-      AND updated_at < NOW() - INTERVAL '2 minutes'
+      WHERE (
+        (
+          status IN ('db_inserted','recovery_pending','failed')
+          AND updated_at < NOW() - INTERVAL '2 minutes'
+        )
+        OR (
+          status IN ('creating','gateway_created')
+          AND updated_at < NOW() - INTERVAL '10 minutes'
+        )
+      )
       ORDER BY updated_at ASC
       LIMIT $1
       FOR UPDATE SKIP LOCKED

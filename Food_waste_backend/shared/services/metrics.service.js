@@ -231,6 +231,10 @@ function getPrometheusMetrics() {
     "# TYPE food_rescue_trust_replay_diagnostics_total counter",
     "# HELP food_rescue_trust_replay_checksum_mismatches_total Passive trust replay checksum mismatches.",
     "# TYPE food_rescue_trust_replay_checksum_mismatches_total counter",
+    "# HELP food_rescue_abuse_guard_events_total Reservation abuse guard observations and blocks.",
+    "# TYPE food_rescue_abuse_guard_events_total counter",
+    "# HELP food_rescue_trust_farming_guard_events_total Trust farming guard observations and gain adjustments.",
+    "# TYPE food_rescue_trust_farming_guard_events_total counter",
   ];
 
   for (const [key, value] of counters.entries()) {

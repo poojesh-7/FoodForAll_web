@@ -33,6 +33,9 @@ const {
   getTrustObservabilitySummary,
   getTrustProjectionBreakdown,
 } = require("../shared/services/trustObservability.service");
+const {
+  getAbuseAnalytics,
+} = require("../shared/services/abuseGuard.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -664,8 +667,11 @@ exports.getTrustProjectionBreakdown = async (req, res) => {
 
 exports.getTrustAnalytics = async (req, res) => {
   try {
-    const analytics = await getTrustAnalytics(req.query);
-    res.json({ analytics });
+    const [analytics, abuse] = await Promise.all([
+      getTrustAnalytics(req.query),
+      getAbuseAnalytics(req.query),
+    ]);
+    res.json({ analytics: { ...analytics, abuse } });
   } catch (err) {
     logger.error("Failed to fetch trust analytics", {
       err,

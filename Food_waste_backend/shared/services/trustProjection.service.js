@@ -12,6 +12,23 @@ const HOUR_MS = 60 * 60 * 1000;
 const ANALYTICS_ONLY_EVENT_TYPES = new Set([
   "provider_listing_expired",
 ]);
+const PROVIDER_DIVERSITY_EVENT_TYPES = new Set([
+  "user_pickup_completed",
+  "ngo_delivery_completed",
+  "volunteer_delivery_completed",
+]);
+
+function getTrustFarmingConfig() {
+  const rawDecay = String(process.env.TRUST_PROVIDER_REPEAT_DECAY || "1,0.5,0")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  return {
+    maxGainPerDay: clamp(Number(process.env.TRUST_MAX_GAIN_PER_DAY || 10), 0, 100),
+    providerRepeatDecay: rawDecay.length ? rawDecay : [1, 0.5, 0],
+  };
+}
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -36,6 +53,52 @@ function normalizePayload(payload) {
   return payload;
 }
 
+function booleanMetadata(metadata, keys) {
+  return keys.some((key) => {
+    const value = metadata[key];
+    return value === true || String(value).toLowerCase() === "true";
+  });
+}
+
+function amountMetadata(metadata, keys) {
+  for (const key of keys) {
+    if (metadata[key] === undefined || metadata[key] === null || metadata[key] === "") continue;
+    const number = Number(metadata[key]);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function positiveGainSuppressionReason(payload, metadata, rawScoreDelta) {
+  if (rawScoreDelta <= 0) return null;
+
+  if (
+    booleanMetadata(metadata, [
+      "is_free",
+      "free_listing",
+      "listing_is_free",
+      "zero_value_reservation",
+      "internal",
+      "system_generated",
+      "systemGenerated",
+    ]) ||
+    booleanMetadata(payload, ["internal", "system_generated", "systemGenerated"])
+  ) {
+    return "non_qualifying_source";
+  }
+
+  const amount = amountMetadata(metadata, [
+    "food_amount",
+    "reservation_amount",
+    "total_amount",
+    "payment_amount",
+    "price",
+  ]);
+  if (amount !== null && amount <= 0) return "zero_value_reservation";
+
+  return null;
+}
+
 function parseDateOrNull(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -51,17 +114,26 @@ function eventTime(event) {
   return parseDateOrNull(event.created_at) || new Date(0);
 }
 
+function dayBucket(date) {
+  return eventTime({ created_at: date }).toISOString().slice(0, 10);
+}
+
 function addMs(date, ms) {
   return new Date(date.getTime() + ms);
 }
 
 function buildTrustEffect(event) {
   const payload = normalizePayload(event.event_payload);
+  const metadata = normalizePayload(payload.metadata);
   const analyticsOnly =
     ANALYTICS_ONLY_EVENT_TYPES.has(event.event_type) ||
     payload.analytics_only === true ||
     payload.analyticsOnly === true;
-  const scoreDelta = numberDelta(payload.score_delta ?? payload.trust_delta ?? payload.scoreDelta);
+  const rawScoreDelta = numberDelta(payload.score_delta ?? payload.trust_delta ?? payload.scoreDelta);
+  const gainSuppressionReason = analyticsOnly
+    ? null
+    : positiveGainSuppressionReason(payload, metadata, rawScoreDelta);
+  const scoreDelta = gainSuppressionReason ? 0 : rawScoreDelta;
   const penaltyDelta = intDelta(payload.penalty_delta ?? payload.penaltyDelta);
   const failureDelta = intDelta(payload.failure_delta ?? payload.failureDelta);
   const cancellationDelta = intDelta(payload.cancellation_delta ?? payload.cancellationDelta);
@@ -79,12 +151,21 @@ function buildTrustEffect(event) {
   const restrictionType = payload.restriction_type || payload.restrictionType || null;
   const activeUntil = parseDateOrNull(payload.active_until || payload.activeUntil);
   const cooldownUntil = parseDateOrNull(payload.cooldown_until || payload.cooldownUntil);
-  const metadata = normalizePayload(payload.metadata);
+  if (gainSuppressionReason) {
+    incrementCounter("food_rescue_trust_farming_guard_events_total", {
+      event: "suspicious_gain_patterns",
+      reason: gainSuppressionReason,
+      event_type: event.event_type || "unknown",
+      subject_type: event.subject_type || "unknown",
+    });
+  }
 
   return {
     subjectType: event.subject_type,
     subjectId: event.subject_id,
     scoreDelta: analyticsOnly ? 0 : scoreDelta,
+    rawScoreDelta: analyticsOnly ? 0 : rawScoreDelta,
+    gainSuppressionReason,
     penaltyDelta: analyticsOnly ? 0 : penaltyDelta,
     failureDelta: analyticsOnly ? 0 : failureDelta,
     cancellationDelta: analyticsOnly ? 0 : cancellationDelta,
@@ -175,6 +256,90 @@ function isNegativeEffect(effect) {
     effect.cancellationDelta > 0 ||
     effect.scoreDelta < 0
   );
+}
+
+function providerIdFromEffect(effect) {
+  return effect.metadata?.provider_id || effect.metadata?.providerId || null;
+}
+
+function decayFactorForRepeat(repeatCount, decayConfig) {
+  if (!decayConfig.length) return 1;
+  return decayConfig[Math.min(repeatCount, decayConfig.length - 1)];
+}
+
+function applyTrustGainQuality(event, effect, context = {}) {
+  if (!context.dailyPositiveGain) context.dailyPositiveGain = new Map();
+  if (!context.providerRepeatCounts) context.providerRepeatCounts = new Map();
+
+  const scoreDelta = Number(effect.scoreDelta || 0);
+  const quality = {
+    raw_score_delta: effect.rawScoreDelta ?? scoreDelta,
+    score_delta_before_cap: scoreDelta,
+    applied_score_delta: scoreDelta,
+    provider_repeat_count: 0,
+    provider_decay_factor: 1,
+    daily_gain_before_event: 0,
+    daily_gain_after_event: 0,
+    daily_cap_applied: false,
+    suppression_reason: effect.gainSuppressionReason || null,
+  };
+
+  if (scoreDelta <= 0) return quality;
+
+  const config = context.config || getTrustFarmingConfig();
+  const eventDate = eventTime(event);
+  const day = dayBucket(eventDate);
+  const subjectKey = `${effect.subjectType}:${effect.subjectId}`;
+  const providerId = providerIdFromEffect(effect);
+  let adjustedGain = scoreDelta;
+
+  if (PROVIDER_DIVERSITY_EVENT_TYPES.has(event.event_type) && providerId) {
+    const providerKey = `${subjectKey}:${day}:${providerId}`;
+    const repeatCount = context.providerRepeatCounts.get(providerKey) || 0;
+    const decayFactor = decayFactorForRepeat(repeatCount, config.providerRepeatDecay);
+    adjustedGain *= decayFactor;
+    context.providerRepeatCounts.set(providerKey, repeatCount + 1);
+    quality.provider_repeat_count = repeatCount + 1;
+    quality.provider_decay_factor = decayFactor;
+    quality.score_delta_before_cap = adjustedGain;
+
+    if (repeatCount > 0 || decayFactor < 1) {
+      incrementCounter("food_rescue_trust_farming_guard_events_total", {
+        event: "repeated_same_provider_gains",
+        event_type: event.event_type || "unknown",
+        subject_type: effect.subjectType || "unknown",
+      });
+    }
+  }
+
+  const dailyKey = `${subjectKey}:${day}`;
+  const previousDailyGain = context.dailyPositiveGain.get(dailyKey) || 0;
+  const remainingDailyGain = Math.max(0, config.maxGainPerDay - previousDailyGain);
+  const appliedGain = Math.min(adjustedGain, remainingDailyGain);
+
+  context.dailyPositiveGain.set(dailyKey, previousDailyGain + appliedGain);
+  quality.daily_gain_before_event = previousDailyGain;
+  quality.daily_gain_after_event = previousDailyGain + appliedGain;
+  quality.applied_score_delta = appliedGain;
+  quality.daily_cap_applied = appliedGain < adjustedGain;
+
+  if (quality.daily_cap_applied) {
+    incrementCounter("food_rescue_trust_farming_guard_events_total", {
+      event: "rapid_trust_growth",
+      event_type: event.event_type || "unknown",
+      subject_type: effect.subjectType || "unknown",
+    });
+  }
+
+  if (appliedGain <= 0 && adjustedGain > 0) {
+    incrementCounter("food_rescue_trust_farming_guard_events_total", {
+      event: "suspicious_gain_patterns",
+      event_type: event.event_type || "unknown",
+      subject_type: effect.subjectType || "unknown",
+    });
+  }
+
+  return quality;
 }
 
 function penaltyFromEffect(effect) {
@@ -293,13 +458,19 @@ function calculateOperationalProjection(state, event, effect, context) {
   };
 }
 
-function projectOperationalTrustState(previous, event, effect) {
+function projectOperationalTrustState(previous, event, effect, context = {}) {
   const current = {
     ...initialProjection(effect.subjectType, effect.subjectId),
     ...previous,
   };
   const currentEventTime = eventTime(event);
-  const success = isSuccessEffect(effect);
+  const trustQuality = applyTrustGainQuality(event, effect, context);
+  const effectiveScoreDelta = trustQuality.applied_score_delta;
+  const effectiveEffect = {
+    ...effect,
+    scoreDelta: effectiveScoreDelta,
+  };
+  const success = isSuccessEffect(effectiveEffect);
   const negative = isNegativeEffect(effect);
   const previousLastEvent = parseDateOrNull(current.last_event_at);
   const decayIntervalMs = Math.max(1, DECAY_INTERVAL_DAYS) * DAY_MS;
@@ -330,7 +501,7 @@ function projectOperationalTrustState(previous, event, effect) {
       decayCredit
   );
   const projectedScore = clamp(
-    current.trust_score + effect.scoreDelta + recoveryCredit * 2 + decayScoreRecovery,
+    current.trust_score + effectiveScoreDelta + recoveryCredit * 2 + decayScoreRecovery,
     0,
     100
   );
@@ -379,8 +550,10 @@ function projectOperationalTrustState(previous, event, effect) {
   next.score_breakdown = {
     event_key: event.event_key,
     event_type: event.event_type,
-    score_delta: effect.scoreDelta,
+    score_delta: effectiveScoreDelta,
+    raw_score_delta: trustQuality.raw_score_delta,
     analytics_only: effect.analyticsOnly,
+    trust_quality: trustQuality,
     previous_score: current.trust_score,
     projected_score: projectedScore,
     penalty_added: penaltyAdded,
@@ -439,9 +612,19 @@ function buildTrustProjectionFromEvents(events, subjectType, subjectId) {
     subjectType || first?.subject_type || "user",
     subjectId || first?.subject_id || null
   );
+  const context = {
+    config: getTrustFarmingConfig(),
+    dailyPositiveGain: new Map(),
+    providerRepeatCounts: new Map(),
+  };
 
   for (const event of ordered) {
-    projection = projectOperationalTrustState(projection, event, buildTrustEffect(event));
+    projection = projectOperationalTrustState(
+      projection,
+      event,
+      buildTrustEffect(event),
+      context
+    );
   }
 
   return projection;
@@ -784,6 +967,7 @@ module.exports = {
   buildTrustProjectionFromEvents,
   calculateRestrictionLevel,
   effectHash,
+  getTrustFarmingConfig,
   projectOperationalTrustState,
   rebuildTrustProjectionForSubject,
 };

@@ -37,6 +37,9 @@ const {
   ensureReservationPaymentContextSchema,
 } = require("../shared/services/reservationPaymentContext.service");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
+const {
+  evaluateReservationSpamGuard,
+} = require("../shared/services/abuseGuard.service");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { withTransaction } = require("../shared/utils/transaction");
 const {
@@ -84,27 +87,6 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
 
   if (existingReservation.rows.length) {
     throw withStatus(RESERVATION_EXISTS_MESSAGE, 409);
-  }
-}
-
-async function ensureUserPaymentSpamLimit(client, userId) {
-  const pendingReservations = await client.query(
-    `
-    SELECT COUNT(*)::int AS pending_count
-    FROM reservations
-    WHERE user_id=$1
-    AND status='payment_pending'
-    AND payment_status='pending'
-    AND reserved_at > NOW() - INTERVAL '30 minutes'
-    `,
-    [userId]
-  );
-
-  if ((pendingReservations.rows[0]?.pending_count || 0) >= 3) {
-    throw withStatus(
-      "Too many pending payments. Please finish or wait for existing payments to expire.",
-      429
-    );
   }
 }
 
@@ -215,7 +197,7 @@ exports.createReservation = async (req, res) => {
       pool,
       async (client) => {
         await ensureReservationPaymentContextSchema(client);
-        await ensureUserPaymentSpamLimit(client, req.user.id);
+        const abuseGuard = await evaluateReservationSpamGuard(client, req.user.id);
 
         const foodResult = await client.query(
           `
@@ -300,6 +282,7 @@ exports.createReservation = async (req, res) => {
           foodAmount,
           depositAmount,
           policy,
+          abuseGuard,
         };
       },
       {

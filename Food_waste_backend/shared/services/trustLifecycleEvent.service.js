@@ -48,6 +48,11 @@ function sourceMetadata(row, extra = {}) {
     payment_id: row.payment_id || (row.reservation_id ? row.id : null),
     listing_id: row.listing_id || null,
     provider_id: row.provider_id || null,
+    is_free: row.is_free ?? row.listing_is_free ?? null,
+    food_amount: row.food_amount ?? row.reservation_amount ?? null,
+    total_amount: row.total_amount ?? null,
+    system_generated: row.system_generated ?? false,
+    internal: row.internal ?? false,
     status: row.status || row.reservation_status || null,
     task_status: row.task_status || null,
     payment_status: row.payment_status || null,
@@ -461,8 +466,10 @@ async function deriveReservationEvents(options = {}) {
     SELECT r.id, r.user_id, r.listing_id, r.pickup_type, r.status, r.task_status,
            r.assigned_volunteer_id, r.completed_at, r.picked_up_at,
            r.payment_status, r.payment_expires_at, r.reserved_at,
-           f.provider_id,
+           f.provider_id, f.is_free, f.price,
            p.id AS payment_id,
+           p.food_amount,
+           p.total_amount,
            p.status AS payment_row_status,
            p.refund_status
     FROM reservations r

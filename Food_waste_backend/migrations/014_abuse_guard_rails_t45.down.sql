@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS idx_trust_events_provider_pairings;
+DROP INDEX IF EXISTS idx_trust_events_subject_daily_gain;
+DROP INDEX IF EXISTS idx_reservations_user_abandoned_hold_patterns;
+DROP INDEX IF EXISTS idx_reservations_user_active_unpaid_holds;

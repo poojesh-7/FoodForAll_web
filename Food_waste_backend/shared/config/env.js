@@ -162,6 +162,59 @@ const envSchema = z.object({
     max: 10 * 1024 * 1024,
     fallback: String(5 * 1024 * 1024),
   }),
+  TRUST_MAX_GAIN_PER_DAY: numberFromEnv("TRUST_MAX_GAIN_PER_DAY", {
+    min: 0,
+    max: 100,
+    fallback: "10",
+  }),
+  TRUST_LOW_SCORE_THRESHOLD: numberFromEnv("TRUST_LOW_SCORE_THRESHOLD", {
+    min: 0,
+    max: 100,
+    fallback: "70",
+  }),
+  TRUST_HIGH_SCORE_THRESHOLD: numberFromEnv("TRUST_HIGH_SCORE_THRESHOLD", {
+    min: 0,
+    max: 100,
+    fallback: "95",
+  }),
+  MAX_UNPAID_HOLDS_LOW_TRUST: numberFromEnv("MAX_UNPAID_HOLDS_LOW_TRUST", {
+    min: 0,
+    max: 20,
+    fallback: "1",
+  }),
+  MAX_UNPAID_HOLDS_NORMAL: numberFromEnv("MAX_UNPAID_HOLDS_NORMAL", {
+    min: 1,
+    max: 50,
+    fallback: "3",
+  }),
+  MAX_UNPAID_HOLDS_HIGH_TRUST: numberFromEnv("MAX_UNPAID_HOLDS_HIGH_TRUST", {
+    min: 1,
+    max: 100,
+    fallback: "4",
+  }),
+  ABUSE_HOLD_LOOKBACK_HOURS: numberFromEnv("ABUSE_HOLD_LOOKBACK_HOURS", {
+    min: 1,
+    max: 720,
+    fallback: "24",
+  }),
+  EXCESSIVE_HOLD_PATTERN_THRESHOLD: numberFromEnv("EXCESSIVE_HOLD_PATTERN_THRESHOLD", {
+    min: 1,
+    max: 100,
+    fallback: "5",
+  }),
+  REPEATED_ABANDONMENT_THRESHOLD: numberFromEnv("REPEATED_ABANDONMENT_THRESHOLD", {
+    min: 1,
+    max: 100,
+    fallback: "3",
+  }),
+  TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD: numberFromEnv(
+    "TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD",
+    {
+      min: 1,
+      max: 100,
+      fallback: "8",
+    }
+  ),
 });
 
 function normalizeNodeEnv() {
@@ -336,6 +389,14 @@ function validateCrossFieldRules(env, ctx) {
     });
   }
 
+  if (env.TRUST_HIGH_SCORE_THRESHOLD <= env.TRUST_LOW_SCORE_THRESHOLD) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TRUST_HIGH_SCORE_THRESHOLD"],
+      message: "TRUST_HIGH_SCORE_THRESHOLD must be greater than TRUST_LOW_SCORE_THRESHOLD",
+    });
+  }
+
   const placeholderSecrets = new Set(["secret", "supersecret", "supersecretkey", "changeme"]);
   if (production && placeholderSecrets.has(env.JWT_SECRET.toLowerCase())) {
     ctx.addIssue({
@@ -431,6 +492,18 @@ function applyNormalizedEnv(env) {
   process.env.QUEUE_WORKER_CONCURRENCY = String(env.QUEUE_WORKER_CONCURRENCY);
   process.env.MAX_UPLOAD_BYTES = String(env.MAX_UPLOAD_BYTES);
   process.env.PLATFORM_COMMISSION_PERCENT = String(env.PLATFORM_COMMISSION_PERCENT);
+  process.env.TRUST_MAX_GAIN_PER_DAY = String(env.TRUST_MAX_GAIN_PER_DAY);
+  process.env.TRUST_LOW_SCORE_THRESHOLD = String(env.TRUST_LOW_SCORE_THRESHOLD);
+  process.env.TRUST_HIGH_SCORE_THRESHOLD = String(env.TRUST_HIGH_SCORE_THRESHOLD);
+  process.env.MAX_UNPAID_HOLDS_LOW_TRUST = String(env.MAX_UNPAID_HOLDS_LOW_TRUST);
+  process.env.MAX_UNPAID_HOLDS_NORMAL = String(env.MAX_UNPAID_HOLDS_NORMAL);
+  process.env.MAX_UNPAID_HOLDS_HIGH_TRUST = String(env.MAX_UNPAID_HOLDS_HIGH_TRUST);
+  process.env.ABUSE_HOLD_LOOKBACK_HOURS = String(env.ABUSE_HOLD_LOOKBACK_HOURS);
+  process.env.EXCESSIVE_HOLD_PATTERN_THRESHOLD = String(env.EXCESSIVE_HOLD_PATTERN_THRESHOLD);
+  process.env.REPEATED_ABANDONMENT_THRESHOLD = String(env.REPEATED_ABANDONMENT_THRESHOLD);
+  process.env.TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD = String(
+    env.TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD
+  );
 
   if (!process.env.JSON_BODY_LIMIT) {
     process.env.JSON_BODY_LIMIT = env.JSON_BODY_LIMIT || "256kb";

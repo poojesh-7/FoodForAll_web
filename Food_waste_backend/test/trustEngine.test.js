@@ -71,6 +71,26 @@ function createProviderProjectionEvent(index, eventType, payload, createdAt) {
   });
 }
 
+function withEnv(values, callback) {
+  const previous = {};
+  for (const [key, value] of Object.entries(values)) {
+    previous[key] = process.env[key];
+    process.env[key] = String(value);
+  }
+
+  try {
+    return callback();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 test("appendTrustEvent inserts once and protects duplicate event keys", async () => {
   const insertedRows = [
     {
@@ -318,6 +338,83 @@ test("stable successful behavior applies passive decay by event time", () => {
   assert.equal(projection.decay_state.decay_credit_this_event, 1);
   assert.equal(projection.decay_state.score_recovered_this_event, 2);
   assert.equal(projection.trust_score, 95);
+});
+
+test("same-provider repeated pickup gains decay by configured diversity policy", () => {
+  withEnv({ TRUST_PROVIDER_REPEAT_DECAY: "1,0.5,0", TRUST_MAX_GAIN_PER_DAY: 20 }, () => {
+    const projection = buildTrustProjectionFromEvents([
+      createProjectionEvent(1, "user_pickup_failed", {
+        score_delta: -10,
+        failure_delta: 1,
+      }, "2026-01-01T00:00:00.000Z"),
+      createProjectionEvent(2, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      }, "2026-01-02T00:00:00.000Z"),
+      createProjectionEvent(3, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      }, "2026-01-02T01:00:00.000Z"),
+      createProjectionEvent(4, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      }, "2026-01-02T02:00:00.000Z"),
+    ]);
+
+    assert.equal(projection.score_breakdown.trust_quality.provider_repeat_count, 3);
+    assert.equal(projection.score_breakdown.trust_quality.provider_decay_factor, 0);
+    assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
+    assert.equal(projection.trust_score, 96.5);
+  });
+});
+
+test("daily trust gain cap limits positive score growth", () => {
+  withEnv({ TRUST_MAX_GAIN_PER_DAY: 4, TRUST_PROVIDER_REPEAT_DECAY: "1,1,1" }, () => {
+    const projection = buildTrustProjectionFromEvents([
+      createProjectionEvent(1, "user_pickup_failed", {
+        score_delta: -20,
+        failure_delta: 1,
+      }, "2026-01-01T00:00:00.000Z"),
+      createProjectionEvent(2, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      }, "2026-01-02T00:00:00.000Z"),
+      createProjectionEvent(3, "user_pickup_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: "88888888-8888-4888-8888-888888888888", food_amount: 100 },
+      }, "2026-01-02T01:00:00.000Z"),
+    ]);
+
+    assert.equal(projection.trust_score, 84);
+    assert.equal(projection.score_breakdown.trust_quality.daily_cap_applied, true);
+    assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 1);
+  });
+});
+
+test("free and zero-value reservations do not award positive trust gain", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_pickup_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+      metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+    }, "2026-01-02T00:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.trust_score, 90);
+  assert.equal(
+    projection.score_breakdown.trust_quality.suppression_reason,
+    "non_qualifying_source"
+  );
+  assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
 });
 
 test("projection replay is deterministic regardless of input order", () => {

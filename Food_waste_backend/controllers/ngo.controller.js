@@ -10,7 +10,9 @@ const {
   publishTaskAvailabilityUpdated,
 } = require("../shared/services/realtime.service");
 const { createReservationPayment } = require("../shared/services/payment.service");
-const { getReservationPolicy } = require("../shared/services/restriction.service");
+const {
+  getTrustEnforcementPolicy,
+} = require("../shared/services/trustEnforcement.service");
 const { reserveListingStock } = require("../shared/services/inventory.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
@@ -433,7 +435,7 @@ exports.bulkReserve = async (req, res) => {
   try {
     await client.query("BEGIN");
     await ensureReservationPaymentContextSchema(client);
-    const policy = await getReservationPolicy({
+    const policy = await getTrustEnforcementPolicy({
       client,
       userId: req.user.id,
       role: "ngo",
@@ -706,7 +708,7 @@ exports.previewBulkReserve = async (req, res) => {
   }
 
   try {
-    const policy = await getReservationPolicy({
+    const policy = await getTrustEnforcementPolicy({
       userId: req.user.id,
       role: "ngo",
     });
@@ -1286,7 +1288,7 @@ exports.acceptNGORequest = async (req, res) => {
     const ngoId = ngoResult.rows[0].id;
     await ensureReservationPaymentContextSchema(client);
 
-    const policy = await getReservationPolicy({
+    const policy = await getTrustEnforcementPolicy({
       client,
       userId: req.user.id,
       role: "ngo",

@@ -1,7 +1,9 @@
 const pool = require("../config/db");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const { providerDisplaySelect } = require("./providerDisplay.service");
-const { recordViolation } = require("./restriction.service");
+const {
+  recordProviderReportValidated,
+} = require("./trustEnforcement.service");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
 const {
@@ -186,12 +188,9 @@ async function validateProviderReport({ client = pool, reportId, adminId }) {
   const report = reportResult.rows[0];
   if (!report) return null;
 
-  await recordViolation({
+  await recordProviderReportValidated({
     client,
-    userId: report.provider_id,
-    role: "provider",
-    reservationId: report.reservation_id,
-    reason: `Validated provider report: ${report.reason}`,
+    report,
   });
 
   return report;

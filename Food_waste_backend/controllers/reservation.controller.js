@@ -12,7 +12,10 @@ const {
   cancelPayment,
   refundReliabilityDeposit,
 } = require("../shared/services/payment.service");
-const { getReservationPolicy } = require("../shared/services/restriction.service");
+const {
+  getTrustEnforcementPolicy,
+  recordReservationLifecycleTrustEvents,
+} = require("../shared/services/trustEnforcement.service");
 const {
   reserveListingStock,
 } = require("../shared/services/inventory.service");
@@ -20,7 +23,6 @@ const {
   lockReservationGraph,
   restoreReservationStockIfHeld,
 } = require("../shared/services/reservationConsistency.service");
-const { applyRecovery } = require("../shared/services/penalty.service");
 const { createProviderReport } = require("../shared/services/moderation.service");
 const {
   blockingReservationWhere,
@@ -238,7 +240,7 @@ exports.createReservation = async (req, res) => {
         await ensureListingNotPreviouslyReserved(client, req.user.id, listing_id);
 
         const foodAmount = Number(food.price) * quantityValue;
-        const policy = await getReservationPolicy({
+        const policy = await getTrustEnforcementPolicy({
           client,
           userId: req.user.id,
           role: req.user.role,
@@ -988,6 +990,11 @@ exports.cancelReservation = async (req, res) => {
         });
       }
 
+      await recordReservationLifecycleTrustEvents({
+        client,
+        reservationId: reservation.id,
+      });
+
       await client.query("COMMIT");
       committed = true;
 
@@ -1114,6 +1121,11 @@ exports.cancelReservation = async (req, res) => {
           : "reservation_cancelled",
       });
     }
+
+    await recordReservationLifecycleTrustEvents({
+      client,
+      reservationId: reservation.id,
+    });
 
     cancelledReservation = reservation;
     await client.query("COMMIT");
@@ -1251,10 +1263,9 @@ exports.markAsPickedUp = async (req, res) => {
     };
 
     if (!isNGOPickup) {
-      await applyRecovery({
+      await recordReservationLifecycleTrustEvents({
         client,
-        userId: reservation.user_id,
-        role: "user",
+        reservationId: updatedReservation.id,
       });
     }
 
@@ -1396,7 +1407,7 @@ exports.previewReservation = async (req, res) => {
     }
 
     const foodAmount = Number(food.price) * quantityValue;
-    const policy = await getReservationPolicy({
+    const policy = await getTrustEnforcementPolicy({
       userId: req.user.id,
       role: req.user.role,
       foodCost: foodAmount,

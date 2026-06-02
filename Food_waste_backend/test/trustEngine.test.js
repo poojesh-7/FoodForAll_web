@@ -197,7 +197,7 @@ test("operational projection recommends deposit escalation at level 2", () => {
   assert.equal(projection.projected_restriction_level, 2);
   assert.equal(projection.projected_deposit_multiplier, 1.5);
   assert.equal(projection.projected_actions.refundable_deposit_recommended, true);
-  assert.equal(projection.projected_actions.enforcement_active, false);
+  assert.equal(projection.projected_actions.enforcement_active, true);
 });
 
 test("expired unsold listings emit analytics-only provider trust events", () => {
@@ -319,6 +319,32 @@ test("consecutive successful completions reduce passive penalties", () => {
   assert.equal(projection.penalty_level, 0);
   assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.recovery_progress, 100);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 1);
+});
+
+test("verified good behavior participates in deterministic recovery", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "verified_good_behavior", {
+      score_delta: 2,
+      completion_delta: 1,
+    }, "2026-01-02T00:00:00.000Z"),
+    createProjectionEvent(3, "verified_good_behavior", {
+      score_delta: 2,
+      completion_delta: 1,
+    }, "2026-01-03T00:00:00.000Z"),
+    createProjectionEvent(4, "verified_good_behavior", {
+      score_delta: 2,
+      completion_delta: 1,
+    }, "2026-01-04T00:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.penalty_level, 1);
+  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.projected_deposit_multiplier, 1);
   assert.equal(projection.recovery_state.recovery_credit_this_event, 1);
 });
 

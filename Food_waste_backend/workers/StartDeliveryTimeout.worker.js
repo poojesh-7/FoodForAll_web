@@ -13,8 +13,10 @@ const {
   publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
-const { applyPenalty } = require("../shared/services/penalty.service");
 const { retainReliabilityDeposit } = require("../shared/services/payment.service");
+const {
+  recordReservationLifecycleTrustEvents,
+} = require("../shared/services/trustEnforcement.service");
 
 
 /*
@@ -46,10 +48,8 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
     [volunteerId]
   );
 
-  await applyPenalty({
-    client,
-    userId: volunteerId,
-    role: "volunteer",
+  logger.security("Volunteer delivery timeout recorded", {
+    volunteerId,
     reservationId,
     reason,
   });
@@ -122,6 +122,10 @@ const deliveryTimeoutWorker = new Worker(
         reservationId,
         "Volunteer picked food but did not deliver"
       );
+      await recordReservationLifecycleTrustEvents({
+        client,
+        reservationId,
+      });
       await retainReliabilityDeposit(client, reservationId, {
         reservation: r,
         terminalReason: "volunteer_delivery_failed",

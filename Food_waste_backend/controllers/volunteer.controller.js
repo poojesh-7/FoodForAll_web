@@ -3,8 +3,10 @@ const pickupQueue = require("../queues/pickup.queue");
 const deliveryQueue = require("../queues/delivery.queue");
 const refundQueue = require("../queues/refund.queue");
 const notificationQueue = require("../queues/notification.queue");
-const { applyRecovery } = require("../shared/services/penalty.service");
 const { refundReliabilityDeposit } = require("../shared/services/payment.service");
+const {
+  recordReservationLifecycleTrustEvents,
+} = require("../shared/services/trustEnforcement.service");
 const {
   publishReservationUpdated,
   publishTaskAvailabilityUpdated,
@@ -808,16 +810,9 @@ exports.completeTask = async (req, res) => {
       [id],
     );
 
-    await applyRecovery({
+    await recordReservationLifecycleTrustEvents({
       client,
-      userId: reservation.user_id,
-      role: "ngo",
-    });
-
-    await applyRecovery({
-      client,
-      userId: volunteerId,
-      role: "volunteer",
+      reservationId: reservation.id,
     });
 
     /*

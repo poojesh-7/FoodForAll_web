@@ -444,7 +444,7 @@ function calculateOperationalProjection(state, event, effect, context) {
     riskCategory,
     recoveryProgress,
     projectedActions: {
-      enforcement_active: false,
+      enforcement_active: true,
       restriction_level: level,
       restriction_label: riskCategory,
       warning_recommended: level >= 1,
@@ -594,7 +594,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     projected_deposit_multiplier: next.projected_deposit_multiplier,
     projected_cooldown_until: isoOrNull(next.projected_cooldown_until),
     operational_only: true,
-    enforcement_active: false,
+    enforcement_active: true,
   };
 
   return next;
@@ -814,8 +814,8 @@ async function upsertOperationalRestriction(client, event, projection) {
       projection.subject_id,
       projection.projected_cooldown_until,
       JSON.stringify({
-        passive: true,
-        enforcement_active: false,
+        passive: false,
+        enforcement_active: true,
         risk_category: projection.risk_category,
         projected_actions: projection.projected_actions,
         recovery_state: projection.recovery_state,

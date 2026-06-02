@@ -7,8 +7,10 @@ const { workerOptions } = require("../shared/utils/queueOptions");
 const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 
 const notificationQueue = require("../queues/notification.queue");
-const { applyPenalty } = require("../shared/services/penalty.service");
 const { retainReliabilityDeposit } = require("../shared/services/payment.service");
+const {
+  recordReservationLifecycleTrustEvents,
+} = require("../shared/services/trustEnforcement.service");
 const { restoreListingStock } = require("../shared/services/inventory.service");
 const {
   publishListingUpdated,
@@ -111,14 +113,9 @@ const expiryWorker = new Worker(
           continue;
         }
 
-        const role = reservation.pickup_type === "ngo" ? "ngo" : "user";
-        await applyPenalty({
+        await recordReservationLifecycleTrustEvents({
           client,
-          userId: reservation.user_id,
-          role,
           reservationId: reservation.id,
-          reason: "Food not picked up before pickup window ended",
-          foodCost: Number(reservation.price || 0) * Number(reservation.quantity_reserved || 0),
         });
         await retainReliabilityDeposit(client, reservation.id, {
           reservation,

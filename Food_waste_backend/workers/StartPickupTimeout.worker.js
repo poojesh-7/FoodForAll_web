@@ -14,8 +14,10 @@ const {
   publishTaskAvailabilityUpdated,
   publishVolunteerUpdated,
 } = require("../shared/services/realtime.service");
-const { applyPenalty } = require("../shared/services/penalty.service");
 const { retainReliabilityDeposit } = require("../shared/services/payment.service");
+const {
+  recordReservationLifecycleTrustEvents,
+} = require("../shared/services/trustEnforcement.service");
 const {
   lockReservationGraph,
   restoreReservationStockIfHeld,
@@ -50,10 +52,8 @@ async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
     [volunteerId]
   );
 
-  await applyPenalty({
-    client,
-    userId: volunteerId,
-    role: "volunteer",
+  logger.security("Volunteer pickup timeout recorded", {
+    volunteerId,
     reservationId,
     reason,
   });
@@ -127,6 +127,10 @@ const pickupTimeoutWorker = new Worker(
         reservationId,
         "Volunteer failed to reach provider"
       );
+      await recordReservationLifecycleTrustEvents({
+        client,
+        reservationId,
+      });
       await retainReliabilityDeposit(client, reservationId, {
         reservation: r,
         terminalReason: "volunteer_pickup_failed",

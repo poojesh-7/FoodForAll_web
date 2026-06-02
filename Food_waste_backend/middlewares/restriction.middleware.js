@@ -1,4 +1,6 @@
-const { getReservationPolicy } = require("../shared/services/restriction.service");
+const {
+  getTrustEnforcementPolicy,
+} = require("../shared/services/trustEnforcement.service");
 
 function policyError(policy, noun) {
   if (policy.bannedUntil) {
@@ -12,7 +14,7 @@ function policyError(policy, noun) {
 
 async function attachPolicy(req, res, next, noun, allowed) {
   try {
-    const policy = await getReservationPolicy({
+    const policy = await getTrustEnforcementPolicy({
       userId: req.user.id,
       role: req.user.role,
     });

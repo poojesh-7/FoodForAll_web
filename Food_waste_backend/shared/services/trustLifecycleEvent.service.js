@@ -32,6 +32,7 @@ const TRUST_EVENT_RULES = {
   provider_listing_expired: { analytics_only: true, trust_impact: "neutral" },
   provider_report_validated: { score_delta: -15, failure_delta: 1 },
   provider_successful_fulfillment: { score_delta: 2, fulfillment_delta: 1 },
+  verified_good_behavior: { score_delta: 2, completion_delta: 1 },
 
   payment_timeout: { timeout_delta: 1 },
   payment_reconciled: {},

@@ -332,10 +332,14 @@ function buildReplayDiagnostics({ events, storedProjection, subjectType, subject
 }
 
 function previewFromScore(score) {
+  const riskState = score?.risk_state || {};
+  const recoveryState = score?.recovery_state || {};
   return {
     restriction: {
       level: Number(score?.projected_restriction_level ?? score?.restriction_level ?? 0),
       label: score?.risk_category || "normal",
+      triggerSource: riskState.restriction_trigger_source || null,
+      triggerSources: riskState.restriction_trigger_sources || [],
       enforcementActive: false,
     },
     cooldown: {
@@ -344,6 +348,16 @@ function previewFromScore(score) {
     },
     deposit: {
       multiplier: Number(score?.projected_deposit_multiplier ?? score?.deposit_multiplier ?? 1),
+    },
+    recovery: {
+      requirements:
+        riskState.recovery_requirements ||
+        recoveryState.recovery_requirements ||
+        {},
+      blockedActorStatus:
+        riskState.blocked_actor_recovery_status ||
+        recoveryState.blocked_actor_recovery_status ||
+        {},
     },
   };
 }
@@ -561,7 +575,7 @@ async function getTrustAnalytics(options = {}) {
       SELECT subject_type, subject_id, trust_score, penalty_level, risk_category,
              projected_restriction_level, projected_cooldown_until,
              projected_deposit_multiplier, failure_streak, success_streak,
-             last_failure_at, last_success_at, updated_at
+             last_failure_at, last_success_at, recovery_state, risk_state, updated_at
       FROM trust_scores ts
       WHERE ${scoreFilter}
       ORDER BY projected_restriction_level DESC, penalty_level DESC,

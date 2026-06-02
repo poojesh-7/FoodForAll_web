@@ -137,7 +137,7 @@ test("trust enforcement blocks manual-review restriction levels", async () => {
   );
 });
 
-test("trust enforcement blocks high-risk volunteers from task access", async () => {
+test("trust enforcement keeps level 4 volunteer task access recoverable", async () => {
   const client = createPolicyClient({
     subject_type: "volunteer",
     subject_id: VOLUNTEER_ID,
@@ -153,10 +153,37 @@ test("trust enforcement blocks high-risk volunteers from task access", async () 
     role: "volunteer",
   });
 
+  assert.equal(policy.canTakeTask, true);
+  assert.equal(policy.canReserve, true);
+});
+
+test("trust enforcement blocks critical volunteers from task access", async () => {
+  const client = createPolicyClient({
+    subject_type: "volunteer",
+    subject_id: VOLUNTEER_ID,
+    trust_score: 40,
+    penalty_level: 14,
+    projected_restriction_level: 5,
+    projected_deposit_multiplier: 3,
+    risk_state: {
+      restriction_trigger_source: "penalty",
+      blocked_actor_recovery_status: {
+        deterministic_recovery_route: "verified_good_behavior",
+      },
+    },
+  });
+
+  const policy = await getTrustEnforcementPolicy({
+    client,
+    userId: VOLUNTEER_ID,
+    role: "volunteer",
+  });
+
   assert.equal(policy.canTakeTask, false);
+  assert.equal(policy.blockedActorRecoveryStatus.deterministic_recovery_route, "verified_good_behavior");
   assert.throws(
     () => assertTrustActionAllowed(policy, "take_task"),
-    /Volunteer task access is temporarily restricted/
+    /Manual trust review required/
   );
 });
 

@@ -9,6 +9,8 @@ const {
   applyTrustEventProjection,
   buildTrustEffect,
   buildTrustProjectionFromEvents,
+  calculateRestrictionLevel,
+  RESTRICTION_THRESHOLDS,
   rebuildTrustProjectionForSubject,
 } = require("../shared/services/trustProjection.service");
 const {
@@ -162,7 +164,31 @@ test("buildTrustEffect normalizes passive projection deltas", () => {
   assert.equal(effect.activeUntil.toISOString(), "2026-01-02T00:00:00.000Z");
 });
 
-test("operational projection escalates passive restriction and cooldown recommendations", () => {
+test("balanced restriction thresholds require repeated normal failures", () => {
+  assert.deepEqual(
+    RESTRICTION_THRESHOLDS.map((threshold) => ({
+      level: threshold.level,
+      penaltyLevel: threshold.penaltyLevel,
+      scoreAtOrBelow: threshold.scoreAtOrBelow,
+      scoreBelow: threshold.scoreBelow,
+      failureStreak: threshold.failureStreak,
+    })),
+    [
+      { level: 5, penaltyLevel: 14, scoreAtOrBelow: 40, scoreBelow: undefined, failureStreak: 7 },
+      { level: 4, penaltyLevel: 9, scoreAtOrBelow: 55, scoreBelow: undefined, failureStreak: 5 },
+      { level: 3, penaltyLevel: 6, scoreAtOrBelow: 70, scoreBelow: undefined, failureStreak: 3 },
+      { level: 2, penaltyLevel: 4, scoreAtOrBelow: 80, scoreBelow: undefined, failureStreak: 2 },
+      { level: 1, penaltyLevel: 1, scoreAtOrBelow: undefined, scoreBelow: 95, failureStreak: null },
+    ]
+  );
+  assert.equal(calculateRestrictionLevel({ score: 90, penaltyLevel: 2, failureStreak: 1 }), 1);
+  assert.equal(calculateRestrictionLevel({ score: 80, penaltyLevel: 4, failureStreak: 2 }), 2);
+  assert.equal(calculateRestrictionLevel({ score: 70, penaltyLevel: 6, failureStreak: 3 }), 3);
+  assert.equal(calculateRestrictionLevel({ score: 50, penaltyLevel: 10, failureStreak: 5 }), 4);
+  assert.equal(calculateRestrictionLevel({ score: 40, penaltyLevel: 12, failureStreak: 6 }), 5);
+});
+
+test("operational projection escalates cooldown after three failures", () => {
   const projection = buildTrustProjectionFromEvents([
     createProjectionEvent(1, "user_pickup_failed", {
       score_delta: -10,
@@ -173,16 +199,52 @@ test("operational projection escalates passive restriction and cooldown recommen
       failure_delta: 1,
       timeout_delta: 1,
     }, "2026-01-01T01:00:00.000Z"),
+    createProjectionEvent(3, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T02:00:00.000Z"),
   ]);
 
-  assert.equal(projection.trust_score, 85);
-  assert.equal(projection.penalty_level, 5);
+  assert.equal(projection.trust_score, 75);
+  assert.equal(projection.penalty_level, 7);
   assert.equal(projection.projected_restriction_level, 3);
   assert.equal(projection.projected_deposit_multiplier, 2);
   assert.equal(projection.projected_actions.cooldown_recommended, true);
+  assert.equal(projection.risk_state.restriction_trigger_source, "penalty");
   assert.equal(
     projection.projected_cooldown_until.toISOString(),
-    "2026-01-01T03:00:00.000Z"
+    "2026-01-01T14:00:00.000Z"
+  );
+});
+
+test("critical projections expose blocked actor recovery route", () => {
+  const events = [];
+  for (let index = 1; index <= 6; index += 1) {
+    events.push(
+      createProjectionEvent(index, "user_pickup_failed", {
+        score_delta: -10,
+        failure_delta: 1,
+      }, `2026-01-0${index}T00:00:00.000Z`)
+    );
+  }
+
+  const projection = buildTrustProjectionFromEvents(events);
+
+  assert.equal(projection.trust_score, 40);
+  assert.equal(projection.penalty_level, 12);
+  assert.equal(projection.projected_restriction_level, 5);
+  assert.ok(projection.risk_state.restriction_trigger_sources.includes("score"));
+  assert.equal(
+    projection.recovery_state.blocked_actor_recovery_status.deterministic_recovery_route,
+    "verified_good_behavior"
+  );
+  assert.equal(
+    projection.recovery_state.recovery_requirements.score_points_to_clear_current_score_trigger,
+    1
+  );
+  assert.equal(
+    projection.recovery_state.recovery_requirements.successes_to_clear_penalty,
+    18
   );
 });
 
@@ -192,6 +254,10 @@ test("operational projection recommends deposit escalation at level 2", () => {
       score_delta: -10,
       failure_delta: 1,
     }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_pickup_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T01:00:00.000Z"),
   ]);
 
   assert.equal(projection.projected_restriction_level, 2);
@@ -292,8 +358,8 @@ test("only actionable provider failures affect provider projections", () => {
   assert.equal(projection.penalty_level, 2);
   assert.equal(projection.timeout_count, 0);
   assert.equal(projection.failure_count, 1);
-  assert.equal(projection.projected_restriction_level, 2);
-  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.projected_deposit_multiplier, 1);
   assert.equal(projection.projected_actions.cooldown_recommended, false);
 });
 
@@ -305,7 +371,7 @@ test("consecutive successful completions reduce passive penalties", () => {
     }, "2026-01-01T00:00:00.000Z"),
   ];
 
-  for (let index = 2; index <= 7; index += 1) {
+  for (let index = 2; index <= 4; index += 1) {
     events.push(
       createProjectionEvent(index, "user_pickup_completed", {
         score_delta: 3,
@@ -319,7 +385,8 @@ test("consecutive successful completions reduce passive penalties", () => {
   assert.equal(projection.penalty_level, 0);
   assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.recovery_progress, 100);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 1);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.recovery_state.recovery_requirements.successes_to_clear_penalty, 0);
 });
 
 test("verified good behavior participates in deterministic recovery", () => {
@@ -342,10 +409,10 @@ test("verified good behavior participates in deterministic recovery", () => {
     }, "2026-01-04T00:00:00.000Z"),
   ]);
 
-  assert.equal(projection.penalty_level, 1);
-  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.projected_deposit_multiplier, 1);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 1);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
 });
 
 test("stable successful behavior applies passive decay by event time", () => {
@@ -393,7 +460,9 @@ test("same-provider repeated pickup gains decay by configured diversity policy",
     assert.equal(projection.score_breakdown.trust_quality.provider_repeat_count, 3);
     assert.equal(projection.score_breakdown.trust_quality.provider_decay_factor, 0);
     assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
-    assert.equal(projection.trust_score, 96.5);
+    assert.equal(projection.trust_score, 94.5);
+    assert.equal(projection.penalty_level, 2);
+    assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   });
 });
 
@@ -572,8 +641,8 @@ test("provider projection rebuild replays trust_events with neutral listing expi
   assert.equal(result.score.trust_score, 85);
   assert.equal(result.score.penalty_level, 2);
   assert.equal(result.score.timeout_count, 0);
-  assert.equal(result.score.projected_restriction_level, 2);
-  assert.equal(result.score.projected_deposit_multiplier, 1.5);
+  assert.equal(result.score.projected_restriction_level, 1);
+  assert.equal(result.score.projected_deposit_multiplier, 1);
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
 

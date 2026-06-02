@@ -6,9 +6,18 @@ const {
 } = require("./metrics.service");
 
 const RECOVERY_STREAK_TARGET = 3;
+const RECOVERY_PENALTY_CREDIT = 2;
+const RECOVERY_SCORE_RECOVERY_PER_PENALTY = 2;
 const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const RESTRICTION_THRESHOLDS = [
+  { level: 5, penaltyLevel: 14, scoreAtOrBelow: 40, failureStreak: 7 },
+  { level: 4, penaltyLevel: 9, scoreAtOrBelow: 55, failureStreak: 5 },
+  { level: 3, penaltyLevel: 6, scoreAtOrBelow: 70, failureStreak: 3 },
+  { level: 2, penaltyLevel: 4, scoreAtOrBelow: 80, failureStreak: 2 },
+  { level: 1, penaltyLevel: 1, scoreBelow: 95, failureStreak: null },
+];
 const ANALYTICS_ONLY_EVENT_TYPES = new Set([
   "provider_listing_expired",
 ]);
@@ -249,6 +258,19 @@ function isSuccessEffect(effect) {
   );
 }
 
+function isQualifyingRecoverySuccess(effect, trustQuality) {
+  if (effect.analyticsOnly || effect.gainSuppressionReason) return false;
+
+  const rawScoreDelta = Number(trustQuality.raw_score_delta || effect.rawScoreDelta || 0);
+  const appliedScoreDelta = Number(trustQuality.applied_score_delta || 0);
+  if (rawScoreDelta > 0 && appliedScoreDelta <= 0) return false;
+
+  return isSuccessEffect({
+    ...effect,
+    scoreDelta: appliedScoreDelta,
+  });
+}
+
 function isNegativeEffect(effect) {
   return (
     effect.failureDelta > 0 ||
@@ -349,6 +371,124 @@ function penaltyFromEffect(effect) {
     Math.max(0, effect.cancellationDelta);
 }
 
+function scoreTriggersThreshold(score, threshold) {
+  if (threshold.scoreBelow !== undefined) return score < threshold.scoreBelow;
+  return score <= threshold.scoreAtOrBelow;
+}
+
+function thresholdForLevel(level) {
+  return RESTRICTION_THRESHOLDS.find((threshold) => threshold.level === level) || null;
+}
+
+function restrictionTriggerSources({ score, penaltyLevel, failureStreak }, level) {
+  const threshold = thresholdForLevel(level);
+  if (!threshold) return [];
+
+  const sources = [];
+  if (penaltyLevel >= threshold.penaltyLevel) sources.push("penalty");
+  if (scoreTriggersThreshold(score, threshold)) sources.push("score");
+  if (
+    threshold.failureStreak !== null &&
+    failureStreak >= threshold.failureStreak
+  ) {
+    sources.push("streak");
+  }
+  return sources;
+}
+
+function penaltyPointsToDropBelowLevel(penaltyLevel, level) {
+  const threshold = thresholdForLevel(level);
+  if (!threshold) return 0;
+  return Math.max(0, penaltyLevel - (threshold.penaltyLevel - 1));
+}
+
+function scorePointsToClearLevelTrigger(score, level) {
+  const threshold = thresholdForLevel(level);
+  if (!threshold || !scoreTriggersThreshold(score, threshold)) return 0;
+
+  const targetScore =
+    threshold.scoreBelow !== undefined
+      ? threshold.scoreBelow
+      : threshold.scoreAtOrBelow + 1;
+  return Math.round(Math.max(0, targetScore - score) * 100) / 100;
+}
+
+function recoveryCyclesForPenaltyPoints(penaltyPoints) {
+  return Math.ceil(Math.max(0, penaltyPoints) / RECOVERY_PENALTY_CREDIT);
+}
+
+function successesNeededForRecoveryCycles(cycles, successStreak) {
+  if (cycles <= 0) return 0;
+  const successesToNext =
+    successStreak > 0
+      ? Math.max(0, RECOVERY_STREAK_TARGET - successStreak)
+      : RECOVERY_STREAK_TARGET;
+  return successesToNext + Math.max(0, cycles - 1) * RECOVERY_STREAK_TARGET;
+}
+
+function buildRecoveryRequirements(state, level) {
+  const penaltyPointsRemaining = Math.max(0, state.penalty_level);
+  const recoveryCyclesToClearPenalty = recoveryCyclesForPenaltyPoints(penaltyPointsRemaining);
+  const penaltyPointsToDropCurrentRestriction =
+    level > 0 ? penaltyPointsToDropBelowLevel(penaltyPointsRemaining, level) : 0;
+  const recoveryCyclesToDropCurrentRestriction =
+    recoveryCyclesForPenaltyPoints(penaltyPointsToDropCurrentRestriction);
+
+  return {
+    recovery_target: RECOVERY_STREAK_TARGET,
+    penalty_credit_per_target: RECOVERY_PENALTY_CREDIT,
+    score_recovery_per_penalty_credit: RECOVERY_SCORE_RECOVERY_PER_PENALTY,
+    penalty_points_remaining: penaltyPointsRemaining,
+    recovery_cycles_to_clear_penalty: recoveryCyclesToClearPenalty,
+    successes_to_next_recovery:
+      penaltyPointsRemaining === 0
+        ? 0
+        : successesNeededForRecoveryCycles(1, state.success_streak),
+    successes_to_clear_penalty: successesNeededForRecoveryCycles(
+      recoveryCyclesToClearPenalty,
+      state.success_streak
+    ),
+    penalty_points_to_drop_current_restriction: penaltyPointsToDropCurrentRestriction,
+    recovery_cycles_to_drop_current_restriction:
+      recoveryCyclesToDropCurrentRestriction,
+    successes_to_drop_current_restriction: successesNeededForRecoveryCycles(
+      recoveryCyclesToDropCurrentRestriction,
+      state.success_streak
+    ),
+    score_points_to_clear_current_score_trigger: scorePointsToClearLevelTrigger(
+      state.trust_score,
+      level
+    ),
+    failure_streak_clears_on_next_qualifying_success: state.failure_streak > 0,
+  };
+}
+
+function buildBlockedActorRecoveryStatus({ level, cooldownUntil, recoveryRequirements }) {
+  const levelBlocked = level >= 5;
+  const cooldownBlocked = Boolean(cooldownUntil);
+  const blocked = levelBlocked || cooldownBlocked;
+
+  return {
+    blocked,
+    blocked_by: levelBlocked
+      ? "restriction_level"
+      : cooldownBlocked
+        ? "cooldown"
+        : null,
+    manual_db_edit_required: false,
+    deterministic_recovery_route: levelBlocked
+      ? "verified_good_behavior"
+      : "qualifying_positive_lifecycle_event",
+    requires_admin_recovery_event: levelBlocked,
+    can_recover_through_lifecycle_action: !levelBlocked,
+    recovery_event_type: levelBlocked ? "verified_good_behavior" : null,
+    successes_to_next_recovery: recoveryRequirements.successes_to_next_recovery,
+    successes_to_drop_current_restriction:
+      recoveryRequirements.successes_to_drop_current_restriction,
+    successes_to_clear_penalty: recoveryRequirements.successes_to_clear_penalty,
+  };
+}
+
 function cooldownDurationMs(level, failureStreak) {
   if (level < 3) return 0;
   if (level === 3) return failureStreak >= 3 ? 12 * HOUR_MS : 2 * HOUR_MS;
@@ -368,11 +508,18 @@ function riskCategoryForLevel(level) {
 }
 
 function calculateRestrictionLevel({ score, penaltyLevel, failureStreak }) {
-  if (penaltyLevel >= 8 || score <= 45 || failureStreak >= 5) return 5;
-  if (penaltyLevel >= 6 || score <= 55 || failureStreak >= 4) return 4;
-  if (penaltyLevel >= 4 || score <= 70 || failureStreak >= 3) return 3;
-  if (penaltyLevel >= 2 || score <= 85 || failureStreak >= 2) return 2;
-  if (penaltyLevel >= 1 || score < 95) return 1;
+  for (const threshold of RESTRICTION_THRESHOLDS) {
+    if (
+      penaltyLevel >= threshold.penaltyLevel ||
+      scoreTriggersThreshold(score, threshold) ||
+      (
+        threshold.failureStreak !== null &&
+        failureStreak >= threshold.failureStreak
+      )
+    ) {
+      return threshold.level;
+    }
+  }
   return 0;
 }
 
@@ -417,16 +564,25 @@ function calculateOperationalProjection(state, event, effect, context) {
     state.manual_restriction_floor || 0,
     effect.explicitRestrictionLevel || 0
   );
-  const level = Math.max(
-    levelFloor,
-    calculateRestrictionLevel({
-      score: state.trust_score,
-      penaltyLevel: state.penalty_level,
-      failureStreak: state.failure_streak,
-    })
-  );
+  const restrictionMetrics = {
+    score: state.trust_score,
+    penaltyLevel: state.penalty_level,
+    failureStreak: state.failure_streak,
+  };
+  const calculatedLevel = calculateRestrictionLevel(restrictionMetrics);
+  const level = Math.max(levelFloor, calculatedLevel);
+  const triggerSources =
+    levelFloor > calculatedLevel
+      ? ["manual"]
+      : restrictionTriggerSources(restrictionMetrics, level);
+  const recoveryRequirements = buildRecoveryRequirements(state, level);
   const durationMs = cooldownDurationMs(level, state.failure_streak);
   const cooldownUntil = durationMs ? addMs(context.eventTime, durationMs) : null;
+  const blockedActorRecoveryStatus = buildBlockedActorRecoveryStatus({
+    level,
+    cooldownUntil: effect.cooldownUntil || cooldownUntil,
+    recoveryRequirements,
+  });
   const depositMultiplier = Math.max(
     depositMultiplierForLevel(level),
     1 + Math.max(0, effect.depositMultiplierDelta)
@@ -454,7 +610,14 @@ function calculateOperationalProjection(state, event, effect, context) {
       manual_review_recommended: level >= 5,
       projected_deposit_multiplier: depositMultiplier,
       projected_cooldown_until: isoOrNull(effect.cooldownUntil || cooldownUntil),
+      restriction_trigger_source: triggerSources[0] || "none",
+      restriction_trigger_sources: triggerSources,
+      recovery_requirements: recoveryRequirements,
+      blocked_actor_recovery_status: blockedActorRecoveryStatus,
     },
+    triggerSources,
+    recoveryRequirements,
+    blockedActorRecoveryStatus,
   };
 }
 
@@ -466,11 +629,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
   const currentEventTime = eventTime(event);
   const trustQuality = applyTrustGainQuality(event, effect, context);
   const effectiveScoreDelta = trustQuality.applied_score_delta;
-  const effectiveEffect = {
-    ...effect,
-    scoreDelta: effectiveScoreDelta,
-  };
-  const success = isSuccessEffect(effectiveEffect);
+  const success = isQualifyingRecoverySuccess(effect, trustQuality);
   const negative = isNegativeEffect(effect);
   const previousLastEvent = parseDateOrNull(current.last_event_at);
   const decayIntervalMs = Math.max(1, DECAY_INTERVAL_DAYS) * DAY_MS;
@@ -481,27 +640,34 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
   const decayCredit = Math.min(Math.max(0, stableDecay), current.penalty_level);
   const decayScoreRecovery = decayCredit * 2;
   const penaltyAdded = penaltyFromEffect(effect);
-
-  let successStreak = success && !negative ? current.success_streak + 1 : 0;
-  const failureStreak = negative ? current.failure_streak + 1 : 0;
-  const recoveryCredit =
-    success && !negative && successStreak >= RECOVERY_STREAK_TARGET
-      ? Math.floor(successStreak / RECOVERY_STREAK_TARGET)
-      : 0;
-  if (recoveryCredit > 0) {
-    successStreak %= RECOVERY_STREAK_TARGET;
-  }
-
-  const penaltyLevel = Math.max(
+  const penaltyBeforeRecovery = Math.max(
     0,
     current.penalty_level +
       penaltyAdded +
       Math.max(0, effect.restrictionLevelDelta) -
-      recoveryCredit -
       decayCredit
   );
+
+  let successStreak = success && !negative ? current.success_streak + 1 : 0;
+  const failureStreak = negative ? current.failure_streak + 1 : 0;
+  const recoveryCycles =
+    success && !negative && penaltyBeforeRecovery > 0 && successStreak >= RECOVERY_STREAK_TARGET
+      ? Math.floor(successStreak / RECOVERY_STREAK_TARGET)
+      : 0;
+  const recoveryCredit = Math.min(
+    penaltyBeforeRecovery,
+    recoveryCycles * RECOVERY_PENALTY_CREDIT
+  );
+  if (recoveryCycles > 0) {
+    successStreak %= RECOVERY_STREAK_TARGET;
+  }
+
+  const penaltyLevel = Math.max(0, penaltyBeforeRecovery - recoveryCredit);
   const projectedScore = clamp(
-    current.trust_score + effectiveScoreDelta + recoveryCredit * 2 + decayScoreRecovery,
+    current.trust_score +
+      effectiveScoreDelta +
+      recoveryCredit * RECOVERY_SCORE_RECOVERY_PER_PENALTY +
+      decayScoreRecovery,
     0,
     100
   );
@@ -557,8 +723,11 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     previous_score: current.trust_score,
     projected_score: projectedScore,
     penalty_added: penaltyAdded,
+    penalty_before_recovery: penaltyBeforeRecovery,
     recovery_credit: recoveryCredit,
     decay_credit: decayCredit,
+    restriction_trigger_source: projection.triggerSources[0] || "none",
+    restriction_trigger_sources: projection.triggerSources,
     counters: {
       failures: next.failure_count,
       cancellations: next.cancellation_count,
@@ -572,12 +741,16 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     success_streak: next.success_streak,
     failure_streak: next.failure_streak,
     recovery_target: RECOVERY_STREAK_TARGET,
+    penalty_credit_per_target: RECOVERY_PENALTY_CREDIT,
+    score_recovery_per_penalty_credit: RECOVERY_SCORE_RECOVERY_PER_PENALTY,
     successes_to_next_recovery:
       next.penalty_level === 0
         ? 0
         : Math.max(0, RECOVERY_STREAK_TARGET - next.success_streak),
     recovery_credit_this_event: recoveryCredit,
     recovery_progress: next.recovery_progress,
+    recovery_requirements: projection.recoveryRequirements,
+    blocked_actor_recovery_status: projection.blockedActorRecoveryStatus,
     last_success_at: isoOrNull(next.last_success_at),
     last_failure_at: isoOrNull(next.last_failure_at),
   };
@@ -593,6 +766,10 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     projected_restriction_level: next.projected_restriction_level,
     projected_deposit_multiplier: next.projected_deposit_multiplier,
     projected_cooldown_until: isoOrNull(next.projected_cooldown_until),
+    restriction_trigger_source: projection.triggerSources[0] || "none",
+    restriction_trigger_sources: projection.triggerSources,
+    recovery_requirements: projection.recoveryRequirements,
+    blocked_actor_recovery_status: projection.blockedActorRecoveryStatus,
     operational_only: true,
     enforcement_active: true,
   };
@@ -820,6 +997,7 @@ async function upsertOperationalRestriction(client, event, projection) {
         projected_actions: projection.projected_actions,
         recovery_state: projection.recovery_state,
         decay_state: projection.decay_state,
+        risk_state: projection.risk_state,
         score_breakdown: projection.score_breakdown,
       }),
     ],
@@ -970,4 +1148,5 @@ module.exports = {
   getTrustFarmingConfig,
   projectOperationalTrustState,
   rebuildTrustProjectionForSubject,
+  RESTRICTION_THRESHOLDS,
 };

@@ -24,7 +24,7 @@ const SUBJECT_TYPE_BY_ROLE = {
 };
 
 const RESERVATION_BLOCK_LEVEL = 5;
-const VOLUNTEER_TASK_BLOCK_LEVEL = 4;
+const VOLUNTEER_TASK_BLOCK_LEVEL = 5;
 const PROVIDER_LISTING_BLOCK_LEVEL = 5;
 const DEPOSIT_LEVEL = 2;
 
@@ -61,6 +61,8 @@ function defaultTrustScore(subjectType, subjectId) {
     risk_category: "normal",
     recovery_progress: 100,
     recovery_state: {},
+    risk_state: {},
+    score_breakdown: {},
     projected_actions: {},
     updated_at: null,
   };
@@ -86,6 +88,8 @@ function normalizeTrustScore(row, subjectType, subjectId) {
     risk_category: row.risk_category || "normal",
     recovery_progress: asNumber(row.recovery_progress, 100),
     recovery_state: row.recovery_state || {},
+    risk_state: row.risk_state || {},
+    score_breakdown: row.score_breakdown || {},
     projected_actions: row.projected_actions || {},
     updated_at: row.updated_at || null,
   };
@@ -98,7 +102,7 @@ async function loadTrustProjection({ client = pool, subjectType, subjectId }) {
            restriction_level, cooldown_until, deposit_multiplier,
            projected_restriction_level, projected_cooldown_until,
            projected_deposit_multiplier, risk_category, recovery_progress,
-           recovery_state, projected_actions, updated_at
+           recovery_state, risk_state, score_breakdown, projected_actions, updated_at
     FROM trust_scores
     WHERE subject_type=$1
     AND subject_id=$2
@@ -195,6 +199,22 @@ function buildTrustEnforcementPolicy({
     riskCategory: projection.risk_category || "normal",
     recoveryProgress: asNumber(projection.recovery_progress, 100),
     recoveryState: projection.recovery_state || {},
+    riskState: projection.risk_state || {},
+    scoreBreakdown: projection.score_breakdown || {},
+    restrictionTriggerSource:
+      projection.risk_state?.restriction_trigger_source ||
+      projection.projected_actions?.restriction_trigger_source ||
+      null,
+    recoveryRequirements:
+      projection.risk_state?.recovery_requirements ||
+      projection.recovery_state?.recovery_requirements ||
+      projection.projected_actions?.recovery_requirements ||
+      {},
+    blockedActorRecoveryStatus:
+      projection.risk_state?.blocked_actor_recovery_status ||
+      projection.recovery_state?.blocked_actor_recovery_status ||
+      projection.projected_actions?.blocked_actor_recovery_status ||
+      {},
     projectedActions: {
       ...(projection.projected_actions || {}),
       enforcement_active: true,

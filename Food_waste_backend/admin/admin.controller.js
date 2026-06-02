@@ -34,6 +34,9 @@ const {
   getTrustProjectionBreakdown,
 } = require("../shared/services/trustObservability.service");
 const {
+  recordVerifiedGoodBehavior,
+} = require("../shared/services/trustEnforcement.service");
+const {
   getAbuseAnalytics,
 } = require("../shared/services/abuseGuard.service");
 
@@ -578,6 +581,11 @@ function validateTrustSubjectParams(req, res) {
   return { subjectType, subjectId };
 }
 
+function compactAdminText(value, maxLength = 160) {
+  const normalized = String(value || "").trim();
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
 exports.getTrustSubject = async (req, res) => {
   const subject = validateTrustSubjectParams(req, res);
   if (!subject) return;
@@ -612,6 +620,72 @@ exports.getTrustSubjectEvents = async (req, res) => {
       subject,
     });
     res.status(err.statusCode || 500).json({ error: "Failed to fetch trust events" });
+  }
+};
+
+exports.recordTrustRecoveryCredit = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  const sourceType = compactAdminText(req.body?.sourceType || req.body?.source_type, 80) ||
+    "admin_trust_recovery";
+  const sourceId = compactAdminText(req.body?.sourceId || req.body?.source_id, 160);
+  const reason = compactAdminText(req.body?.reason, 500);
+
+  if (!sourceId) {
+    return res.status(400).json({ error: "Recovery source id is required" });
+  }
+
+  try {
+    const result = await recordVerifiedGoodBehavior({
+      subjectType: subject.subjectType,
+      subjectId: subject.subjectId,
+      sourceType,
+      sourceId,
+      metadata: {
+        recovery_route: "blocked_actor_recovery",
+        admin_id: req.user?.id || null,
+        reason,
+      },
+      enqueue: true,
+    });
+
+    logger.security("Admin recorded trust recovery credit", {
+      adminId: req.user?.id,
+      subject,
+      sourceType,
+      sourceId,
+      inserted: result.inserted,
+    });
+    void recordOperationalEvent({
+      category: "trust",
+      severity: "info",
+      eventName: "admin_trust_recovery_credit_recorded",
+      metadata: {
+        adminId: req.user?.id,
+        subject,
+        sourceType,
+        sourceId,
+        inserted: result.inserted,
+      },
+    });
+
+    res.status(result.inserted ? 201 : 200).json({
+      subject,
+      recoveryEvent: {
+        inserted: result.inserted,
+        event: result.event,
+      },
+    });
+  } catch (err) {
+    logger.error("Failed to record trust recovery credit", {
+      err,
+      adminId: req.user?.id,
+      subject,
+      sourceType,
+      sourceId,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to record trust recovery credit" });
   }
 };
 

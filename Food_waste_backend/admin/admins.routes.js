@@ -27,6 +27,11 @@ router.get("/trust/summary", adminCtrl.getTrustObservabilitySummary);
 router.get("/trust/events", adminCtrl.getRecentTrustEvents);
 router.get("/trust/analytics", adminCtrl.getTrustAnalytics);
 router.get("/trust/diagnostics", adminCtrl.getTrustDiagnostics);
+router.post(
+  "/trust/:subjectType/:subjectId/recovery-credit",
+  adminActionLimiter,
+  adminCtrl.recordTrustRecoveryCredit,
+);
 router.get("/trust/:subjectType/:subjectId/projection", adminCtrl.getTrustProjectionBreakdown);
 router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
 router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);

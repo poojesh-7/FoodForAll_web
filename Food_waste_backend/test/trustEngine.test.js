@@ -10,6 +10,8 @@ const {
   buildTrustEffect,
   buildTrustProjectionFromEvents,
   calculateRestrictionLevel,
+  getTrustFarmingConfig,
+  projectOperationalTrustState,
   RESTRICTION_THRESHOLDS,
   rebuildTrustProjectionForSubject,
 } = require("../shared/services/trustProjection.service");
@@ -620,9 +622,10 @@ test("same-provider repeated pickup gains decay by configured diversity policy",
     assert.equal(projection.score_breakdown.trust_quality.provider_repeat_count, 3);
     assert.equal(projection.score_breakdown.trust_quality.provider_decay_factor, 0);
     assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
-    assert.equal(projection.trust_score, 94.5);
-    assert.equal(projection.penalty_level, 2);
-    assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
+    assert.equal(projection.trust_score, 98.5);
+    assert.equal(projection.penalty_level, 0);
+    assert.equal(projection.success_streak, 0);
+    assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
   });
 });
 
@@ -665,11 +668,129 @@ test("free and zero-value reservations do not award positive trust gain", () => 
   ]);
 
   assert.equal(projection.trust_score, 90);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.success_streak, 1);
+  assert.equal(projection.recovery_progress, 33.33333333333333);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
+  assert.equal(projection.last_success_at.toISOString(), "2026-01-02T00:00:00.000Z");
   assert.equal(
     projection.score_breakdown.trust_quality.suppression_reason,
     "non_qualifying_source"
   );
   assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
+});
+
+test("T5.3.1 user pickups recover penalties independently of score gain suppression", () => {
+  withEnv({ TRUST_PROVIDER_REPEAT_DECAY: "1,0.5,0", TRUST_MAX_GAIN_PER_DAY: 10 }, () => {
+    const startingState = {
+      subject_type: "user",
+      subject_id: USER_ID,
+      trust_score: 82,
+      penalty_level: 5,
+      projected_restriction_level: 2,
+      restriction_level: 2,
+      projected_deposit_multiplier: 1.5,
+      deposit_multiplier: 1.5,
+      recovery_progress: 0,
+      success_streak: 0,
+      failure_streak: 0,
+    };
+
+    function projectPickups(count, metadataForIndex) {
+      let projection = { ...startingState };
+      const context = {
+        config: getTrustFarmingConfig(),
+        dailyPositiveGain: new Map(),
+        providerRepeatCounts: new Map(),
+      };
+
+      for (let index = 1; index <= count; index += 1) {
+        const event = createProjectionEvent(index, "user_pickup_completed", {
+          score_delta: 3,
+          completion_delta: 1,
+          metadata: metadataForIndex(index),
+        }, `2026-01-01T${String(index).padStart(2, "0")}:00:00.000Z`, {
+          subject_type: "user",
+          subject_id: USER_ID,
+        });
+        projection = projectOperationalTrustState(
+          projection,
+          event,
+          buildTrustEffect(event),
+          context
+        );
+      }
+
+      return projection;
+    }
+
+    const sameProvider = (index) => projectPickups(index, () => ({
+      provider_id: PROVIDER_ID,
+      food_amount: 100,
+    }));
+    const differentProviders = (index) => projectPickups(index, (eventIndex) => ({
+      provider_id: `provider-${eventIndex}`,
+      food_amount: 100,
+    }));
+    const zeroValue = (index) => projectPickups(index, (eventIndex) => ({
+      provider_id: `provider-${eventIndex}`,
+      food_amount: 0,
+    }));
+
+    const sameProviderAfter3 = sameProvider(3);
+    assert.equal(sameProviderAfter3.trust_score, 90.5);
+    assert.equal(sameProviderAfter3.penalty_level, 3);
+    assert.equal(sameProviderAfter3.projected_restriction_level, 1);
+    assert.equal(sameProviderAfter3.score_breakdown.trust_quality.applied_score_delta, 0);
+    assert.equal(sameProviderAfter3.score_breakdown.trust_quality.provider_decay_factor, 0);
+
+    const sameProviderAfter6 = sameProvider(6);
+    assert.equal(sameProviderAfter6.trust_score, 94.5);
+    assert.equal(sameProviderAfter6.penalty_level, 1);
+    assert.equal(sameProviderAfter6.projected_restriction_level, 1);
+
+    const sameProviderAfter9 = sameProvider(9);
+    assert.equal(sameProviderAfter9.trust_score, 96.5);
+    assert.equal(sameProviderAfter9.penalty_level, 0);
+    assert.equal(sameProviderAfter9.projected_restriction_level, 0);
+
+    const differentProvidersAfter3 = differentProviders(3);
+    assert.equal(differentProvidersAfter3.trust_score, 95);
+    assert.equal(differentProvidersAfter3.penalty_level, 3);
+    assert.equal(differentProvidersAfter3.projected_restriction_level, 1);
+
+    const differentProvidersAfter6 = differentProviders(6);
+    assert.equal(differentProvidersAfter6.trust_score, 100);
+    assert.equal(differentProvidersAfter6.penalty_level, 1);
+    assert.equal(differentProvidersAfter6.projected_restriction_level, 1);
+
+    const differentProvidersAfter9 = differentProviders(9);
+    assert.equal(differentProvidersAfter9.trust_score, 100);
+    assert.equal(differentProvidersAfter9.penalty_level, 0);
+    assert.equal(differentProvidersAfter9.projected_restriction_level, 0);
+    assert.equal(differentProvidersAfter9.score_breakdown.trust_quality.daily_cap_applied, true);
+    assert.equal(differentProvidersAfter9.score_breakdown.trust_quality.applied_score_delta, 0);
+
+    const zeroValueAfter3 = zeroValue(3);
+    assert.equal(zeroValueAfter3.trust_score, 86);
+    assert.equal(zeroValueAfter3.penalty_level, 3);
+    assert.equal(zeroValueAfter3.projected_restriction_level, 1);
+
+    const zeroValueAfter6 = zeroValue(6);
+    assert.equal(zeroValueAfter6.trust_score, 90);
+    assert.equal(zeroValueAfter6.penalty_level, 1);
+    assert.equal(zeroValueAfter6.projected_restriction_level, 1);
+
+    const zeroValueAfter9 = zeroValue(9);
+    assert.equal(zeroValueAfter9.trust_score, 92);
+    assert.equal(zeroValueAfter9.penalty_level, 0);
+    assert.equal(zeroValueAfter9.projected_restriction_level, 1);
+    assert.equal(
+      zeroValueAfter9.score_breakdown.trust_quality.suppression_reason,
+      "zero_value_reservation"
+    );
+    assert.equal(zeroValueAfter9.score_breakdown.trust_quality.applied_score_delta, 0);
+  });
 });
 
 test("free NGO rescue completions qualify for recovery without score gain", () => {

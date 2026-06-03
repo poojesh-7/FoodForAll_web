@@ -27,6 +27,7 @@ const PROVIDER_DIVERSITY_EVENT_TYPES = new Set([
   "volunteer_delivery_completed",
 ]);
 const DOMAIN_RECOVERY_EVENT_TYPES = new Set([
+  "user_pickup_completed",
   "ngo_delivery_completed",
   "volunteer_delivery_completed",
 ]);

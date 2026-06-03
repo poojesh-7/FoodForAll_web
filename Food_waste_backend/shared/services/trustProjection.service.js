@@ -523,6 +523,142 @@ function cooldownDurationMs(level, failureStreak) {
   return 24 * HOUR_MS;
 }
 
+function laterDate(left, right) {
+  if (!left) return right || null;
+  if (!right) return left || null;
+  return left.getTime() >= right.getTime() ? left : right;
+}
+
+function activeCooldownAt(cooldownUntil, eventTimeValue) {
+  const cooldown = parseDateOrNull(cooldownUntil);
+  const eventDate = parseDateOrNull(eventTimeValue);
+  if (!cooldown || !eventDate) return null;
+  return cooldown.getTime() > eventDate.getTime() ? cooldown : null;
+}
+
+function cooldownRefreshCauses({
+  negative,
+  previousRestrictionLevel,
+  level,
+  previousPenaltyLevel,
+  penaltyLevel,
+  previousFailureStreak,
+  failureStreak,
+}) {
+  const causes = [];
+  if (negative) causes.push("negative_event");
+  if (level > previousRestrictionLevel) causes.push("restriction_level_increased");
+  if (penaltyLevel > previousPenaltyLevel) causes.push("penalty_level_increased");
+  if (failureStreak > previousFailureStreak) causes.push("failure_streak_increased");
+  return causes;
+}
+
+function buildCooldownState({
+  cooldownUntil,
+  previousCooldownUntil,
+  candidateCooldownUntil,
+  previousCooldownState,
+  event,
+  eventTimeValue,
+  causes,
+  createdThisEvent,
+  refreshedThisEvent,
+  expiredAtEventTime,
+}) {
+  const previousState = previousCooldownState || {};
+  const sourceReason = causes[0] || null;
+  const eventIso = isoOrNull(eventTimeValue);
+  const activeUntil = isoOrNull(cooldownUntil);
+
+  return {
+    cooldown_active_until: activeUntil,
+    cooldown_trigger_event: activeUntil
+      ? createdThisEvent || refreshedThisEvent
+        ? event.event_type || null
+        : previousState.cooldown_trigger_event || null
+      : null,
+    cooldown_source_reason: activeUntil
+      ? createdThisEvent || refreshedThisEvent
+        ? sourceReason
+        : previousState.cooldown_source_reason || null
+      : null,
+    cooldown_created_at: activeUntil
+      ? createdThisEvent
+        ? eventIso
+        : previousState.cooldown_created_at || null
+      : null,
+    cooldown_refreshed_at: activeUntil
+      ? refreshedThisEvent
+        ? eventIso
+        : previousState.cooldown_refreshed_at || null
+      : null,
+    cooldown_refresh_cause: activeUntil
+      ? refreshedThisEvent
+        ? sourceReason
+        : previousState.cooldown_refresh_cause || null
+      : null,
+    cooldown_refresh_allowed: causes.length > 0,
+    cooldown_created_this_event: createdThisEvent,
+    cooldown_refreshed_this_event: refreshedThisEvent,
+    cooldown_preserved_this_event: Boolean(cooldownUntil) && !createdThisEvent && !refreshedThisEvent,
+    cooldown_expired_at_event_time: expiredAtEventTime,
+    previous_cooldown_until: isoOrNull(previousCooldownUntil),
+    candidate_cooldown_until: isoOrNull(candidateCooldownUntil),
+  };
+}
+
+function resolveCooldownProjection({ level, state, effect, context, event }) {
+  const eventTimeValue = context.eventTime;
+  const previousCooldownUntil = parseDateOrNull(context.previousCooldownUntil);
+  const activePreviousCooldownUntil = activeCooldownAt(previousCooldownUntil, eventTimeValue);
+  const durationMs = cooldownDurationMs(level, state.failure_streak);
+  const projectedCandidateCooldownUntil = durationMs
+    ? addMs(eventTimeValue, durationMs)
+    : null;
+  const candidateCooldownUntil = effect.cooldownUntil || projectedCandidateCooldownUntil;
+  const causes = cooldownRefreshCauses({
+    negative: context.negative,
+    previousRestrictionLevel: context.previousRestrictionLevel,
+    level,
+    previousPenaltyLevel: context.previousPenaltyLevel,
+    penaltyLevel: state.penalty_level,
+    previousFailureStreak: context.previousFailureStreak,
+    failureStreak: state.failure_streak,
+  });
+  const refreshAllowed = causes.length > 0;
+  const createdThisEvent =
+    refreshAllowed && Boolean(candidateCooldownUntil) && !activePreviousCooldownUntil;
+  const refreshedThisEvent =
+    refreshAllowed &&
+    Boolean(candidateCooldownUntil) &&
+    Boolean(activePreviousCooldownUntil) &&
+    candidateCooldownUntil.getTime() > activePreviousCooldownUntil.getTime();
+  const cooldownUntil = refreshAllowed
+    ? laterDate(activePreviousCooldownUntil, candidateCooldownUntil)
+    : activePreviousCooldownUntil;
+  const expiredAtEventTime =
+    Boolean(previousCooldownUntil) &&
+    !activePreviousCooldownUntil &&
+    previousCooldownUntil.getTime() <= eventTimeValue.getTime();
+  const cooldownState = buildCooldownState({
+    cooldownUntil,
+    previousCooldownUntil,
+    candidateCooldownUntil,
+    previousCooldownState: context.previousCooldownState,
+    event,
+    eventTimeValue,
+    causes,
+    createdThisEvent,
+    refreshedThisEvent,
+    expiredAtEventTime,
+  });
+
+  return {
+    cooldownUntil,
+    cooldownState,
+  };
+}
+
 function depositMultiplierForLevel(level) {
   if (level <= 1) return 1;
   if (level === 2) return 1.5;
@@ -603,11 +739,16 @@ function calculateOperationalProjection(state, event, effect, context) {
       ? ["manual"]
       : restrictionTriggerSources(restrictionMetrics, level);
   const recoveryRequirements = buildRecoveryRequirements(state, level);
-  const durationMs = cooldownDurationMs(level, state.failure_streak);
-  const cooldownUntil = durationMs ? addMs(context.eventTime, durationMs) : null;
+  const { cooldownUntil, cooldownState } = resolveCooldownProjection({
+    level,
+    state,
+    effect,
+    context,
+    event,
+  });
   const blockedActorRecoveryStatus = buildBlockedActorRecoveryStatus({
     level,
-    cooldownUntil: effect.cooldownUntil || cooldownUntil,
+    cooldownUntil,
     recoveryRequirements,
   });
   const depositMultiplier = Math.max(
@@ -622,7 +763,8 @@ function calculateOperationalProjection(state, event, effect, context) {
 
   return {
     level,
-    cooldownUntil: effect.cooldownUntil || cooldownUntil,
+    cooldownUntil,
+    cooldownState,
     depositMultiplier,
     riskCategory,
     recoveryProgress,
@@ -632,11 +774,12 @@ function calculateOperationalProjection(state, event, effect, context) {
       restriction_label: riskCategory,
       warning_recommended: level >= 1,
       refundable_deposit_recommended: level >= 2,
-      cooldown_recommended: level >= 3,
+      cooldown_recommended: Boolean(cooldownUntil),
       temporary_suspension_recommended: level >= 4,
       manual_review_recommended: level >= 5,
       projected_deposit_multiplier: depositMultiplier,
-      projected_cooldown_until: isoOrNull(effect.cooldownUntil || cooldownUntil),
+      projected_cooldown_until: isoOrNull(cooldownUntil),
+      cooldown_recovery_alignment: cooldownState,
       restriction_trigger_source: triggerSources[0] || "none",
       restriction_trigger_sources: triggerSources,
       recovery_requirements: recoveryRequirements,
@@ -729,6 +872,18 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
 
   const projection = calculateOperationalProjection(next, event, effect, {
     eventTime: currentEventTime,
+    negative,
+    previousCooldownUntil: current.projected_cooldown_until || current.cooldown_until,
+    previousCooldownState:
+      current.risk_state?.cooldown_recovery_alignment ||
+      current.projected_actions?.cooldown_recovery_alignment ||
+      null,
+    previousFailureStreak: Math.max(0, Number(current.failure_streak || 0)),
+    previousPenaltyLevel: Math.max(0, Number(current.penalty_level || 0)),
+    previousRestrictionLevel: Math.max(
+      0,
+      Number(current.projected_restriction_level ?? current.restriction_level ?? 0)
+    ),
   });
 
   next.projected_restriction_level = projection.level;
@@ -753,6 +908,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     penalty_before_recovery: penaltyBeforeRecovery,
     recovery_credit: recoveryCredit,
     decay_credit: decayCredit,
+    cooldown_recovery_alignment: projection.cooldownState,
     restriction_trigger_source: projection.triggerSources[0] || "none",
     restriction_trigger_sources: projection.triggerSources,
     counters: {
@@ -793,6 +949,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     projected_restriction_level: next.projected_restriction_level,
     projected_deposit_multiplier: next.projected_deposit_multiplier,
     projected_cooldown_until: isoOrNull(next.projected_cooldown_until),
+    cooldown_recovery_alignment: projection.cooldownState,
     restriction_trigger_source: projection.triggerSources[0] || "none",
     restriction_trigger_sources: projection.triggerSources,
     recovery_requirements: projection.recoveryRequirements,

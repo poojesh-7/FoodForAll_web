@@ -217,6 +217,166 @@ test("operational projection escalates cooldown after three failures", () => {
   );
 });
 
+test("recovery events do not refresh active cooldowns while restriction remains high", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(2, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T01:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(3, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T02:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(4, "ngo_delivery_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+      metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+    }, "2026-01-01T13:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+  ], "ngo", NGO_ID);
+
+  assert.equal(projection.projected_restriction_level, 3);
+  assert.equal(projection.recovery_progress, 33.33333333333333);
+  assert.equal(
+    projection.projected_cooldown_until.toISOString(),
+    "2026-01-01T14:00:00.000Z"
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_trigger_event,
+    "ngo_delivery_failed"
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_source_reason,
+    "negative_event"
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_created_at,
+    "2026-01-01T02:00:00.000Z"
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_refreshed_this_event,
+    false
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_refresh_allowed,
+    false
+  );
+});
+
+test("recovery can reduce restriction without clearing an unexpired cooldown", () => {
+  const events = [
+    createProjectionEvent(1, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(2, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T01:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(3, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T02:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+  ];
+
+  for (let index = 4; index <= 6; index += 1) {
+    events.push(
+      createProjectionEvent(index, "ngo_delivery_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+      }, `2026-01-01T0${index - 1}:00:00.000Z`, {
+        subject_type: "ngo",
+        subject_id: NGO_ID,
+      })
+    );
+  }
+
+  const projection = buildTrustProjectionFromEvents(events, "ngo", NGO_ID);
+
+  assert.equal(projection.penalty_level, 4);
+  assert.equal(projection.projected_restriction_level, 2);
+  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(
+    projection.projected_cooldown_until.toISOString(),
+    "2026-01-01T14:00:00.000Z"
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_preserved_this_event,
+    true
+  );
+});
+
+test("expired cooldowns are not recreated by recovery events", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(2, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T01:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(3, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T02:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(4, "ngo_delivery_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+      metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+    }, "2026-01-02T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+  ], "ngo", NGO_ID);
+
+  assert.equal(projection.projected_restriction_level, 3);
+  assert.equal(projection.projected_cooldown_until, null);
+  assert.equal(projection.projected_actions.cooldown_recommended, false);
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.cooldown_expired_at_event_time,
+    true
+  );
+  assert.equal(
+    projection.recovery_state.blocked_actor_recovery_status.blocked,
+    false
+  );
+});
+
 test("critical projections expose blocked actor recovery route", () => {
   const events = [];
   for (let index = 1; index <= 6; index += 1) {
@@ -606,6 +766,92 @@ test("free volunteer rescue completions qualify for recovery without score gain"
     "non_qualifying_source"
   );
   assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
+});
+
+test("T5.3 recovery simulations keep cooldown aligned by role", () => {
+  const scenarios = [
+    {
+      subjectType: "ngo",
+      subjectId: NGO_ID,
+      failureEvent: "ngo_delivery_failed",
+      failurePayload: { score_delta: -10, failure_delta: 1 },
+      successEvent: "ngo_delivery_completed",
+      successPayload: { score_delta: 3, completion_delta: 1 },
+      successMetadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+      checkpoints: {
+        3: { score: 84, penalty: 2, level: 1, cooldown: null, deposit: 1 },
+        6: { score: 88, penalty: 0, level: 1, cooldown: null, deposit: 1 },
+        9: { score: 88, penalty: 0, level: 1, cooldown: null, deposit: 1 },
+      },
+    },
+    {
+      subjectType: "volunteer",
+      subjectId: VOLUNTEER_ID,
+      failureEvent: "volunteer_delivery_failed",
+      failurePayload: { score_delta: -12, failure_delta: 1, timeout_delta: 1 },
+      successEvent: "volunteer_delivery_completed",
+      successPayload: { score_delta: 4, completion_delta: 1 },
+      successMetadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+      checkpoints: {
+        3: { score: 80, penalty: 4, level: 2, cooldown: null, deposit: 1.5 },
+      },
+    },
+    {
+      subjectType: "user",
+      subjectId: USER_ID,
+      failureEvent: "user_pickup_failed",
+      failurePayload: { score_delta: -10, failure_delta: 1 },
+      successEvent: "user_pickup_completed",
+      successPayload: { score_delta: 3, completion_delta: 1 },
+      successMetadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      checkpoints: {
+        3: { score: 93, penalty: 2, level: 1, cooldown: null, deposit: 1 },
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const baseEvents = [
+      createProjectionEvent(1, scenario.failureEvent, scenario.failurePayload, "2026-01-01T00:00:00.000Z", {
+        subject_type: scenario.subjectType,
+        subject_id: scenario.subjectId,
+      }),
+      createProjectionEvent(2, scenario.failureEvent, scenario.failurePayload, "2026-01-02T00:00:00.000Z", {
+        subject_type: scenario.subjectType,
+        subject_id: scenario.subjectId,
+      }),
+    ];
+
+    for (const [successCount, expected] of Object.entries(scenario.checkpoints)) {
+      const events = [...baseEvents];
+      for (let index = 1; index <= Number(successCount); index += 1) {
+        events.push(
+          createProjectionEvent(index + 2, scenario.successEvent, {
+            ...scenario.successPayload,
+            metadata: {
+              ...scenario.successMetadata,
+              provider_id: `${scenario.successMetadata.provider_id}:${index}`,
+            },
+          }, `2026-01-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`, {
+            subject_type: scenario.subjectType,
+            subject_id: scenario.subjectId,
+          })
+        );
+      }
+
+      const projection = buildTrustProjectionFromEvents(
+        events,
+        scenario.subjectType,
+        scenario.subjectId
+      );
+
+      assert.equal(projection.trust_score, expected.score);
+      assert.equal(projection.penalty_level, expected.penalty);
+      assert.equal(projection.projected_restriction_level, expected.level);
+      assert.equal(projection.projected_cooldown_until, expected.cooldown);
+      assert.equal(projection.projected_deposit_multiplier, expected.deposit);
+    }
+  }
 });
 
 test("internal NGO completions remain blocked from recovery", () => {

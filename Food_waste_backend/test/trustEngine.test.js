@@ -512,6 +512,134 @@ test("free and zero-value reservations do not award positive trust gain", () => 
   assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
 });
 
+test("free NGO rescue completions qualify for recovery without score gain", () => {
+  const events = [
+    createProjectionEvent(1, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(2, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-02T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+  ];
+
+  for (let index = 3; index <= 5; index += 1) {
+    events.push(
+      createProjectionEvent(index, "ngo_delivery_completed", {
+        score_delta: 3,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+      }, `2026-01-0${index}T00:00:00.000Z`, {
+        subject_type: "ngo",
+        subject_id: NGO_ID,
+      })
+    );
+  }
+
+  const projection = buildTrustProjectionFromEvents(events, "ngo", NGO_ID);
+
+  assert.equal(projection.completion_count, 3);
+  assert.equal(projection.trust_score, 84);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.success_streak, 0);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.last_success_at.toISOString(), "2026-01-05T00:00:00.000Z");
+  assert.equal(
+    projection.score_breakdown.trust_quality.suppression_reason,
+    "non_qualifying_source"
+  );
+  assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
+});
+
+test("free volunteer rescue completions qualify for recovery without score gain", () => {
+  const events = [
+    createProjectionEvent(1, "volunteer_delivery_failed", {
+      score_delta: -12,
+      failure_delta: 1,
+      timeout_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "volunteer",
+      subject_id: VOLUNTEER_ID,
+    }),
+    createProjectionEvent(2, "volunteer_delivery_failed", {
+      score_delta: -12,
+      failure_delta: 1,
+      timeout_delta: 1,
+    }, "2026-01-02T00:00:00.000Z", {
+      subject_type: "volunteer",
+      subject_id: VOLUNTEER_ID,
+    }),
+  ];
+
+  for (let index = 3; index <= 5; index += 1) {
+    events.push(
+      createProjectionEvent(index, "volunteer_delivery_completed", {
+        score_delta: 4,
+        completion_delta: 1,
+        metadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
+      }, `2026-01-0${index}T00:00:00.000Z`, {
+        subject_type: "volunteer",
+        subject_id: VOLUNTEER_ID,
+      })
+    );
+  }
+
+  const projection = buildTrustProjectionFromEvents(events, "volunteer", VOLUNTEER_ID);
+
+  assert.equal(projection.completion_count, 3);
+  assert.equal(projection.trust_score, 80);
+  assert.equal(projection.penalty_level, 4);
+  assert.equal(projection.projected_restriction_level, 2);
+  assert.equal(projection.success_streak, 0);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.last_success_at.toISOString(), "2026-01-05T00:00:00.000Z");
+  assert.equal(
+    projection.score_breakdown.trust_quality.suppression_reason,
+    "non_qualifying_source"
+  );
+  assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
+});
+
+test("internal NGO completions remain blocked from recovery", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "ngo_delivery_failed", {
+      score_delta: -10,
+      failure_delta: 1,
+    }, "2026-01-01T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+    createProjectionEvent(2, "ngo_delivery_completed", {
+      score_delta: 3,
+      completion_delta: 1,
+      metadata: {
+        provider_id: PROVIDER_ID,
+        is_free: true,
+        food_amount: 0,
+        internal: true,
+      },
+    }, "2026-01-02T00:00:00.000Z", {
+      subject_type: "ngo",
+      subject_id: NGO_ID,
+    }),
+  ], "ngo", NGO_ID);
+
+  assert.equal(projection.completion_count, 1);
+  assert.equal(projection.trust_score, 90);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.success_streak, 0);
+  assert.equal(projection.last_success_at, null);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
+});
+
 test("projection replay is deterministic regardless of input order", () => {
   const events = [
     createProjectionEvent(1, "user_pickup_failed", {

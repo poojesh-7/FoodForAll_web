@@ -26,6 +26,10 @@ const PROVIDER_DIVERSITY_EVENT_TYPES = new Set([
   "ngo_delivery_completed",
   "volunteer_delivery_completed",
 ]);
+const DOMAIN_RECOVERY_EVENT_TYPES = new Set([
+  "ngo_delivery_completed",
+  "volunteer_delivery_completed",
+]);
 
 function getTrustFarmingConfig() {
   const rawDecay = String(process.env.TRUST_PROVIDER_REPEAT_DECAY || "1,0.5,0")
@@ -108,6 +112,17 @@ function positiveGainSuppressionReason(payload, metadata, rawScoreDelta) {
   return null;
 }
 
+function recoverySuppressionReason(payload, metadata) {
+  if (
+    booleanMetadata(metadata, ["internal", "system_generated", "systemGenerated"]) ||
+    booleanMetadata(payload, ["internal", "system_generated", "systemGenerated"])
+  ) {
+    return "non_qualifying_source";
+  }
+
+  return null;
+}
+
 function parseDateOrNull(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -142,6 +157,7 @@ function buildTrustEffect(event) {
   const gainSuppressionReason = analyticsOnly
     ? null
     : positiveGainSuppressionReason(payload, metadata, rawScoreDelta);
+  const recoverySuppression = analyticsOnly ? null : recoverySuppressionReason(payload, metadata);
   const scoreDelta = gainSuppressionReason ? 0 : rawScoreDelta;
   const penaltyDelta = intDelta(payload.penalty_delta ?? payload.penaltyDelta);
   const failureDelta = intDelta(payload.failure_delta ?? payload.failureDelta);
@@ -175,6 +191,7 @@ function buildTrustEffect(event) {
     scoreDelta: analyticsOnly ? 0 : scoreDelta,
     rawScoreDelta: analyticsOnly ? 0 : rawScoreDelta,
     gainSuppressionReason,
+    recoverySuppressionReason: recoverySuppression,
     penaltyDelta: analyticsOnly ? 0 : penaltyDelta,
     failureDelta: analyticsOnly ? 0 : failureDelta,
     cancellationDelta: analyticsOnly ? 0 : cancellationDelta,
@@ -258,7 +275,17 @@ function isSuccessEffect(effect) {
   );
 }
 
-function isQualifyingRecoverySuccess(effect, trustQuality) {
+function isDomainRecoverySuccess(event, effect) {
+  return (
+    DOMAIN_RECOVERY_EVENT_TYPES.has(event.event_type) &&
+    effect.completionDelta > 0 &&
+    !effect.analyticsOnly &&
+    !effect.recoverySuppressionReason
+  );
+}
+
+function isQualifyingRecoverySuccess(event, effect, trustQuality) {
+  if (isDomainRecoverySuccess(event, effect)) return true;
   if (effect.analyticsOnly || effect.gainSuppressionReason) return false;
 
   const rawScoreDelta = Number(trustQuality.raw_score_delta || effect.rawScoreDelta || 0);
@@ -629,7 +656,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
   const currentEventTime = eventTime(event);
   const trustQuality = applyTrustGainQuality(event, effect, context);
   const effectiveScoreDelta = trustQuality.applied_score_delta;
-  const success = isQualifyingRecoverySuccess(effect, trustQuality);
+  const success = isQualifyingRecoverySuccess(event, effect, trustQuality);
   const negative = isNegativeEffect(effect);
   const previousLastEvent = parseDateOrNull(current.last_event_at);
   const decayIntervalMs = Math.max(1, DECAY_INTERVAL_DAYS) * DAY_MS;

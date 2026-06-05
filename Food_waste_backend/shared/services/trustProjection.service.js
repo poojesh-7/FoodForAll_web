@@ -30,6 +30,7 @@ const DOMAIN_RECOVERY_EVENT_TYPES = new Set([
   "user_pickup_completed",
   "ngo_delivery_completed",
   "volunteer_delivery_completed",
+  "provider_successful_fulfillment",
 ]);
 
 function getTrustFarmingConfig() {
@@ -277,9 +278,14 @@ function isSuccessEffect(effect) {
 }
 
 function isDomainRecoverySuccess(event, effect) {
+  const domainRecoveryDelta =
+    event.event_type === "provider_successful_fulfillment"
+      ? effect.fulfillmentDelta
+      : effect.completionDelta;
+
   return (
     DOMAIN_RECOVERY_EVENT_TYPES.has(event.event_type) &&
-    effect.completionDelta > 0 &&
+    domainRecoveryDelta > 0 &&
     !effect.analyticsOnly &&
     !effect.recoverySuppressionReason
   );

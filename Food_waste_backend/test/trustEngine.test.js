@@ -75,6 +75,21 @@ function createProviderProjectionEvent(index, eventType, payload, createdAt) {
   });
 }
 
+function createProviderReportValidatedEvent(index = 1, createdAt = "2026-01-01T00:00:00.000Z") {
+  return createProviderProjectionEvent(index, "provider_report_validated", {
+    score_delta: -15,
+    failure_delta: 1,
+  }, createdAt);
+}
+
+function createProviderFulfillmentEvent(index, createdAt, metadata = {}) {
+  return createProviderProjectionEvent(index, "provider_successful_fulfillment", {
+    score_delta: 2,
+    fulfillment_delta: 1,
+    metadata,
+  }, createdAt);
+}
+
 function withEnv(values, callback) {
   const previous = {};
   for (const [key, value] of Object.entries(values)) {
@@ -523,6 +538,154 @@ test("only actionable provider failures affect provider projections", () => {
   assert.equal(projection.projected_restriction_level, 1);
   assert.equal(projection.projected_deposit_multiplier, 1);
   assert.equal(projection.projected_actions.cooldown_recommended, false);
+});
+
+test("provider successful fulfillments clear report penalties through domain recovery", () => {
+  withEnv({ TRUST_MAX_GAIN_PER_DAY: 20 }, () => {
+    const projection = buildTrustProjectionFromEvents([
+      createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+      createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+      createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+      createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+    ], "provider", PROVIDER_ID);
+
+    assert.equal(projection.trust_score, 95);
+    assert.equal(projection.penalty_level, 0);
+    assert.equal(projection.projected_restriction_level, 0);
+    assert.equal(projection.restriction_level, 0);
+    assert.equal(projection.fulfillment_count, 3);
+    assert.equal(projection.failure_streak, 0);
+    assert.equal(projection.success_streak, 0);
+    assert.equal(projection.recovery_progress, 100);
+    assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+    assert.equal(projection.last_success_at.toISOString(), "2026-01-04T00:00:00.000Z");
+  });
+});
+
+test("provider fulfillment recovery is independent of score suppression and daily caps", () => {
+  const suppressedBySource = buildTrustProjectionFromEvents([
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+    createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+      is_free: true,
+      food_amount: 0,
+    }),
+    createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+      is_free: true,
+      food_amount: 0,
+    }),
+    createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+      is_free: true,
+      food_amount: 0,
+    }),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(suppressedBySource.trust_score, 89);
+  assert.equal(suppressedBySource.penalty_level, 0);
+  assert.equal(suppressedBySource.projected_restriction_level, 1);
+  assert.equal(suppressedBySource.fulfillment_count, 3);
+  assert.equal(suppressedBySource.success_streak, 0);
+  assert.equal(suppressedBySource.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(
+    suppressedBySource.score_breakdown.trust_quality.suppression_reason,
+    "non_qualifying_source"
+  );
+  assert.equal(suppressedBySource.score_breakdown.trust_quality.applied_score_delta, 0);
+
+  withEnv({ TRUST_MAX_GAIN_PER_DAY: 0 }, () => {
+    const suppressedByDailyCap = buildTrustProjectionFromEvents([
+      createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+      createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+      createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+      createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+        food_amount: 100,
+      }),
+    ], "provider", PROVIDER_ID);
+
+    assert.equal(suppressedByDailyCap.trust_score, 89);
+    assert.equal(suppressedByDailyCap.penalty_level, 0);
+    assert.equal(suppressedByDailyCap.projected_restriction_level, 1);
+    assert.equal(suppressedByDailyCap.recovery_state.recovery_credit_this_event, 2);
+    assert.equal(suppressedByDailyCap.score_breakdown.trust_quality.applied_score_delta, 0);
+    assert.equal(suppressedByDailyCap.score_breakdown.trust_quality.daily_cap_applied, true);
+  });
+});
+
+test("internal provider fulfillments remain blocked from recovery", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+    createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+      food_amount: 100,
+      internal: true,
+    }),
+    createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+      food_amount: 100,
+      system_generated: true,
+    }),
+    createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+      food_amount: 100,
+      systemGenerated: true,
+    }),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(projection.trust_score, 85);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.fulfillment_count, 3);
+  assert.equal(projection.failure_streak, 0);
+  assert.equal(projection.success_streak, 0);
+  assert.equal(projection.recovery_progress, 0);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
+  assert.equal(projection.last_success_at, null);
+  assert.equal(
+    projection.score_breakdown.trust_quality.suppression_reason,
+    "non_qualifying_source"
+  );
+});
+
+test("provider fulfillment recovery replay is deterministic across event order", () => {
+  const events = [
+    createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+    createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+    createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+  ];
+  const ordered = buildTrustProjectionFromEvents(events, "provider", PROVIDER_ID);
+  const replayed = buildTrustProjectionFromEvents([...events].reverse(), "provider", PROVIDER_ID);
+
+  assert.deepEqual(
+    {
+      trust_score: replayed.trust_score,
+      penalty_level: replayed.penalty_level,
+      projected_restriction_level: replayed.projected_restriction_level,
+      fulfillment_count: replayed.fulfillment_count,
+      success_streak: replayed.success_streak,
+      recovery_progress: replayed.recovery_progress,
+    },
+    {
+      trust_score: ordered.trust_score,
+      penalty_level: ordered.penalty_level,
+      projected_restriction_level: ordered.projected_restriction_level,
+      fulfillment_count: ordered.fulfillment_count,
+      success_streak: ordered.success_streak,
+      recovery_progress: ordered.recovery_progress,
+    }
+  );
 });
 
 test("consecutive successful completions reduce passive penalties", () => {
@@ -1138,6 +1301,72 @@ test("provider projection rebuild replays trust_events with neutral listing expi
   assert.equal(result.score.timeout_count, 0);
   assert.equal(result.score.projected_restriction_level, 1);
   assert.equal(result.score.projected_deposit_multiplier, 1);
+  assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
+});
+
+test("provider projection rebuild replays historical fulfillments into recovery", async () => {
+  const calls = [];
+  const historicalEvents = [
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+    createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+    createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+    createProviderFulfillmentEvent(4, "2026-01-04T00:00:00.000Z", {
+      food_amount: 100,
+    }),
+  ];
+  const client = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM trust_events") && !sql.includes("JOIN trust_event_effects")) {
+        return { rows: historicalEvents };
+      }
+      if (sql.includes("INSERT INTO trust_scores")) {
+        return {
+          rows: [
+            {
+              subject_type: params[0],
+              subject_id: params[1],
+              trust_score: params[2],
+              penalty_level: params[3],
+              restriction_level: params[6],
+              fulfillment_count: params[11],
+              projected_restriction_level: params[13],
+              recovery_progress: params[16],
+              success_streak: params[18],
+            },
+          ],
+        };
+      }
+      if (sql.includes("INSERT INTO trust_restrictions")) {
+        return { rows: [{ restriction_type: "operational_projection" }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const result = await rebuildTrustProjectionForSubject(client, {
+    subjectType: "provider",
+    subjectId: PROVIDER_ID,
+  });
+
+  assert.equal(result.eventCount, 4);
+  assert.equal(result.projection.trust_score, 95);
+  assert.equal(result.projection.penalty_level, 0);
+  assert.equal(result.projection.projected_restriction_level, 0);
+  assert.equal(result.projection.fulfillment_count, 3);
+  assert.equal(result.score.trust_score, 95);
+  assert.equal(result.score.penalty_level, 0);
+  assert.equal(result.score.projected_restriction_level, 0);
+  assert.equal(result.score.fulfillment_count, 3);
+  assert.equal(result.score.recovery_progress, 100);
+  assert.equal(result.score.success_streak, 0);
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
 

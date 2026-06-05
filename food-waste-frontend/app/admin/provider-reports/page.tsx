@@ -1,12 +1,16 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
   adminService,
   type AdminProviderReport,
 } from "@/services/admin.service";
+
+type ReportAttachment = NonNullable<AdminProviderReport["attachments"]>[number];
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
@@ -24,12 +28,19 @@ function formatDate(value: string | undefined) {
   return date.toLocaleString();
 }
 
+function formatFileSize(value: unknown) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ProviderReportsPage() {
   const [reports, setReports] = useState<AdminProviderReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [previewAttachment, setPreviewAttachment] = useState<ReportAttachment | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -147,6 +158,39 @@ export default function ProviderReportsPage() {
                   {report.description}
                 </p>
               )}
+              {Array.isArray(report.attachments) && report.attachments.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs font-medium uppercase text-zinc-500">
+                    Evidence
+                  </p>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {report.attachments.map((attachment) => {
+                      const url = adminService.getAssetUrl(attachment.file_url);
+                      if (!url) return null;
+
+                      return (
+                        <button
+                          key={String(attachment.id)}
+                          type="button"
+                          onClick={() => setPreviewAttachment(attachment)}
+                          className="group overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-left transition hover:border-zinc-400"
+                        >
+                          <span className="block aspect-[4/3] overflow-hidden">
+                            <img
+                              src={url}
+                              alt="Provider report evidence"
+                              className="h-full w-full object-cover transition group-hover:scale-105"
+                            />
+                          </span>
+                          <span className="block truncate px-2 py-1 text-xs text-zinc-500">
+                            {formatFileSize(attachment.file_size_bytes) || displayValue(attachment.mime_type)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -168,6 +212,33 @@ export default function ProviderReportsPage() {
             </article>
           ))}
         </section>
+      )}
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <div
+            className="relative max-h-full w-full max-w-4xl overflow-hidden rounded-lg bg-white"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewAttachment(null)}
+              className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100"
+              aria-label="Close preview"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <img
+              src={adminService.getAssetUrl(previewAttachment.file_url) || ""}
+              alt="Provider report evidence preview"
+              className="max-h-[82vh] w-full object-contain"
+            />
+          </div>
+        </div>
       )}
     </AdminShell>
   );

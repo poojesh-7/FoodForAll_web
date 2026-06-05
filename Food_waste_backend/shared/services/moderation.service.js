@@ -1,6 +1,8 @@
 const pool = require("../config/db");
+const crypto = require("crypto");
 const { ensureRestrictionSchema } = require("./restrictionSchema.service");
 const { providerDisplaySelect } = require("./providerDisplay.service");
+const { uploadBuffer } = require("./cloudinary.service");
 const {
   recordProviderReportValidated,
 } = require("./trustEnforcement.service");
@@ -29,9 +31,56 @@ const REPORT_REASONS = new Set([
 const DUPLICATE_REPORT_MESSAGE =
   "You already reported this provider for this reservation.";
 const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
+const MAX_REPORT_ATTACHMENTS = 3;
+const MAX_REPORT_ATTACHMENT_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024);
+const REPORT_ATTACHMENT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
 
 function normalizeReason(reason) {
   return sanitizePlainText(reason, { maxLength: 80 }).toLowerCase();
+}
+
+function reportCooldownKey(reportedBy) {
+  return `report:cooldown:${reportedBy}`;
+}
+
+function withStatus(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function createAttachmentPublicId(reportId, index) {
+  const id =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : crypto.randomBytes(12).toString("hex");
+  const normalizedReportId = String(reportId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `report_${normalizedReportId}_${index + 1}_${id}`;
+}
+
+function validateReportAttachmentFile(file) {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    throw withStatus("Invalid attachment upload", 400);
+  }
+
+  if (!REPORT_ATTACHMENT_MIME_TYPES.has(file.mimetype)) {
+    throw withStatus("Only JPG, JPEG, PNG, or WEBP images allowed", 400);
+  }
+
+  const fileSize = Number(file.size || file.buffer.length || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw withStatus("Uploaded file is empty", 400);
+  }
+
+  if (fileSize > MAX_REPORT_ATTACHMENT_BYTES) {
+    throw withStatus("Uploaded file is too large", 400);
+  }
+
+  return fileSize;
 }
 
 async function createProviderReport({
@@ -41,6 +90,7 @@ async function createProviderReport({
   reservationId = null,
   reason,
   description = null,
+  applyCooldown = true,
 }) {
   await ensureRestrictionSchema(client);
   const normalizedReason = normalizeReason(reason);
@@ -55,7 +105,7 @@ async function createProviderReport({
     throw error;
   }
 
-  const cooldownKey = `report:cooldown:${reportedBy}`;
+  const cooldownKey = reportCooldownKey(reportedBy);
   const cooldown = await store.get(cooldownKey);
   if (cooldown.value) {
     const error = new Error("Please wait before submitting another report.");
@@ -135,7 +185,9 @@ async function createProviderReport({
       ]
     );
 
-    await store.set(cooldownKey, "1", REPORT_COOLDOWN_MS);
+    if (applyCooldown) {
+      await applyProviderReportCooldown({ reportedBy });
+    }
     logger.security("Provider report submitted", {
       reportedBy,
       providerId,
@@ -166,6 +218,59 @@ async function createProviderReport({
 
     throw err;
   }
+}
+
+async function applyProviderReportCooldown({ reportedBy }) {
+  await store.set(reportCooldownKey(reportedBy), "1", REPORT_COOLDOWN_MS);
+}
+
+async function addProviderReportAttachments({
+  client = pool,
+  reportId,
+  uploaderUserId,
+  files = [],
+}) {
+  await ensureRestrictionSchema(client);
+
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  if (files.length > MAX_REPORT_ATTACHMENTS) {
+    throw withStatus("A report can include up to 3 images", 400);
+  }
+
+  const storagePrefix = process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local";
+  const attachments = [];
+
+  for (const [index, file] of files.entries()) {
+    const fileSize = validateReportAttachmentFile(file);
+    const uploadedImage = await uploadBuffer(file.buffer, {
+      folder: `food-rescue/${storagePrefix}/provider-report-evidence`,
+      public_id: createAttachmentPublicId(reportId, index),
+      mimetype: file.mimetype,
+    });
+
+    const result = await client.query(
+      `
+      INSERT INTO provider_report_attachments
+        (report_id, uploader_user_id, file_url, mime_type, file_size_bytes)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING id, report_id, uploader_user_id, file_url, mime_type, file_size_bytes, created_at
+      `,
+      [
+        reportId,
+        uploaderUserId,
+        uploadedImage.secure_url,
+        file.mimetype,
+        fileSize,
+      ]
+    );
+
+    attachments.push(result.rows[0]);
+  }
+
+  return attachments;
 }
 
 async function validateProviderReport({ client = pool, reportId, adminId }) {
@@ -227,7 +332,8 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
            r.pickup_type AS reservation_pickup_type,
            r.status AS reservation_status,
            r.task_status AS reservation_task_status,
-           f.title AS listing_title
+           f.title AS listing_title,
+           COALESCE(report_attachments.attachments, '[]'::json) AS attachments
     FROM provider_reports pr
     JOIN users provider ON provider.id = pr.provider_id
     JOIN users reporter ON reporter.id = pr.reported_by
@@ -242,6 +348,22 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
     LEFT JOIN ngos reporter_ngo ON reporter_ngo.user_id = reporter.id
     LEFT JOIN reservations r ON r.id = pr.reservation_id
     LEFT JOIN food_listings f ON f.id = r.listing_id
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id', pra.id,
+          'report_id', pra.report_id,
+          'uploader_user_id', pra.uploader_user_id,
+          'file_url', pra.file_url,
+          'mime_type', pra.mime_type,
+          'file_size_bytes', pra.file_size_bytes,
+          'created_at', pra.created_at
+        )
+        ORDER BY pra.created_at ASC, pra.id ASC
+      ) AS attachments
+      FROM provider_report_attachments pra
+      WHERE pra.report_id = pr.id
+    ) report_attachments ON true
     WHERE ($1::text IS NULL OR pr.status=$1)
     ORDER BY pr.created_at DESC
     `,
@@ -252,7 +374,10 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
 
 module.exports = {
   DUPLICATE_REPORT_MESSAGE,
+  MAX_REPORT_ATTACHMENTS,
   REPORT_REASONS,
+  addProviderReportAttachments,
+  applyProviderReportCooldown,
   createProviderReport,
   dismissProviderReport,
   listProviderReports,

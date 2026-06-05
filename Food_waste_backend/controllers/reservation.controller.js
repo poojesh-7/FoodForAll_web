@@ -23,7 +23,11 @@ const {
   lockReservationGraph,
   restoreReservationStockIfHeld,
 } = require("../shared/services/reservationConsistency.service");
-const { createProviderReport } = require("../shared/services/moderation.service");
+const {
+  addProviderReportAttachments,
+  applyProviderReportCooldown,
+  createProviderReport,
+} = require("../shared/services/moderation.service");
 const {
   blockingReservationWhere,
   pendingPaymentReservationWhere,
@@ -702,6 +706,7 @@ const legacyCancelReservation = async (req, res) => {
   }
 
   const client = await pool.connect();
+  let committed = false;
 
   try {
     await client.query("BEGIN");
@@ -1474,16 +1479,36 @@ exports.reportProvider = async (req, res) => {
       reservationId: reservation.id,
       reason,
       description,
+      applyCooldown: false,
+    });
+    const attachments = await addProviderReportAttachments({
+      client,
+      reportId: report.id,
+      uploaderUserId: req.user.id,
+      files: req.files || [],
     });
 
     await client.query("COMMIT");
+    committed = true;
+    await applyProviderReportCooldown({ reportedBy: req.user.id }).catch((err) => {
+      logger.error("Failed to apply provider report cooldown", {
+        err,
+        reportedBy: req.user?.id,
+        reportId: report.id,
+      });
+    });
 
     res.status(201).json({
       message: "Provider report submitted for moderation.",
-      report,
+      report: {
+        ...report,
+        attachments,
+      },
     });
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!committed) {
+      await client.query("ROLLBACK");
+    }
     if (err.retryAfter) {
       res.set("Retry-After", String(err.retryAfter));
     }

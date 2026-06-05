@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const reservationCtrl = require("../controllers/reservation.controller");
+const upload = require("../middlewares/upload");
 const {
   paymentLimiter,
   reportLimiter,
@@ -30,6 +31,13 @@ router.get("/provider", authMiddleware, requireVerifiedProvider, reservationCtrl
 router.get("/:id", authMiddleware, requireActiveAccount, reservationCtrl.getReservationById);
 router.put("/:id/cancel", authMiddleware, requireActiveAccount, reservationCtrl.cancelReservation);
 router.put("/:id/pickup", authMiddleware, requireVerifiedProvider, reservationCtrl.markAsPickedUp);
-router.post("/:id/report-provider", reportLimiter, authMiddleware, requireActiveAccount, reservationCtrl.reportProvider);
+router.post(
+  "/:id/report-provider",
+  reportLimiter,
+  authMiddleware,
+  requireActiveAccount,
+  upload.providerReportAttachments.array("attachments", 3),
+  reservationCtrl.reportProvider
+);
 
 module.exports = router;

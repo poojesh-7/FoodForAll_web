@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_provider_report_attachments_uploader_created;
+DROP INDEX IF EXISTS idx_provider_report_attachments_report;
+DROP TABLE IF EXISTS provider_report_attachments;

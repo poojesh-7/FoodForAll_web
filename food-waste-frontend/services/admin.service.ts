@@ -16,6 +16,7 @@ import type {
   PendingNGOsResponse,
   PendingRestaurantRow,
   PendingRestaurantsResponse,
+  ProviderReportAttachmentRow,
 } from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
@@ -63,6 +64,7 @@ export type AdminProviderReport = {
   reservation_status?: string | null;
   reservation_task_status?: string | null;
   listing_title?: string | null;
+  attachments?: ProviderReportAttachmentRow[];
 };
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {

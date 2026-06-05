@@ -14,6 +14,18 @@ const allowedSignatures = [
       buffer[6] === 0x1a &&
       buffer[7] === 0x0a,
   },
+  {
+    mime: "image/webp",
+    matches: (buffer) =>
+      buffer[0] === 0x52 &&
+      buffer[1] === 0x49 &&
+      buffer[2] === 0x46 &&
+      buffer[3] === 0x46 &&
+      buffer[8] === 0x57 &&
+      buffer[9] === 0x45 &&
+      buffer[10] === 0x42 &&
+      buffer[11] === 0x50,
+  },
 ];
 
 function assertSafeImageBuffer(buffer, mimetype) {
@@ -46,7 +58,7 @@ async function uploadBuffer(buffer, options = {}) {
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const params = {
-    allowed_formats: "jpg,jpeg,png",
+    allowed_formats: "jpg,jpeg,png,webp",
     folder: cloudinaryOptions.folder,
     invalidate: cloudinaryOptions.invalidate ? "true" : undefined,
     overwrite: cloudinaryOptions.overwrite ? "true" : undefined,

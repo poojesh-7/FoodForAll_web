@@ -21,6 +21,9 @@ import type {
 } from "@shared/contracts/api-contracts";
 
 type MessageResponse = { message?: string };
+type ReportProviderPayload = ReportProviderRequest & {
+  attachments?: File[];
+};
 
 function encodeId(id: DbId) {
   return encodeURIComponent(String(id));
@@ -106,11 +109,38 @@ export async function confirmPickup(
 
 export async function reportProvider(
   id: DbId,
-  payload: ReportProviderRequest
+  payload: ReportProviderPayload
 ): Promise<void> {
+  const attachments = payload.attachments?.filter(Boolean) ?? [];
+
+  if (attachments.length > 0) {
+    const formData = new FormData();
+    formData.append("reason", payload.reason);
+    if (payload.description) {
+      formData.append("description", payload.description);
+    }
+    attachments.forEach((file) => {
+      formData.append("attachments", file);
+    });
+
+    await api.post<ReportProviderResponse | MessageResponse>(
+      `/reservations/${encodeId(id)}/report-provider`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+    return;
+  }
+
   await api.post<ReportProviderResponse | MessageResponse>(
     `/reservations/${encodeId(id)}/report-provider`,
-    payload
+    {
+      reason: payload.reason,
+      description: payload.description,
+    }
   );
 }
 

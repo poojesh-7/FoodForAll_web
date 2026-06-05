@@ -763,6 +763,15 @@ export interface ReportProviderRequest {
     | "incorrect_listing";
   description?: string | null;
 }
+export interface ProviderReportAttachmentRow extends DbRow {
+  id?: DbId;
+  report_id?: DbId;
+  uploader_user_id?: DbId;
+  file_url?: string;
+  mime_type?: string;
+  file_size_bytes?: number | string;
+  created_at?: ISODateString;
+}
 export interface ProviderReportRow extends DbRow {
   id?: DbId;
   provider_id?: DbId;
@@ -779,6 +788,7 @@ export interface ProviderReportRow extends DbRow {
   reservation_status?: string | null;
   reservation_task_status?: string | null;
   listing_title?: string | null;
+  attachments?: ProviderReportAttachmentRow[];
 }
 export type ReportProviderResponse = ApiResponse<ProviderReportRow>;
 

@@ -47,15 +47,18 @@ function errorHandler(err, req, res, next) {
   }
 
   if (err?.name === "MulterError") {
-    const message =
-      err.code === "LIMIT_FILE_SIZE"
-        ? "Uploaded file is too large"
-        : "Invalid upload";
+    let message = "Invalid upload";
+    if (err.code === "LIMIT_FILE_SIZE") {
+      message = "Uploaded file is too large";
+    } else if (err.code === "LIMIT_FILE_COUNT") {
+      message = "Too many files uploaded";
+    }
     return sendError(res, 400, message);
   }
 
   if (
     err?.message === "Only JPG, JPEG, PNG allowed" ||
+    err?.message === "Only JPG, JPEG, PNG, or WEBP images allowed" ||
     err?.message === "Uploaded file content does not match its image type" ||
     err?.message === "Uploaded file is empty"
   ) {

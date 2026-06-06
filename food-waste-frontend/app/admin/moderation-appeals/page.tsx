@@ -7,6 +7,11 @@ import { CheckCircle2, ExternalLink, Eye, X, XCircle } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
+  formatGovernanceDate,
+  formatGovernanceStatus,
+  governanceStatusBadge,
+} from "@/lib/governanceFormatting";
+import {
   adminService,
   type AdminModerationAppeal,
 } from "@/services/admin.service";
@@ -17,30 +22,10 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
-function displayLabel(value: unknown) {
-  return displayValue(value).replace(/_/g, " ");
-}
-
-function formatDate(value: string | undefined | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
 function formatFileSize(value: unknown) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function statusBadge(status: unknown) {
-  const value = String(status || "SUBMITTED").toUpperCase();
-  if (value === "ACCEPTED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "REJECTED") return "border-red-200 bg-red-50 text-red-700";
-  if (value === "WITHDRAWN") return "border-zinc-200 bg-zinc-100 text-zinc-700";
-  if (value === "UNDER_REVIEW") return "border-blue-200 bg-blue-50 text-blue-700";
-  return "border-amber-200 bg-amber-50 text-amber-800";
 }
 
 export default function ModerationAppealsPage() {
@@ -98,7 +83,7 @@ export default function ModerationAppealsPage() {
             )
       );
       setNotes((current) => ({ ...current, [String(appeal.id)]: "" }));
-      setSuccess(`Appeal moved to ${displayLabel(result.appeal.status)}.`);
+      setSuccess(`Appeal moved to ${formatGovernanceStatus(result.appeal.status)}.`);
     } catch (err) {
       setError(adminService.getErrorMessage(err));
     } finally {
@@ -134,7 +119,7 @@ export default function ModerationAppealsPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-xs font-medium uppercase text-zinc-500">
-                      {displayLabel(appeal.report_reason || appeal.case_reason)}
+                      {formatGovernanceStatus(appeal.report_reason || appeal.case_reason)}
                     </p>
                     <h2 className="mt-1 text-base font-semibold text-zinc-950">
                       {displayValue(appeal.provider_name)}
@@ -144,11 +129,11 @@ export default function ModerationAppealsPage() {
                     </p>
                   </div>
                   <span
-                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${statusBadge(
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${governanceStatusBadge(
                       appeal.status
                     )}`}
                   >
-                    {displayLabel(appeal.status)}
+                    {formatGovernanceStatus(appeal.status)}
                   </span>
                 </div>
 
@@ -158,7 +143,7 @@ export default function ModerationAppealsPage() {
                       Case
                     </dt>
                     <dd className="mt-1 font-semibold text-zinc-950">
-                      {displayLabel(appeal.case_status)}
+                      {formatGovernanceStatus(appeal.case_status)}
                     </dd>
                   </div>
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -166,7 +151,7 @@ export default function ModerationAppealsPage() {
                       Submitted
                     </dt>
                     <dd className="mt-1 font-semibold text-zinc-950">
-                      {formatDate(appeal.submitted_at)}
+                      {formatGovernanceDate(appeal.submitted_at)}
                     </dd>
                   </div>
                 </dl>

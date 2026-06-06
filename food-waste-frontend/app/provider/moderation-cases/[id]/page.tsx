@@ -16,6 +16,12 @@ import {
   Undo2,
   X,
 } from "lucide-react";
+import {
+  formatGovernanceDate,
+  formatGovernanceStatus,
+  getGovernanceEventPresentation,
+  governanceStatusBadge,
+} from "@/lib/governanceFormatting";
 import { providerModerationService } from "@/services/providerModeration.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
@@ -52,50 +58,10 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
-function displayLabel(value: unknown) {
-  return displayValue(value).replace(/_/g, " ");
-}
-
-function formatDate(value: string | undefined | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
 function formatFileSize(value: unknown) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function statusBadge(status: unknown) {
-  const value = String(status || "OPEN").toUpperCase();
-  if (value === "VALIDATED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "ACCEPTED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "DISMISSED") return "border-zinc-200 bg-zinc-100 text-zinc-700";
-  if (value === "REJECTED") return "border-red-200 bg-red-50 text-red-700";
-  if (value === "WITHDRAWN") return "border-zinc-200 bg-zinc-100 text-zinc-700";
-  if (value === "ESCALATED") return "border-red-200 bg-red-50 text-red-700";
-  if (value === "AWAITING_RESPONSE") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (value === "SUBMITTED") return "border-blue-200 bg-blue-50 text-blue-700";
-  if (value === "UNDER_REVIEW") return "border-blue-200 bg-blue-50 text-blue-700";
-  return "border-zinc-200 bg-white text-zinc-700";
-}
-
-function eventTitle(eventType: string) {
-  if (eventType === "CASE_OPENED") return "Case opened";
-  if (eventType === "CASE_STATUS_CHANGED") return "Status changed";
-  if (eventType === "CASE_PROVIDER_RESPONSE_SUBMITTED") {
-    return "Provider response submitted";
-  }
-  if (eventType === "CASE_APPEAL_SUBMITTED") return "Appeal submitted";
-  if (eventType === "CASE_APPEAL_WITHDRAWN") return "Appeal withdrawn";
-  if (eventType === "CASE_APPEAL_STATUS_CHANGED") return "Appeal status changed";
-  if (eventType === "APPEAL_SUBMITTED") return "Appeal submitted";
-  if (eventType === "APPEAL_WITHDRAWN") return "Appeal withdrawn";
-  if (eventType === "APPEAL_STATUS_CHANGED") return "Appeal status changed";
-  return displayLabel(eventType);
 }
 
 function attachmentUrl(attachment: EvidenceAttachment) {
@@ -403,7 +369,7 @@ export default function ProviderModerationCaseDetailPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-xs font-medium uppercase text-zinc-500">
-                      {displayLabel(moderationCase.reason || report?.reason)}
+                      {formatGovernanceStatus(moderationCase.reason || report?.reason)}
                     </p>
                     <h1 className="mt-1 text-xl font-semibold text-zinc-950">
                       {displayValue(report?.listing_title || moderationCase.summary)}
@@ -413,11 +379,11 @@ export default function ProviderModerationCaseDetailPage() {
                     </p>
                   </div>
                   <span
-                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${statusBadge(
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${governanceStatusBadge(
                       moderationCase.status
                     )}`}
                   >
-                    {displayLabel(moderationCase.status)}
+                    {formatGovernanceStatus(moderationCase.status)}
                   </span>
                 </div>
 
@@ -427,7 +393,7 @@ export default function ProviderModerationCaseDetailPage() {
                       Opened
                     </dt>
                     <dd className="mt-1 font-semibold text-zinc-950">
-                      {formatDate(moderationCase.created_at)}
+                      {formatGovernanceDate(moderationCase.created_at)}
                     </dd>
                   </div>
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -435,7 +401,7 @@ export default function ProviderModerationCaseDetailPage() {
                       Updated
                     </dt>
                     <dd className="mt-1 font-semibold text-zinc-950">
-                      {formatDate(moderationCase.updated_at)}
+                      {formatGovernanceDate(moderationCase.updated_at)}
                     </dd>
                   </div>
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -443,7 +409,7 @@ export default function ProviderModerationCaseDetailPage() {
                       Report Status
                     </dt>
                     <dd className="mt-1 font-semibold text-zinc-950">
-                      {displayLabel(report?.status)}
+                      {formatGovernanceStatus(report?.status)}
                     </dd>
                   </div>
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -462,7 +428,7 @@ export default function ProviderModerationCaseDetailPage() {
                   Original Report
                 </p>
                 <h2 className="mt-1 text-base font-semibold text-zinc-950">
-                  {displayLabel(report?.reason)}
+                  {formatGovernanceStatus(report?.reason)}
                 </h2>
                 {report?.description && (
                   <p className="mt-4 whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm leading-6 text-zinc-700">
@@ -522,7 +488,7 @@ export default function ProviderModerationCaseDetailPage() {
                     </h2>
                     <p className="mt-1 text-sm text-zinc-600">
                       {providerResponse
-                        ? `Updated ${formatDate(providerResponse.updated_at)}`
+                        ? `Updated ${formatGovernanceDate(providerResponse.updated_at)}`
                         : "No response has been submitted for this case."}
                     </p>
                   </div>
@@ -666,7 +632,7 @@ export default function ProviderModerationCaseDetailPage() {
                     </h2>
                     <p className="mt-1 text-sm text-zinc-600">
                       {appeal
-                        ? `Updated ${formatDate(appeal.updated_at)}`
+                        ? `Updated ${formatGovernanceDate(appeal.updated_at)}`
                         : terminal
                           ? "Add context after a final moderation decision."
                           : "Appeals become available after a final decision."}
@@ -675,13 +641,13 @@ export default function ProviderModerationCaseDetailPage() {
                   <span
                     className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${
                       appeal
-                        ? statusBadge(appeal.status)
+                        ? governanceStatusBadge(appeal.status)
                         : terminal
                           ? "border-blue-200 bg-blue-50 text-blue-700"
                           : "border-zinc-200 bg-zinc-100 text-zinc-600"
                     }`}
                   >
-                    {appeal ? displayLabel(appeal.status) : terminal ? "Available" : "Unavailable"}
+                    {appeal ? formatGovernanceStatus(appeal.status) : terminal ? "Available" : "Unavailable"}
                   </span>
                 </div>
 
@@ -743,31 +709,35 @@ export default function ProviderModerationCaseDetailPage() {
                           Appeal Timeline
                         </p>
                         <ol className="mt-2 space-y-2">
-                          {appeal.events.map((event) => (
-                            <li
-                              key={String(event.id)}
-                              className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
-                            >
-                              <p className="text-sm font-semibold text-zinc-950">
-                                {eventTitle(event.event_type)}
-                              </p>
-                              {event.from_status || event.to_status ? (
-                                <p className="mt-1 text-xs text-zinc-600">
-                                  {displayLabel(event.from_status)} to{" "}
-                                  {displayLabel(event.to_status)}
+                          {appeal.events.map((event) => {
+                            const presentation =
+                              getGovernanceEventPresentation(event);
+
+                            return (
+                              <li
+                                key={String(event.id)}
+                                className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
+                              >
+                                <p className="text-sm font-semibold text-zinc-950">
+                                  {presentation.title}
                                 </p>
-                              ) : null}
-                              {event.note && (
-                                <p className="mt-2 text-sm text-zinc-700">
-                                  {event.note}
+                                {presentation.description && (
+                                  <p className="mt-1 text-xs text-zinc-600">
+                                    {presentation.description}
+                                  </p>
+                                )}
+                                {event.note && (
+                                  <p className="mt-2 text-sm text-zinc-700">
+                                    {event.note}
+                                  </p>
+                                )}
+                                <p className="mt-2 text-xs text-zinc-500">
+                                  {formatGovernanceDate(event.created_at)} by{" "}
+                                  {displayValue(event.actor_name || event.actor_role)}
                                 </p>
-                              )}
-                              <p className="mt-2 text-xs text-zinc-500">
-                                {formatDate(event.created_at)} by{" "}
-                                {displayValue(event.actor_name || event.actor_role)}
-                              </p>
-                            </li>
-                          ))}
+                              </li>
+                            );
+                          })}
                         </ol>
                       </div>
                     )}
@@ -871,57 +841,60 @@ export default function ProviderModerationCaseDetailPage() {
               <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                 <h2 className="text-base font-semibold text-zinc-950">Timeline</h2>
                 <ol className="mt-4 space-y-3">
-                  {moderationCase.events.map((event) => (
-                    <li
-                      key={String(event.id)}
-                      className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-zinc-700">
-                          {event.event_type === "CASE_PROVIDER_RESPONSE_SUBMITTED" ? (
-                            <MessageSquare className="h-4 w-4" aria-hidden="true" />
-                          ) : event.event_type.includes("APPEAL") ? (
-                            <Scale className="h-4 w-4" aria-hidden="true" />
-                          ) : event.event_type === "CASE_STATUS_CHANGED" ? (
-                            <ShieldAlert className="h-4 w-4" aria-hidden="true" />
-                          ) : (
-                            <Clock3 className="h-4 w-4" aria-hidden="true" />
-                          )}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-zinc-950">
-                            {eventTitle(event.event_type)}
-                          </p>
-                          {event.from_status || event.to_status ? (
-                            <p className="mt-1 text-xs text-zinc-600">
-                              {displayLabel(event.from_status)} to{" "}
-                              {displayLabel(event.to_status)}
+                  {moderationCase.events.map((event) => {
+                    const presentation = getGovernanceEventPresentation(event);
+
+                    return (
+                      <li
+                        key={String(event.id)}
+                        className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-zinc-700">
+                            {event.event_type === "CASE_PROVIDER_RESPONSE_SUBMITTED" ? (
+                              <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                            ) : event.event_type.includes("APPEAL") ? (
+                              <Scale className="h-4 w-4" aria-hidden="true" />
+                            ) : event.event_type === "CASE_STATUS_CHANGED" ? (
+                              <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+                            ) : (
+                              <Clock3 className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-zinc-950">
+                              {presentation.title}
                             </p>
-                          ) : null}
-                          {event.note && (
-                            <p className="mt-2 text-sm text-zinc-700">
-                              {event.note}
+                            {presentation.description && (
+                              <p className="mt-1 text-xs text-zinc-600">
+                                {presentation.description}
+                              </p>
+                            )}
+                            {event.note && (
+                              <p className="mt-2 text-sm text-zinc-700">
+                                {event.note}
+                              </p>
+                            )}
+                            {event.event_type === "CASE_PROVIDER_RESPONSE_SUBMITTED" && (
+                              <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600">
+                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                {Number(
+                                  event.metadata?.attachment_count || 0
+                                )} image
+                                {Number(event.metadata?.attachment_count || 0) === 1
+                                  ? ""
+                                  : "s"}
+                              </p>
+                            )}
+                            <p className="mt-2 text-xs text-zinc-500">
+                              {formatGovernanceDate(event.created_at)} by{" "}
+                              {displayValue(event.actor_name || event.actor_role)}
                             </p>
-                          )}
-                          {event.event_type === "CASE_PROVIDER_RESPONSE_SUBMITTED" && (
-                            <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600">
-                              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                              {Number(
-                                event.metadata?.attachment_count || 0
-                              )} image
-                              {Number(event.metadata?.attachment_count || 0) === 1
-                                ? ""
-                                : "s"}
-                            </p>
-                          )}
-                          <p className="mt-2 text-xs text-zinc-500">
-                            {formatDate(event.created_at)} by{" "}
-                            {displayValue(event.actor_name || event.actor_role)}
-                          </p>
+                          </div>
                         </div>
-                      </div>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ol>
               </section>
             </aside>

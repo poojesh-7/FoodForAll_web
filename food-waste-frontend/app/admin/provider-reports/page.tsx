@@ -7,6 +7,10 @@ import { ExternalLink, X } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
+  formatGovernanceDate,
+  formatGovernanceStatus,
+} from "@/lib/governanceFormatting";
+import {
   adminService,
   type AdminProviderReport,
 } from "@/services/admin.service";
@@ -16,17 +20,6 @@ type ReportAttachment = NonNullable<AdminProviderReport["attachments"]>[number];
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
-}
-
-function displayLabel(value: unknown) {
-  return displayValue(value).replace(/_/g, " ");
-}
-
-function formatDate(value: string | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
 }
 
 function formatFileSize(value: unknown) {
@@ -107,17 +100,17 @@ export default function ProviderReportsPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-xs font-medium uppercase text-zinc-500">
-                    {displayLabel(report.reason)}
+                    {formatGovernanceStatus(report.reason)}
                   </p>
                   <h2 className="mt-1 text-base font-semibold text-zinc-950">
                     {displayValue(report.provider_name)}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-600">
-                    Reported by {displayValue(report.reporter_name)} ({displayLabel(report.reporter_role)})
+                    Reported by {displayValue(report.reporter_name)} ({formatGovernanceStatus(report.reporter_role)})
                   </p>
                 </div>
                 <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
-                  {displayValue(report.moderation_case_status || report.status)}
+                  {formatGovernanceStatus(report.moderation_case_status || report.status)}
                 </span>
               </div>
               <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
@@ -142,7 +135,7 @@ export default function ProviderReportsPage() {
                     Reservation Status
                   </dt>
                   <dd className="mt-1 font-semibold text-zinc-950">
-                    {displayLabel(report.reservation_task_status || report.reservation_status)}
+                    {formatGovernanceStatus(report.reservation_task_status || report.reservation_status)}
                   </dd>
                 </div>
                 <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -150,7 +143,7 @@ export default function ProviderReportsPage() {
                     Created
                   </dt>
                   <dd className="mt-1 font-semibold text-zinc-950">
-                    {formatDate(report.created_at)}
+                    {formatGovernanceDate(report.created_at)}
                   </dd>
                 </div>
               </dl>

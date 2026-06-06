@@ -11,6 +11,11 @@ import {
   Scale,
   ShieldAlert,
 } from "lucide-react";
+import {
+  formatGovernanceDate,
+  formatGovernanceStatus,
+  governanceStatusBadge,
+} from "@/lib/governanceFormatting";
 import { providerModerationService } from "@/services/providerModeration.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type { ProviderModerationCaseSummary } from "@shared/contracts/api-contracts";
@@ -20,27 +25,6 @@ const ACTIVE_STATUSES = new Set(["OPEN", "UNDER_REVIEW", "AWAITING_RESPONSE", "E
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
-}
-
-function displayLabel(value: unknown) {
-  return displayValue(value).replace(/_/g, " ");
-}
-
-function formatDate(value: string | undefined | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function statusBadge(status: unknown) {
-  const value = String(status || "OPEN").toUpperCase();
-  if (value === "VALIDATED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "DISMISSED") return "border-zinc-200 bg-zinc-100 text-zinc-700";
-  if (value === "ESCALATED") return "border-red-200 bg-red-50 text-red-700";
-  if (value === "AWAITING_RESPONSE") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (value === "UNDER_REVIEW") return "border-blue-200 bg-blue-50 text-blue-700";
-  return "border-zinc-200 bg-white text-zinc-700";
 }
 
 function StatCard({
@@ -209,14 +193,14 @@ export default function ProviderModerationCasesPage() {
                   <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-medium uppercase text-zinc-500">
-                        {displayLabel(item.report_reason || item.reason)}
+                        {formatGovernanceStatus(item.report_reason || item.reason)}
                       </p>
                       <span
-                        className={`rounded-md border px-2 py-1 text-xs font-semibold ${statusBadge(
+                        className={`rounded-md border px-2 py-1 text-xs font-semibold ${governanceStatusBadge(
                           item.status
                         )}`}
                       >
-                        {displayLabel(item.status)}
+                        {formatGovernanceStatus(item.status)}
                       </span>
                     </div>
                   </div>
@@ -252,7 +236,7 @@ export default function ProviderModerationCasesPage() {
                           Report
                         </dt>
                         <dd className="mt-1 text-zinc-950">
-                          {displayLabel(item.report_status)}
+                          {formatGovernanceStatus(item.report_status)}
                         </dd>
                       </div>
                       <div>
@@ -260,7 +244,7 @@ export default function ProviderModerationCasesPage() {
                           Updated
                         </dt>
                         <dd className="mt-1 text-zinc-950">
-                          {formatDate(item.updated_at)}
+                          {formatGovernanceDate(item.updated_at)}
                         </dd>
                       </div>
                       <div>
@@ -286,7 +270,7 @@ export default function ProviderModerationCasesPage() {
                       </span>
                       {item.appeal_id && (
                         <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
-                          Appeal {displayLabel(item.appeal_status)}
+                          Appeal {formatGovernanceStatus(item.appeal_status)}
                           {appealAttachmentCount > 0
                             ? ` (${appealAttachmentCount})`
                             : ""}

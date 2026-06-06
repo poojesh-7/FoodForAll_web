@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { providerModerationService } from "@/services/providerModeration.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { ProviderModerationCaseSummary } from "@shared/contracts/api-contracts";
 
 const ACTIVE_STATUSES = new Set(["OPEN", "UNDER_REVIEW", "AWAITING_RESPONSE", "ESCALATED"]);
@@ -76,29 +77,38 @@ function caseNeedsResponse(item: ProviderModerationCaseSummary) {
 }
 
 export default function ProviderModerationCasesPage() {
+  const moderationCaseVersion = useRealtimeStore(
+    (state) => state.moderationCaseVersion
+  );
   const [cases, setCases] = useState<ProviderModerationCaseSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let active = true;
-
-    providerModerationService
-      .getProviderModerationCases()
-      .then((result) => {
-        if (active) setCases(result);
-      })
-      .catch((err) => {
-        if (active) setError(providerModerationService.getErrorMessage(err));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
+  const loadCases = useCallback(async (showLoading = false) => {
+    try {
+      if (showLoading) setLoading(true);
+      setError("");
+      const result = await providerModerationService.getProviderModerationCases();
+      setCases(result);
+    } catch (err) {
+      setError(providerModerationService.getErrorMessage(err));
+    } finally {
+      if (showLoading) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadCases(true);
+    });
+  }, [loadCases]);
+
+  useEffect(() => {
+    if (!moderationCaseVersion) return;
+    queueMicrotask(() => {
+      void loadCases(false);
+    });
+  }, [loadCases, moderationCaseVersion]);
 
   const stats = useMemo(
     () => ({

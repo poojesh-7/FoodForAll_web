@@ -7,6 +7,9 @@ const {
   submitProviderCaseResponse,
 } = require("../shared/services/moderation.service");
 const {
+  notifyAdminsProviderResponseSubmitted,
+} = require("../shared/services/moderationNotification.service");
+const {
   recordOperationalEvent,
 } = require("../shared/services/observability.service");
 
@@ -89,6 +92,15 @@ exports.submitMyModerationCaseResponse = async (req, res) => {
     });
 
     await client.query("COMMIT");
+
+    void notifyAdminsProviderResponseSubmitted({
+      caseId: id,
+      providerId: req.user.id,
+      responseId: response.id,
+      attachmentCount: Array.isArray(response.attachments)
+        ? response.attachments.length
+        : 0,
+    });
 
     logger.security("Provider submitted moderation case response", {
       providerId: req.user?.id,

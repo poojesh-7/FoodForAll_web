@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -21,6 +21,7 @@ import {
   adminService,
   type AdminModerationCase,
 } from "@/services/admin.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ModerationCaseStatus,
   ProviderCaseResponseAttachmentRow,
@@ -105,6 +106,9 @@ function eventTitle(eventType: string) {
 export default function ModerationCaseDetailPage() {
   const params = useParams<{ id: string | string[] }>();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const moderationCaseEvent = useRealtimeStore(
+    (state) => state.moderationCases[String(caseId)]
+  );
   const [moderationCase, setModerationCase] = useState<AdminModerationCase | null>(null);
   const [loading, setLoading] = useState(true);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
@@ -114,26 +118,34 @@ export default function ModerationCaseDetailPage() {
   const [previewAttachment, setPreviewAttachment] =
     useState<EvidenceAttachment | null>(null);
 
-  useEffect(() => {
-    let active = true;
-
-    queueMicrotask(async () => {
+  const loadCase = useCallback(
+    async (showLoading = false) => {
       try {
-        setLoading(true);
+        if (showLoading) setLoading(true);
         setError("");
         const result = await adminService.getModerationCase(caseId);
-        if (active) setModerationCase(result);
+        setModerationCase(result);
       } catch (err) {
-        if (active) setError(adminService.getErrorMessage(err));
+        setError(adminService.getErrorMessage(err));
       } finally {
-        if (active) setLoading(false);
+        if (showLoading) setLoading(false);
       }
-    });
+    },
+    [caseId]
+  );
 
-    return () => {
-      active = false;
-    };
-  }, [caseId]);
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadCase(true);
+    });
+  }, [loadCase]);
+
+  useEffect(() => {
+    if (!moderationCaseEvent) return;
+    queueMicrotask(() => {
+      void loadCase(false);
+    });
+  }, [loadCase, moderationCaseEvent]);
 
   const transition = async (status: ModerationCaseStatus) => {
     try {

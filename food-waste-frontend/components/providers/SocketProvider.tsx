@@ -51,6 +51,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     const applyPayment = useRealtimeStore.getState().applyPayment;
     const applyVolunteer = useRealtimeStore.getState().applyVolunteer;
     const applyListing = useRealtimeStore.getState().applyListing;
+    const applyModerationCase = useRealtimeStore.getState().applyModerationCase;
     const receiveNotification =
       useNotificationStore.getState().receiveNotification;
     const handleNotification = (notification: NotificationRow) => {
@@ -67,6 +68,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     socket.on("payment_updated", applyPayment);
     socket.on("volunteer_updated", applyVolunteer);
     socket.on("listing_updated", applyListing);
+    socket.on("moderation_case_updated", applyModerationCase);
     socket.on("notification", handleNotification);
 
     return () => {
@@ -75,6 +77,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
       socket.off("payment_updated", applyPayment);
       socket.off("volunteer_updated", applyVolunteer);
       socket.off("listing_updated", applyListing);
+      socket.off("moderation_case_updated", applyModerationCase);
       socket.off("notification", handleNotification);
     };
   }, []);

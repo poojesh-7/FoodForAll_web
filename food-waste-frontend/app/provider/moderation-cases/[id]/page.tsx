@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { providerModerationService } from "@/services/providerModeration.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ModerationCaseDetail,
   ProviderCaseResponseAttachmentRow,
@@ -89,6 +90,9 @@ function attachmentUrl(attachment: EvidenceAttachment) {
 export default function ProviderModerationCaseDetailPage() {
   const params = useParams<{ id: string | string[] }>();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const moderationCaseEvent = useRealtimeStore(
+    (state) => state.moderationCases[String(caseId)]
+  );
 
   const [moderationCase, setModerationCase] =
     useState<ModerationCaseDetail | null>(null);
@@ -101,27 +105,37 @@ export default function ProviderModerationCaseDetailPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  useEffect(() => {
-    let active = true;
-
-    providerModerationService
-      .getProviderModerationCase(caseId)
-      .then((result) => {
-        if (!active) return;
+  const loadCase = useCallback(
+    async (showLoading = false, syncResponseText = true) => {
+      try {
+        if (showLoading) setLoading(true);
+        setError("");
+        const result = await providerModerationService.getProviderModerationCase(caseId);
         setModerationCase(result);
-        setResponseText(result.provider_response?.response_text || "");
-      })
-      .catch((err) => {
-        if (active) setError(providerModerationService.getErrorMessage(err));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+        if (syncResponseText) {
+          setResponseText(result.provider_response?.response_text || "");
+        }
+      } catch (err) {
+        setError(providerModerationService.getErrorMessage(err));
+      } finally {
+        if (showLoading) setLoading(false);
+      }
+    },
+    [caseId]
+  );
 
-    return () => {
-      active = false;
-    };
-  }, [caseId]);
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadCase(true);
+    });
+  }, [loadCase]);
+
+  useEffect(() => {
+    if (!moderationCaseEvent) return;
+    queueMicrotask(() => {
+      void loadCase(false, false);
+    });
+  }, [loadCase, moderationCaseEvent]);
 
   useEffect(() => {
     selectedImagesRef.current = selectedImages;

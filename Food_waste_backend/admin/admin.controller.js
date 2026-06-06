@@ -23,6 +23,9 @@ const {
   validateProviderReport,
 } = require("../shared/services/moderation.service");
 const {
+  notifyProviderModerationStatus,
+} = require("../shared/services/moderationNotification.service");
+const {
   SUBJECT_TYPES,
   getTrustEvents,
   getTrustSubject,
@@ -878,6 +881,18 @@ exports.updateModerationCaseStatus = async (req, res) => {
     const moderationCase = await getModerationCaseDetail({ client, caseId: id });
     await client.query("COMMIT");
 
+    if (
+      moderationCase &&
+      currentDetail.status !== moderationCase.status &&
+      moderationCase.subject_type === "provider"
+    ) {
+      void notifyProviderModerationStatus({
+        providerId: moderationCase.subject_id,
+        caseId: moderationCase.id,
+        status: moderationCase.status,
+      });
+    }
+
     logger.security("Moderation case status updated", {
       adminId: req.user?.id,
       caseId: id,
@@ -939,6 +954,11 @@ async function reviewProviderReport(req, res, action) {
     }
 
     await client.query("COMMIT");
+    void notifyProviderModerationStatus({
+      providerId: report.provider_id,
+      caseId: report.moderation_case_id,
+      status: report.moderation_case_status,
+    });
     logger.security("Provider report reviewed", {
       adminId: req.user?.id,
       reportId: id,

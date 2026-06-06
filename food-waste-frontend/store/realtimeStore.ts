@@ -25,19 +25,30 @@ export type ListingRealtimePayload = {
   listing?: FoodListingRow;
 };
 
+export type ModerationCaseRealtimePayload = {
+  action?: string;
+  case_id?: DbId;
+  status?: string | null;
+  response_id?: DbId | null;
+  attachment_count?: number | string | null;
+};
+
 type RealtimeState = {
   reservationVersion: number;
   paymentVersion: number;
   volunteerVersion: number;
   listingVersion: number;
+  moderationCaseVersion: number;
   reservations: Record<string, RealtimeEntity>;
   payments: Record<string, RealtimeEntity>;
   listings: Record<string, FoodListingRow>;
   volunteers: Record<string, RealtimeEntity>;
+  moderationCases: Record<string, ModerationCaseRealtimePayload>;
   applyReservation: (payload: ReservationRealtimePayload) => void;
   applyPayment: (payload: PaymentRealtimePayload) => void;
   applyVolunteer: (payload: VolunteerRealtimePayload) => void;
   applyListing: (payload: ListingRealtimePayload) => void;
+  applyModerationCase: (payload: ModerationCaseRealtimePayload) => void;
   resetRealtime: () => void;
 };
 
@@ -51,10 +62,12 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   paymentVersion: 0,
   volunteerVersion: 0,
   listingVersion: 0,
+  moderationCaseVersion: 0,
   reservations: {},
   payments: {},
   listings: {},
   volunteers: {},
+  moderationCases: {},
 
   applyReservation: (payload) =>
     set((state) => {
@@ -152,15 +165,37 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       };
     }),
 
+  applyModerationCase: (payload) =>
+    set((state) => {
+      const key =
+        payload.case_id === undefined || payload.case_id === null
+          ? null
+          : String(payload.case_id);
+      return {
+        moderationCaseVersion: state.moderationCaseVersion + 1,
+        moderationCases: key
+          ? {
+              ...state.moderationCases,
+              [key]: {
+                ...(state.moderationCases[key] ?? {}),
+                ...payload,
+              },
+            }
+          : state.moderationCases,
+      };
+    }),
+
   resetRealtime: () =>
     set({
       reservationVersion: 0,
       paymentVersion: 0,
       volunteerVersion: 0,
       listingVersion: 0,
+      moderationCaseVersion: 0,
       reservations: {},
       payments: {},
       listings: {},
       volunteers: {},
+      moderationCases: {},
     }),
 }));

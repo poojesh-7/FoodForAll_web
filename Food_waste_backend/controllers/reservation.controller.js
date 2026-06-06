@@ -29,6 +29,10 @@ const {
   createProviderReport,
 } = require("../shared/services/moderation.service");
 const {
+  notifyAdminsProviderReportSubmitted,
+  notifyProviderReportSubmittedAgainstProvider,
+} = require("../shared/services/operationalNotification.service");
+const {
   blockingReservationWhere,
   pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
@@ -1496,6 +1500,17 @@ exports.reportProvider = async (req, res) => {
         reportedBy: req.user?.id,
         reportId: report.id,
       });
+    });
+    void notifyAdminsProviderReportSubmitted({
+      reportId: report.id,
+      caseId: report.moderation_case_id,
+      providerId: report.provider_id,
+      reporterId: req.user.id,
+    });
+    void notifyProviderReportSubmittedAgainstProvider({
+      providerId: report.provider_id,
+      reportId: report.id,
+      caseId: report.moderation_case_id,
     });
 
     res.status(201).json({

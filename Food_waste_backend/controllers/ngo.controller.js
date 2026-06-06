@@ -37,6 +37,9 @@ const {
   parseBoolean,
   toNumber,
 } = require("../utils/validation");
+const {
+  notifyAdminsNgoVerificationSubmitted,
+} = require("../shared/services/operationalNotification.service");
 
 const RESERVATION_EXISTS_MESSAGE = "User already has reservation for this listing.";
 
@@ -279,6 +282,10 @@ exports.registerNGO = async (req, res) => {
         ? "NGO verification resubmitted successfully"
         : "NGO registered successfully",
       ngo,
+    });
+    void notifyAdminsNgoVerificationSubmitted({
+      ngoId: ngo.id,
+      ngoUserId: ngo.user_id,
     });
 
   } catch (err) {

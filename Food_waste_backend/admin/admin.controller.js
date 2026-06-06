@@ -26,6 +26,13 @@ const {
   notifyProviderModerationStatus,
 } = require("../shared/services/moderationNotification.service");
 const {
+  notifyAdminsModerationCaseEscalated,
+  notifyNgoVerificationApproved,
+  notifyNgoVerificationRejected,
+  notifyProviderVerificationApproved,
+  notifyProviderVerificationRejected,
+} = require("../shared/services/operationalNotification.service");
+const {
   SUBJECT_TYPES,
   getTrustEvents,
   getTrustSubject,
@@ -117,6 +124,11 @@ exports.approveNGO = async (req, res) => {
 
     await client.query("COMMIT");
 
+    void notifyNgoVerificationApproved({
+      ngoUserId: result.rows[0].user_id,
+      ngoId: result.rows[0].id,
+    });
+
     logger.security("Admin approved NGO", {
       adminId: req.user?.id,
       ngoId: id,
@@ -154,13 +166,23 @@ exports.rejectNGO = async (req, res) => {
 
     const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
     const result = await pool.query(
-      `UPDATE ngos SET is_verified=false, rejection_reason=$1 WHERE id=$2`,
+      `
+      UPDATE ngos
+      SET is_verified=false, rejection_reason=$1
+      WHERE id=$2
+      RETURNING id, user_id
+      `,
       [rejectionReason || "Rejected by admin", id]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "NGO not found" });
     }
+
+    void notifyNgoVerificationRejected({
+      ngoUserId: result.rows[0].user_id,
+      ngoId: result.rows[0].id,
+    });
 
     logger.security("Admin rejected NGO", { adminId: req.user?.id, ngoId: id });
     void recordOperationalEvent({
@@ -250,6 +272,11 @@ exports.approveRestaurant = async (req, res) => {
 
     await client.query("COMMIT");
 
+    void notifyProviderVerificationApproved({
+      providerId: result.rows[0].user_id,
+      restaurantId: result.rows[0].id,
+    });
+
     logger.security("Admin approved restaurant", {
       adminId: req.user?.id,
       restaurantId: id,
@@ -291,13 +318,23 @@ exports.rejectRestaurant = async (req, res) => {
 
     const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
     const result = await pool.query(
-      `UPDATE restaurants SET is_verified=false, rejection_reason=$1 WHERE id=$2`,
+      `
+      UPDATE restaurants
+      SET is_verified=false, rejection_reason=$1
+      WHERE id=$2
+      RETURNING id, user_id
+      `,
       [rejectionReason || "Rejected by admin", id]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: "Restaurant not found" });
     }
+
+    void notifyProviderVerificationRejected({
+      providerId: result.rows[0].user_id,
+      restaurantId: result.rows[0].id,
+    });
 
     logger.security("Admin rejected restaurant", {
       adminId: req.user?.id,
@@ -891,6 +928,12 @@ exports.updateModerationCaseStatus = async (req, res) => {
         caseId: moderationCase.id,
         status: moderationCase.status,
       });
+      if (moderationCase.status === "ESCALATED") {
+        void notifyAdminsModerationCaseEscalated({
+          caseId: moderationCase.id,
+          providerId: moderationCase.subject_id,
+        });
+      }
     }
 
     logger.security("Moderation case status updated", {

@@ -7,6 +7,9 @@ const {
   blockingReservationWhere,
 } = require("../shared/services/reservationLock.service");
 const { publishListingUpdated } = require("../shared/services/realtime.service");
+const {
+  notifyAdminsProviderVerificationSubmitted,
+} = require("../shared/services/operationalNotification.service");
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const {
@@ -235,6 +238,10 @@ exports.registerRestaurant = async (req, res) => {
         ? "Restaurant verification resubmitted successfully"
         : "Restaurant registered successfully",
       restaurant: result.rows[0],
+    });
+    void notifyAdminsProviderVerificationSubmitted({
+      providerId: result.rows[0].user_id,
+      restaurantId: result.rows[0].id,
     });
 
   } catch (err) {

@@ -16,6 +16,21 @@ const PROVIDER_STATUS_NOTIFICATIONS = {
   },
 };
 
+const PROVIDER_APPEAL_STATUS_NOTIFICATIONS = {
+  UNDER_REVIEW: {
+    type: "moderation_appeal_under_review",
+    message: "Your appeal is under review.",
+  },
+  ACCEPTED: {
+    type: "moderation_appeal_accepted",
+    message: "Your appeal has been accepted.",
+  },
+  REJECTED: {
+    type: "moderation_appeal_rejected",
+    message: "Your appeal has been rejected.",
+  },
+};
+
 function getNotificationQueue() {
   return require("../../queues/notification.queue");
 }
@@ -29,9 +44,10 @@ function moderationNotificationData({
   caseId,
   status = null,
   responseId = null,
+  appealId = null,
   attachmentCount = null,
 }) {
-  return {
+  const data = {
     action,
     case_id: caseId,
     status,
@@ -39,6 +55,10 @@ function moderationNotificationData({
     attachment_count: attachmentCount,
     href: caseId ? `/provider/moderation-cases/${caseId}` : undefined,
   };
+  if (appealId !== null && appealId !== undefined) {
+    data.appeal_id = appealId;
+  }
+  return data;
 }
 
 async function enqueueNotification({
@@ -67,20 +87,25 @@ async function publishModerationCaseUpdated({
   caseId,
   status = null,
   responseId = null,
+  appealId = null,
   attachmentCount = null,
   publish = null,
 }) {
   const uniqueUserIds = [...new Set((userIds || []).filter(Boolean))];
   const activePublish = publish || getPublishSocketEvent();
+  const payload = {
+    action,
+    case_id: caseId,
+    status,
+    response_id: responseId,
+    attachment_count: attachmentCount,
+  };
+  if (appealId !== null && appealId !== undefined) {
+    payload.appeal_id = appealId;
+  }
   await Promise.all(
     uniqueUserIds.map((userId) =>
-      activePublish(`user:${userId}`, "moderation_case_updated", {
-        action,
-        case_id: caseId,
-        status,
-        response_id: responseId,
-        attachment_count: attachmentCount,
-      })
+      activePublish(`user:${userId}`, "moderation_case_updated", payload)
     )
   );
 }
@@ -214,9 +239,206 @@ async function notifyAdminsProviderResponseSubmitted({
   return adminIds;
 }
 
+async function notifyAdminsAppealSubmitted({
+  caseId,
+  providerId,
+  appealId,
+  attachmentCount = 0,
+  client = pool,
+  queue = null,
+  publish = null,
+}) {
+  if (!caseId || !providerId || !appealId) return [];
+
+  let adminIds = [];
+  try {
+    adminIds = await getAdminUserIds({ client });
+  } catch (err) {
+    logger.warn("Admin lookup for appeal notification failed", {
+      err,
+      caseId,
+      providerId,
+      appealId,
+    });
+    return [];
+  }
+
+  const data = moderationNotificationData({
+    action: "appeal_submitted",
+    caseId,
+    appealId,
+    attachmentCount,
+  });
+
+  await Promise.all(
+    adminIds.map((adminId) =>
+      enqueueNotification({
+        userId: adminId,
+        type: "moderation_appeal_submitted",
+        message: "Provider submitted an appeal.",
+        data: {
+          ...data,
+          href: `/admin/moderation-cases/${caseId}`,
+        },
+        queue,
+      }).catch((err) => {
+        logger.warn("Admin appeal notification enqueue failed", {
+          err,
+          adminId,
+          caseId,
+          providerId,
+          appealId,
+        });
+      })
+    )
+  );
+
+  await publishModerationCaseUpdated({
+    userIds: adminIds,
+    action: "appeal_submitted",
+    caseId,
+    appealId,
+    attachmentCount,
+    publish,
+  }).catch((err) => {
+    logger.warn("Admin appeal realtime publish failed", {
+      err,
+      caseId,
+      providerId,
+      appealId,
+    });
+  });
+
+  return adminIds;
+}
+
+async function notifyAdminsAppealWithdrawn({
+  caseId,
+  providerId,
+  appealId,
+  client = pool,
+  queue = null,
+  publish = null,
+}) {
+  if (!caseId || !providerId || !appealId) return [];
+
+  let adminIds = [];
+  try {
+    adminIds = await getAdminUserIds({ client });
+  } catch (err) {
+    logger.warn("Admin lookup for appeal withdrawal notification failed", {
+      err,
+      caseId,
+      providerId,
+      appealId,
+    });
+    return [];
+  }
+
+  const data = moderationNotificationData({
+    action: "appeal_withdrawn",
+    caseId,
+    appealId,
+    status: "WITHDRAWN",
+  });
+
+  await Promise.all(
+    adminIds.map((adminId) =>
+      enqueueNotification({
+        userId: adminId,
+        type: "moderation_appeal_withdrawn",
+        message: "Provider withdrew a moderation appeal.",
+        data: {
+          ...data,
+          href: `/admin/moderation-cases/${caseId}`,
+        },
+        queue,
+      }).catch((err) => {
+        logger.warn("Admin appeal withdrawal notification enqueue failed", {
+          err,
+          adminId,
+          caseId,
+          providerId,
+          appealId,
+        });
+      })
+    )
+  );
+
+  await publishModerationCaseUpdated({
+    userIds: adminIds,
+    action: "appeal_withdrawn",
+    caseId,
+    status: "WITHDRAWN",
+    appealId,
+    publish,
+  }).catch((err) => {
+    logger.warn("Admin appeal withdrawal realtime publish failed", {
+      err,
+      caseId,
+      providerId,
+      appealId,
+    });
+  });
+
+  return adminIds;
+}
+
+async function notifyProviderAppealStatus({
+  providerId,
+  caseId,
+  appealId,
+  status,
+  queue = null,
+  publish = null,
+}) {
+  const normalizedStatus = String(status || "").toUpperCase();
+  const config = PROVIDER_APPEAL_STATUS_NOTIFICATIONS[normalizedStatus];
+
+  if (!config || !providerId || !caseId || !appealId) return null;
+
+  const data = moderationNotificationData({
+    action: "appeal_status_changed",
+    caseId,
+    appealId,
+    status: normalizedStatus,
+  });
+
+  try {
+    await enqueueNotification({
+      userId: providerId,
+      type: config.type,
+      message: config.message,
+      data,
+      queue,
+    });
+    await publishModerationCaseUpdated({
+      userIds: [providerId],
+      action: "appeal_status_changed",
+      caseId,
+      appealId,
+      status: normalizedStatus,
+      publish,
+    });
+  } catch (err) {
+    logger.warn("Provider appeal notification failed", {
+      err,
+      providerId,
+      caseId,
+      appealId,
+      status: normalizedStatus,
+    });
+  }
+
+  return data;
+}
+
 module.exports = {
   getAdminUserIds,
+  notifyAdminsAppealSubmitted,
+  notifyAdminsAppealWithdrawn,
   notifyAdminsProviderResponseSubmitted,
+  notifyProviderAppealStatus,
   notifyProviderModerationStatus,
   publishModerationCaseUpdated,
 };

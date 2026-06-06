@@ -2,7 +2,10 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  notifyAdminsAppealSubmitted,
+  notifyAdminsAppealWithdrawn,
   notifyAdminsProviderResponseSubmitted,
+  notifyProviderAppealStatus,
   notifyProviderModerationStatus,
 } = require("../shared/services/moderationNotification.service");
 
@@ -11,6 +14,7 @@ const ADMIN_ID = "22222222-2222-4222-8222-222222222222";
 const SECOND_ADMIN_ID = "33333333-3333-4333-8333-333333333333";
 const CASE_ID = "44444444-4444-4444-8444-444444444444";
 const RESPONSE_ID = "55555555-5555-4555-8555-555555555555";
+const APPEAL_ID = "66666666-6666-4666-8666-666666666666";
 
 function createQueueStub() {
   const jobs = [];
@@ -154,4 +158,109 @@ test("provider response notifications are sent only to admin users", async () =>
   assert.equal(realtime.events[0].event, "moderation_case_updated");
   assert.equal(realtime.events[0].data.action, "provider_response_submitted");
   assert.equal(realtime.events[0].data.attachment_count, 2);
+});
+
+test("provider appeal submission notifications are sent only to admin users", async () => {
+  const queue = createQueueStub();
+  const realtime = createPublishStub();
+  const client = {
+    async query(sql) {
+      assert.match(sql, /WHERE role='admin'/);
+      assert.match(sql, /is_verified=true/);
+      return {
+        rows: [{ id: ADMIN_ID }, { id: SECOND_ADMIN_ID }],
+      };
+    },
+  };
+
+  const adminIds = await notifyAdminsAppealSubmitted({
+    caseId: CASE_ID,
+    providerId: PROVIDER_ID,
+    appealId: APPEAL_ID,
+    attachmentCount: 3,
+    client,
+    queue,
+    publish: realtime.publish,
+  });
+
+  assert.deepEqual(adminIds, [ADMIN_ID, SECOND_ADMIN_ID]);
+  assert.deepEqual(
+    queue.jobs.map((job) => job.data.userId),
+    [ADMIN_ID, SECOND_ADMIN_ID]
+  );
+  assert.equal(queue.jobs[0].data.type, "moderation_appeal_submitted");
+  assert.equal(queue.jobs[0].data.message, "Provider submitted an appeal.");
+  assert.equal(realtime.events[0].data.action, "appeal_submitted");
+  assert.equal(realtime.events[0].data.appeal_id, APPEAL_ID);
+  assert.equal(realtime.events[0].data.attachment_count, 3);
+});
+
+test("provider appeal decision notifications use exact provider messages", async () => {
+  for (const [status, expectedType, expectedMessage] of [
+    [
+      "UNDER_REVIEW",
+      "moderation_appeal_under_review",
+      "Your appeal is under review.",
+    ],
+    [
+      "ACCEPTED",
+      "moderation_appeal_accepted",
+      "Your appeal has been accepted.",
+    ],
+    [
+      "REJECTED",
+      "moderation_appeal_rejected",
+      "Your appeal has been rejected.",
+    ],
+  ]) {
+    const queue = createQueueStub();
+    const realtime = createPublishStub();
+
+    await notifyProviderAppealStatus({
+      providerId: PROVIDER_ID,
+      caseId: CASE_ID,
+      appealId: APPEAL_ID,
+      status,
+      queue,
+      publish: realtime.publish,
+    });
+
+    assert.equal(queue.jobs.length, 1);
+    assert.equal(queue.jobs[0].data.userId, PROVIDER_ID);
+    assert.equal(queue.jobs[0].data.type, expectedType);
+    assert.equal(queue.jobs[0].data.message, expectedMessage);
+    assert.equal(realtime.events[0].data.action, "appeal_status_changed");
+    assert.equal(realtime.events[0].data.status, status);
+    assert.equal(realtime.events[0].data.appeal_id, APPEAL_ID);
+  }
+});
+
+test("provider appeal withdrawal notifications are sent only to admin users", async () => {
+  const queue = createQueueStub();
+  const realtime = createPublishStub();
+  const client = {
+    async query(sql) {
+      assert.match(sql, /WHERE role='admin'/);
+      return { rows: [{ id: ADMIN_ID }] };
+    },
+  };
+
+  await notifyAdminsAppealWithdrawn({
+    caseId: CASE_ID,
+    providerId: PROVIDER_ID,
+    appealId: APPEAL_ID,
+    client,
+    queue,
+    publish: realtime.publish,
+  });
+
+  assert.equal(queue.jobs.length, 1);
+  assert.equal(queue.jobs[0].data.userId, ADMIN_ID);
+  assert.equal(queue.jobs[0].data.type, "moderation_appeal_withdrawn");
+  assert.equal(
+    queue.jobs[0].data.message,
+    "Provider withdrew a moderation appeal."
+  );
+  assert.equal(realtime.events[0].data.action, "appeal_withdrawn");
+  assert.equal(realtime.events[0].data.status, "WITHDRAWN");
 });

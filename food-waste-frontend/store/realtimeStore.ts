@@ -30,6 +30,7 @@ export type ModerationCaseRealtimePayload = {
   case_id?: DbId;
   status?: string | null;
   response_id?: DbId | null;
+  appeal_id?: DbId | null;
   attachment_count?: number | string | null;
 };
 

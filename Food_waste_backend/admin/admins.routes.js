@@ -37,6 +37,22 @@ router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
 router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
 router.get("/provider-reports", adminCtrl.getProviderReports);
 router.get("/moderation-cases/:id", adminCtrl.getModerationCase);
+router.get("/moderation-appeals", adminCtrl.getModerationAppeals);
+router.patch(
+  "/moderation-appeals/:id/review",
+  adminActionLimiter,
+  adminCtrl.reviewModerationAppeal,
+);
+router.patch(
+  "/moderation-appeals/:id/accept",
+  adminActionLimiter,
+  adminCtrl.acceptModerationAppeal,
+);
+router.patch(
+  "/moderation-appeals/:id/reject",
+  adminActionLimiter,
+  adminCtrl.rejectModerationAppeal,
+);
 router.patch(
   "/moderation-cases/:id/status",
   adminActionLimiter,

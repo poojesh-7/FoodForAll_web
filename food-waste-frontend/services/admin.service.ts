@@ -14,12 +14,15 @@ import type {
   DbId,
   GetModerationCaseResponse,
   ModerationCaseDetail,
+  ModerationAppealsAdminResponse,
+  ModerationAppealRow,
   ModerationCaseStatus,
   PendingNGORow,
   PendingNGOsResponse,
   PendingRestaurantRow,
   PendingRestaurantsResponse,
   ProviderReportAttachmentRow,
+  UpdateModerationAppealStatusResponse,
 } from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
@@ -72,6 +75,7 @@ export type AdminProviderReport = {
   attachments?: ProviderReportAttachmentRow[];
 };
 export type AdminModerationCase = ModerationCaseDetail;
+export type AdminModerationAppeal = ModerationAppealRow;
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -221,6 +225,53 @@ export async function getModerationCase(id: DbId): Promise<AdminModerationCase> 
   return getEnvelopeData<{ case: AdminModerationCase }>(data).case;
 }
 
+export async function getModerationAppeals(
+  status: "open" | "all" | string = "open"
+): Promise<AdminModerationAppeal[]> {
+  const { data } = await api.get<
+    ModerationAppealsAdminResponse | { appeals: AdminModerationAppeal[] }
+  >("/admin/moderation-appeals", { params: { status } });
+
+  return getEnvelopeData<{ appeals: AdminModerationAppeal[] }>(data).appeals;
+}
+
+async function patchModerationAppeal(
+  id: DbId,
+  action: "review" | "accept" | "reject",
+  note?: string | null
+): Promise<{ appeal: AdminModerationAppeal; case: AdminModerationCase }> {
+  const { data } = await api.patch<
+    | UpdateModerationAppealStatusResponse
+    | { appeal: AdminModerationAppeal; case: AdminModerationCase }
+  >(`/admin/moderation-appeals/${String(id)}/${action}`, { note });
+
+  return getEnvelopeData<{
+    appeal: AdminModerationAppeal;
+    case: AdminModerationCase;
+  }>(data);
+}
+
+export async function reviewModerationAppeal(
+  id: DbId,
+  note?: string | null
+): Promise<{ appeal: AdminModerationAppeal; case: AdminModerationCase }> {
+  return patchModerationAppeal(id, "review", note);
+}
+
+export async function acceptModerationAppeal(
+  id: DbId,
+  note?: string | null
+): Promise<{ appeal: AdminModerationAppeal; case: AdminModerationCase }> {
+  return patchModerationAppeal(id, "accept", note);
+}
+
+export async function rejectModerationAppeal(
+  id: DbId,
+  note?: string | null
+): Promise<{ appeal: AdminModerationAppeal; case: AdminModerationCase }> {
+  return patchModerationAppeal(id, "reject", note);
+}
+
 export async function updateModerationCaseStatus(
   id: DbId,
   status: ModerationCaseStatus,
@@ -250,6 +301,10 @@ export const adminService = {
   validateProviderReport,
   dismissProviderReport,
   getModerationCase,
+  getModerationAppeals,
+  reviewModerationAppeal,
+  acceptModerationAppeal,
+  rejectModerationAppeal,
   updateModerationCaseStatus,
   getBullBoardUrl,
   getAssetUrl,

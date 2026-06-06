@@ -4,9 +4,13 @@ const { isValidId } = require("../utils/validation");
 const {
   getProviderModerationCaseDetail,
   listProviderModerationCases,
+  submitProviderModerationAppeal,
   submitProviderCaseResponse,
+  withdrawProviderModerationAppeal,
 } = require("../shared/services/moderation.service");
 const {
+  notifyAdminsAppealSubmitted,
+  notifyAdminsAppealWithdrawn,
   notifyAdminsProviderResponseSubmitted,
 } = require("../shared/services/moderationNotification.service");
 const {
@@ -135,6 +139,160 @@ exports.submitMyModerationCaseResponse = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Provider response failed",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.submitMyModerationCaseAppeal = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Moderation case id is required" });
+  }
+
+  const appealText = req.body?.appeal_text || req.body?.appealText;
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const appeal = await submitProviderModerationAppeal({
+      client,
+      caseId: id,
+      providerId: req.user.id,
+      appealText,
+      files: req.files || [],
+    });
+
+    if (!appeal) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Moderation case not found" });
+    }
+
+    const moderationCase = await getProviderModerationCaseDetail({
+      client,
+      caseId: id,
+      providerId: req.user.id,
+    });
+
+    await client.query("COMMIT");
+
+    void notifyAdminsAppealSubmitted({
+      caseId: id,
+      providerId: req.user.id,
+      appealId: appeal.id,
+      attachmentCount: Array.isArray(appeal.attachments)
+        ? appeal.attachments.length
+        : 0,
+    });
+
+    logger.security("Provider submitted moderation appeal", {
+      providerId: req.user?.id,
+      caseId: id,
+      appealId: appeal.id,
+      attachmentCount: Array.isArray(appeal.attachments)
+        ? appeal.attachments.length
+        : 0,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "provider_moderation_appeal_submitted",
+      metadata: {
+        providerId: req.user?.id,
+        caseId: id,
+        appealId: appeal.id,
+      },
+    });
+
+    res.status(201).json({
+      message: "Appeal submitted",
+      appeal,
+      case: moderationCase,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Provider moderation appeal submission failed", {
+      err,
+      providerId: req.user?.id,
+      caseId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Appeal submission failed",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.withdrawMyModerationCaseAppeal = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Moderation case id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const appeal = await withdrawProviderModerationAppeal({
+      client,
+      caseId: id,
+      providerId: req.user.id,
+      note: req.body?.note,
+    });
+
+    if (!appeal) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Appeal not found" });
+    }
+
+    const moderationCase = await getProviderModerationCaseDetail({
+      client,
+      caseId: id,
+      providerId: req.user.id,
+    });
+
+    await client.query("COMMIT");
+
+    void notifyAdminsAppealWithdrawn({
+      caseId: id,
+      providerId: req.user.id,
+      appealId: appeal.id,
+    });
+
+    logger.security("Provider withdrew moderation appeal", {
+      providerId: req.user?.id,
+      caseId: id,
+      appealId: appeal.id,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "provider_moderation_appeal_withdrawn",
+      metadata: {
+        providerId: req.user?.id,
+        caseId: id,
+        appealId: appeal.id,
+      },
+    });
+
+    res.json({
+      message: "Appeal withdrawn",
+      appeal,
+      case: moderationCase,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Provider moderation appeal withdrawal failed", {
+      err,
+      providerId: req.user?.id,
+      caseId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Appeal withdrawal failed",
     });
   } finally {
     client.release();

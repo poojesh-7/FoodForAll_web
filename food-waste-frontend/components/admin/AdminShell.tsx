@@ -8,6 +8,7 @@ const navItems = [
   { href: "/admin/ngos", label: "NGO Moderation" },
   { href: "/admin/restaurants", label: "Restaurant Moderation" },
   { href: "/admin/provider-reports", label: "Provider Reports" },
+  { href: "/admin/moderation-appeals", label: "Appeals" },
   { href: "/admin/queues", label: "Queues" },
 ];
 
@@ -46,7 +47,9 @@ export default function AdminShell({
                   : pathname === item.href ||
                     pathname.startsWith(`${item.href}/`) ||
                     (item.href === "/admin/provider-reports" &&
-                      pathname.startsWith("/admin/moderation-cases/"));
+                      pathname.startsWith("/admin/moderation-cases/")) ||
+                    (item.href === "/admin/moderation-appeals" &&
+                      pathname.startsWith("/admin/moderation-appeals"));
 
               return (
                 <Link

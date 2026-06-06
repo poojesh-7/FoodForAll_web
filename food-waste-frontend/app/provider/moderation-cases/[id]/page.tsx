@@ -10,14 +10,17 @@ import {
   Clock3,
   ImagePlus,
   MessageSquare,
+  Scale,
   Send,
   ShieldAlert,
+  Undo2,
   X,
 } from "lucide-react";
 import { providerModerationService } from "@/services/providerModeration.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ModerationCaseDetail,
+  ModerationAppealAttachmentRow,
   ProviderCaseResponseAttachmentRow,
   ProviderReportAttachmentRow,
 } from "@shared/contracts/api-contracts";
@@ -35,9 +38,11 @@ type PreviewImage = {
 
 type EvidenceAttachment =
   | ProviderReportAttachmentRow
-  | ProviderCaseResponseAttachmentRow;
+  | ProviderCaseResponseAttachmentRow
+  | ModerationAppealAttachmentRow;
 
 const TERMINAL_STATUSES = new Set(["VALIDATED", "DISMISSED"]);
+const TERMINAL_APPEAL_STATUSES = new Set(["ACCEPTED", "REJECTED", "WITHDRAWN"]);
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGES = 3;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -67,9 +72,13 @@ function formatFileSize(value: unknown) {
 function statusBadge(status: unknown) {
   const value = String(status || "OPEN").toUpperCase();
   if (value === "VALIDATED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "ACCEPTED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (value === "DISMISSED") return "border-zinc-200 bg-zinc-100 text-zinc-700";
+  if (value === "REJECTED") return "border-red-200 bg-red-50 text-red-700";
+  if (value === "WITHDRAWN") return "border-zinc-200 bg-zinc-100 text-zinc-700";
   if (value === "ESCALATED") return "border-red-200 bg-red-50 text-red-700";
   if (value === "AWAITING_RESPONSE") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (value === "SUBMITTED") return "border-blue-200 bg-blue-50 text-blue-700";
   if (value === "UNDER_REVIEW") return "border-blue-200 bg-blue-50 text-blue-700";
   return "border-zinc-200 bg-white text-zinc-700";
 }
@@ -80,6 +89,12 @@ function eventTitle(eventType: string) {
   if (eventType === "CASE_PROVIDER_RESPONSE_SUBMITTED") {
     return "Provider response submitted";
   }
+  if (eventType === "CASE_APPEAL_SUBMITTED") return "Appeal submitted";
+  if (eventType === "CASE_APPEAL_WITHDRAWN") return "Appeal withdrawn";
+  if (eventType === "CASE_APPEAL_STATUS_CHANGED") return "Appeal status changed";
+  if (eventType === "APPEAL_SUBMITTED") return "Appeal submitted";
+  if (eventType === "APPEAL_WITHDRAWN") return "Appeal withdrawn";
+  if (eventType === "APPEAL_STATUS_CHANGED") return "Appeal status changed";
   return displayLabel(eventType);
 }
 
@@ -97,11 +112,16 @@ export default function ProviderModerationCaseDetailPage() {
   const [moderationCase, setModerationCase] =
     useState<ModerationCaseDetail | null>(null);
   const [responseText, setResponseText] = useState("");
+  const [appealText, setAppealText] = useState("");
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+  const [selectedAppealImages, setSelectedAppealImages] = useState<SelectedImage[]>([]);
   const selectedImagesRef = useRef<SelectedImage[]>([]);
+  const selectedAppealImagesRef = useRef<SelectedImage[]>([]);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [submittingAppeal, setSubmittingAppeal] = useState(false);
+  const [withdrawingAppeal, setWithdrawingAppeal] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -114,6 +134,7 @@ export default function ProviderModerationCaseDetailPage() {
         setModerationCase(result);
         if (syncResponseText) {
           setResponseText(result.provider_response?.response_text || "");
+          setAppealText(result.appeal?.appeal_text || "");
         }
       } catch (err) {
         setError(providerModerationService.getErrorMessage(err));
@@ -142,8 +163,15 @@ export default function ProviderModerationCaseDetailPage() {
   }, [selectedImages]);
 
   useEffect(() => {
+    selectedAppealImagesRef.current = selectedAppealImages;
+  }, [selectedAppealImages]);
+
+  useEffect(() => {
     return () => {
       selectedImagesRef.current.forEach((image) =>
+        URL.revokeObjectURL(image.previewUrl)
+      );
+      selectedAppealImagesRef.current.forEach((image) =>
         URL.revokeObjectURL(image.previewUrl)
       );
     };
@@ -157,9 +185,16 @@ export default function ProviderModerationCaseDetailPage() {
   const providerResponseAttachments = Array.isArray(providerResponse?.attachments)
     ? providerResponse.attachments
     : [];
+  const appeal = moderationCase?.appeal || null;
+  const appealAttachments = Array.isArray(appeal?.attachments)
+    ? appeal.attachments
+    : [];
   const terminal = TERMINAL_STATUSES.has(String(moderationCase?.status || ""));
+  const appealTerminal = TERMINAL_APPEAL_STATUSES.has(String(appeal?.status || ""));
   const remainingImageSlots =
     MAX_IMAGES - providerResponseAttachments.length - selectedImages.length;
+  const remainingAppealImageSlots =
+    MAX_IMAGES - appealAttachments.length - selectedAppealImages.length;
 
   const addImages = (files: FileList | null) => {
     if (!files || terminal) return;
@@ -201,6 +236,46 @@ export default function ProviderModerationCaseDetailPage() {
     });
   };
 
+  const addAppealImages = (files: FileList | null) => {
+    if (!files || !terminal || appeal) return;
+
+    const incoming = Array.from(files);
+    if (incoming.length > remainingAppealImageSlots) {
+      setError(`An appeal can include up to ${MAX_IMAGES} images total.`);
+      return;
+    }
+
+    const invalid = incoming.find((file) => !ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (invalid) {
+      setError("Only JPG, PNG, or WEBP images are allowed.");
+      return;
+    }
+
+    const oversized = incoming.find((file) => file.size > MAX_IMAGE_BYTES);
+    if (oversized) {
+      setError("Each image must be 5 MB or smaller.");
+      return;
+    }
+
+    setError("");
+    setSelectedAppealImages((current) => [
+      ...current,
+      ...incoming.map((file, index) => ({
+        id: `appeal-${file.name}-${file.lastModified}-${index}-${Math.random()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      })),
+    ]);
+  };
+
+  const removeAppealImage = (id: string) => {
+    setSelectedAppealImages((current) => {
+      const image = current.find((item) => item.id === id);
+      if (image) URL.revokeObjectURL(image.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  };
+
   const submitResponse = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (terminal) return;
@@ -231,6 +306,57 @@ export default function ProviderModerationCaseDetailPage() {
       setError(providerModerationService.getErrorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const submitAppeal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!terminal || appeal) return;
+
+    const trimmed = appealText.trim();
+    if (!trimmed) {
+      setError("Appeal explanation is required.");
+      return;
+    }
+
+    try {
+      setSubmittingAppeal(true);
+      setError("");
+      setSuccess("");
+      const updatedCase =
+        await providerModerationService.submitProviderModerationAppeal(caseId, {
+          appeal_text: trimmed,
+          attachments: selectedAppealImages.map((image) => image.file),
+        });
+      selectedAppealImages.forEach((image) =>
+        URL.revokeObjectURL(image.previewUrl)
+      );
+      setSelectedAppealImages([]);
+      setModerationCase(updatedCase);
+      setAppealText(updatedCase.appeal?.appeal_text || trimmed);
+      setSuccess("Appeal submitted.");
+    } catch (err) {
+      setError(providerModerationService.getErrorMessage(err));
+    } finally {
+      setSubmittingAppeal(false);
+    }
+  };
+
+  const withdrawAppeal = async () => {
+    if (!appeal || appealTerminal) return;
+
+    try {
+      setWithdrawingAppeal(true);
+      setError("");
+      setSuccess("");
+      const updatedCase =
+        await providerModerationService.withdrawProviderModerationAppeal(caseId);
+      setModerationCase(updatedCase);
+      setSuccess("Appeal withdrawn.");
+    } catch (err) {
+      setError(providerModerationService.getErrorMessage(err));
+    } finally {
+      setWithdrawingAppeal(false);
     }
   };
 
@@ -528,6 +654,217 @@ export default function ProviderModerationCaseDetailPage() {
                   )}
                 </form>
               </article>
+
+              <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-xs font-medium uppercase text-zinc-500">
+                      Appeal
+                    </p>
+                    <h2 className="mt-1 text-base font-semibold text-zinc-950">
+                      {appeal ? "Appeal on file" : "Submit appeal"}
+                    </h2>
+                    <p className="mt-1 text-sm text-zinc-600">
+                      {appeal
+                        ? `Updated ${formatDate(appeal.updated_at)}`
+                        : terminal
+                          ? "Add context after a final moderation decision."
+                          : "Appeals become available after a final decision."}
+                    </p>
+                  </div>
+                  <span
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${
+                      appeal
+                        ? statusBadge(appeal.status)
+                        : terminal
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-zinc-200 bg-zinc-100 text-zinc-600"
+                    }`}
+                  >
+                    {appeal ? displayLabel(appeal.status) : terminal ? "Available" : "Unavailable"}
+                  </span>
+                </div>
+
+                {appeal ? (
+                  <div className="mt-4 space-y-4">
+                    <p className="whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm leading-6 text-zinc-700">
+                      {appeal.appeal_text}
+                    </p>
+
+                    {appeal.decision_note && (
+                      <p className="rounded-md border border-zinc-200 bg-white p-3 text-sm leading-6 text-zinc-700">
+                        {appeal.decision_note}
+                      </p>
+                    )}
+
+                    {appealAttachments.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium uppercase text-zinc-500">
+                          Appeal Evidence
+                        </p>
+                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {appealAttachments.map((attachment) => {
+                            const url = attachmentUrl(attachment);
+                            if (!url) return null;
+
+                            return (
+                              <button
+                                key={String(attachment.id)}
+                                type="button"
+                                onClick={() =>
+                                  openAttachmentPreview(
+                                    attachment,
+                                    "Appeal evidence preview"
+                                  )
+                                }
+                                className="group overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-left transition hover:border-zinc-400"
+                              >
+                                <span className="block aspect-[4/3] overflow-hidden">
+                                  <img
+                                    src={url}
+                                    alt="Appeal evidence"
+                                    className="h-full w-full object-cover transition group-hover:scale-105"
+                                  />
+                                </span>
+                                <span className="block truncate px-2 py-1 text-xs text-zinc-500">
+                                  {formatFileSize(attachment.file_size_bytes) ||
+                                    displayValue(attachment.mime_type)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(appeal.events) && appeal.events.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium uppercase text-zinc-500">
+                          Appeal Timeline
+                        </p>
+                        <ol className="mt-2 space-y-2">
+                          {appeal.events.map((event) => (
+                            <li
+                              key={String(event.id)}
+                              className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
+                            >
+                              <p className="text-sm font-semibold text-zinc-950">
+                                {eventTitle(event.event_type)}
+                              </p>
+                              {event.from_status || event.to_status ? (
+                                <p className="mt-1 text-xs text-zinc-600">
+                                  {displayLabel(event.from_status)} to{" "}
+                                  {displayLabel(event.to_status)}
+                                </p>
+                              ) : null}
+                              {event.note && (
+                                <p className="mt-2 text-sm text-zinc-700">
+                                  {event.note}
+                                </p>
+                              )}
+                              <p className="mt-2 text-xs text-zinc-500">
+                                {formatDate(event.created_at)} by{" "}
+                                {displayValue(event.actor_name || event.actor_role)}
+                              </p>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
+                    {!appealTerminal && (
+                      <button
+                        type="button"
+                        onClick={withdrawAppeal}
+                        disabled={withdrawingAppeal}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-zinc-100 disabled:opacity-50"
+                      >
+                        <Undo2 className="h-4 w-4" aria-hidden="true" />
+                        {withdrawingAppeal ? "Withdrawing..." : "Withdraw appeal"}
+                      </button>
+                    )}
+                  </div>
+                ) : terminal ? (
+                  <form className="mt-4 space-y-4" onSubmit={submitAppeal}>
+                    <textarea
+                      value={appealText}
+                      onChange={(event) => setAppealText(event.target.value)}
+                      disabled={submittingAppeal}
+                      maxLength={3000}
+                      className="min-h-36 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm leading-6 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+                    />
+
+                    {selectedAppealImages.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium uppercase text-zinc-500">
+                          Selected Images
+                        </p>
+                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {selectedAppealImages.map((image) => (
+                            <div
+                              key={image.id}
+                              className="relative overflow-hidden rounded-md border border-zinc-200 bg-zinc-50"
+                            >
+                              <img
+                                src={image.previewUrl}
+                                alt="Selected appeal evidence"
+                                className="aspect-[4/3] w-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeAppealImage(image.id)}
+                                className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100"
+                                aria-label="Remove selected appeal image"
+                              >
+                                <X className="h-4 w-4" aria-hidden="true" />
+                              </button>
+                              <p className="truncate px-2 py-1 text-xs text-zinc-500">
+                                {image.file.name}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                      <label
+                        className={`inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-zinc-100 ${
+                          remainingAppealImageSlots <= 0 || submittingAppeal
+                            ? "pointer-events-none opacity-50"
+                            : ""
+                        }`}
+                      >
+                        <ImagePlus className="h-4 w-4" aria-hidden="true" />
+                        Add image
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          multiple
+                          className="sr-only"
+                          disabled={remainingAppealImageSlots <= 0 || submittingAppeal}
+                          onChange={(event) => {
+                            addAppealImages(event.target.files);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={submittingAppeal}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        <Scale className="h-4 w-4" aria-hidden="true" />
+                        {submittingAppeal ? "Submitting..." : "Submit appeal"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+                    This case is still active.
+                  </p>
+                )}
+              </article>
             </section>
 
             <aside className="space-y-5">
@@ -543,6 +880,8 @@ export default function ProviderModerationCaseDetailPage() {
                         <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-zinc-700">
                           {event.event_type === "CASE_PROVIDER_RESPONSE_SUBMITTED" ? (
                             <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                          ) : event.event_type.includes("APPEAL") ? (
+                            <Scale className="h-4 w-4" aria-hidden="true" />
                           ) : event.event_type === "CASE_STATUS_CHANGED" ? (
                             <ShieldAlert className="h-4 w-4" aria-hidden="true" />
                           ) : (

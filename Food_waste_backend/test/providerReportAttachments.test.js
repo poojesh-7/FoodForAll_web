@@ -9,6 +9,7 @@ const {
   assertSafeImageBuffer,
 } = require("../shared/services/cloudinary.service");
 const {
+  addModerationAppealAttachments,
   addProviderReportAttachments,
   listProviderReports,
 } = require("../shared/services/moderation.service");
@@ -56,6 +57,23 @@ function createClient() {
             {
               id: `attachment-${attachmentId}`,
               report_id: params[0],
+              uploader_user_id: params[1],
+              file_url: params[2],
+              mime_type: params[3],
+              file_size_bytes: params[4],
+              created_at: "2026-06-05T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+
+      if (sql.includes("INSERT INTO moderation_appeal_attachments")) {
+        attachmentId += 1;
+        return {
+          rows: [
+            {
+              id: `appeal-attachment-${attachmentId}`,
+              appeal_id: params[0],
               uploader_user_id: params[1],
               file_url: params[2],
               mime_type: params[3],
@@ -231,4 +249,33 @@ test("admin provider report list includes attachment aggregation", async () => {
   assert.match(listQuery.sql, /provider_report_attachments/);
   assert.match(listQuery.sql, /json_agg/);
   assert.equal(reports[0].attachments.length, 1);
+});
+
+test("moderation appeal attachment upload stores evidence metadata", async () => {
+  const client = createClient();
+  const fetchCalls = [];
+  global.fetch = async (url, options) => {
+    fetchCalls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return {
+          secure_url: `https://res.cloudinary.com/demo/image/upload/appeal-${fetchCalls.length}.webp`,
+        };
+      },
+    };
+  };
+
+  const attachments = await addModerationAppealAttachments({
+    client,
+    appealId: "appeal-1",
+    uploaderUserId: "provider-1",
+    files: [imageFile({ mimetype: "image/webp", buffer: webpBuffer(), name: "appeal.webp" })],
+  });
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].appeal_id, "appeal-1");
+  assert.equal(attachments[0].uploader_user_id, "provider-1");
+  assert.equal(attachments[0].mime_type, "image/webp");
 });

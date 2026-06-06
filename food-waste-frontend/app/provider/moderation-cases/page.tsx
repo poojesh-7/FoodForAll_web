@@ -8,6 +8,7 @@ import {
   Clock3,
   FileText,
   MessageSquare,
+  Scale,
   ShieldAlert,
 } from "lucide-react";
 import { providerModerationService } from "@/services/providerModeration.service";
@@ -115,6 +116,7 @@ export default function ProviderModerationCasesPage() {
       active: cases.filter((item) => ACTIVE_STATUSES.has(String(item.status).toUpperCase())).length,
       awaiting: cases.filter(caseNeedsResponse).length,
       responded: cases.filter((item) => item.provider_response_id).length,
+      appealed: cases.filter((item) => item.appeal_id).length,
       closed: cases.filter((item) => !ACTIVE_STATUSES.has(String(item.status).toUpperCase())).length,
     }),
     [cases]
@@ -148,7 +150,7 @@ export default function ProviderModerationCasesPage() {
         )}
 
         {!loading && (
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard
               label="Active"
               value={stats.active}
@@ -166,6 +168,12 @@ export default function ProviderModerationCasesPage() {
               value={stats.responded}
               detail="Response records"
               icon={FileText}
+            />
+            <StatCard
+              label="Appealed"
+              value={stats.appealed}
+              detail="Formal appeals"
+              icon={Scale}
             />
             <StatCard
               label="Closed"
@@ -191,6 +199,7 @@ export default function ProviderModerationCasesPage() {
               const responseAttachmentCount = Number(
                 item.provider_response_attachment_count || 0
               );
+              const appealAttachmentCount = Number(item.appeal_attachment_count || 0);
 
               return (
                 <article
@@ -275,6 +284,14 @@ export default function ProviderModerationCasesPage() {
                       >
                         {item.provider_response_id ? "Response submitted" : "No response"}
                       </span>
+                      {item.appeal_id && (
+                        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+                          Appeal {displayLabel(item.appeal_status)}
+                          {appealAttachmentCount > 0
+                            ? ` (${appealAttachmentCount})`
+                            : ""}
+                        </span>
+                      )}
                       <Link
                         href={`/provider/moderation-cases/${String(item.id)}`}
                         className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"

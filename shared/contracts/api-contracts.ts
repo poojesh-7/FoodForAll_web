@@ -838,6 +838,66 @@ export interface ProviderCaseResponseRow extends DbRow {
   attachments?: ProviderCaseResponseAttachmentRow[];
 }
 
+export type ModerationAppealStatus =
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "WITHDRAWN";
+
+export interface ModerationAppealAttachmentRow extends DbRow {
+  id?: DbId;
+  appeal_id?: DbId;
+  uploader_user_id?: DbId;
+  file_url?: string;
+  mime_type?: string;
+  file_size_bytes?: number | string;
+  created_at?: ISODateString;
+}
+
+export interface ModerationAppealEventRow extends DbRow {
+  id: DbId;
+  appeal_id: DbId;
+  case_id: DbId;
+  actor_user_id?: DbId | null;
+  actor_name?: string | null;
+  actor_role?: UserRole | string | null;
+  event_type: string;
+  from_status?: ModerationAppealStatus | string | null;
+  to_status?: ModerationAppealStatus | string | null;
+  note?: string | null;
+  metadata?: DbRow;
+  created_at?: ISODateString;
+}
+
+export interface ModerationAppealRow extends DbRow {
+  id: DbId;
+  case_id: DbId;
+  provider_id: DbId;
+  provider_name?: string | null;
+  reviewed_by_admin_name?: string | null;
+  status: ModerationAppealStatus | string;
+  appeal_text?: string;
+  decision_note?: string | null;
+  reviewed_by_admin?: DbId | null;
+  submitted_at?: ISODateString;
+  reviewed_at?: ISODateString | null;
+  withdrawn_at?: ISODateString | null;
+  withdrawn_by_user_id?: DbId | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+  attachments?: ModerationAppealAttachmentRow[];
+  events?: ModerationAppealEventRow[];
+  case_status?: ModerationCaseStatus | string | null;
+  case_reason?: string | null;
+  case_summary?: string | null;
+  report_id?: DbId | null;
+  report_reason?: string | null;
+  report_status?: string | null;
+  listing_title?: string | null;
+  attachment_count?: number | string;
+}
+
 export interface ModerationCaseDetail extends DbRow {
   id: DbId;
   case_type: string;
@@ -857,6 +917,8 @@ export interface ModerationCaseDetail extends DbRow {
   report?: ProviderReportRow | null;
   provider_response?: ProviderCaseResponseRow | null;
   provider_responses?: ProviderCaseResponseRow[];
+  appeal?: ModerationAppealRow | null;
+  appeals?: ModerationAppealRow[];
   events: ModerationCaseEventRow[];
 }
 
@@ -904,6 +966,14 @@ export interface ProviderReportsAdminQuery {
   status?: "pending" | "all" | string;
 }
 export type ProviderReportsAdminResponse = ApiResponse<ProviderReportsAdminData>;
+export interface ModerationAppealsAdminData {
+  appeals: ModerationAppealRow[];
+}
+export interface ModerationAppealsAdminQuery {
+  status?: "open" | "all" | ModerationAppealStatus | string;
+}
+export type ModerationAppealsAdminResponse =
+  ApiResponse<ModerationAppealsAdminData>;
 export interface ModerationCaseData {
   case: ModerationCaseDetail;
 }
@@ -913,6 +983,14 @@ export interface UpdateModerationCaseStatusRequest {
   note?: string | null;
 }
 export type UpdateModerationCaseStatusResponse = ApiResponse<ModerationCaseData>;
+export interface UpdateModerationAppealStatusRequest {
+  note?: string | null;
+}
+export interface UpdateModerationAppealStatusData extends ModerationCaseData {
+  appeal: ModerationAppealRow;
+}
+export type UpdateModerationAppealStatusResponse =
+  ApiResponse<UpdateModerationAppealStatusData>;
 export interface ProviderModerationCaseSummary extends DbRow {
   id: DbId;
   case_type?: string;
@@ -933,6 +1011,10 @@ export interface ProviderModerationCaseSummary extends DbRow {
   provider_response_id?: DbId | null;
   provider_response_updated_at?: ISODateString | null;
   provider_response_attachment_count?: number | string;
+  appeal_id?: DbId | null;
+  appeal_status?: ModerationAppealStatus | string | null;
+  appeal_updated_at?: ISODateString | null;
+  appeal_attachment_count?: number | string;
 }
 export interface ProviderModerationCasesData {
   cases: ProviderModerationCaseSummary[];
@@ -948,6 +1030,20 @@ export interface SubmitProviderCaseResponseData extends ModerationCaseData {
 }
 export type SubmitProviderCaseResponseResponse =
   ApiResponse<SubmitProviderCaseResponseData>;
+export interface SubmitProviderModerationAppealRequest {
+  appeal_text: string;
+  attachments?: File[];
+}
+export interface SubmitProviderModerationAppealData extends ModerationCaseData {
+  appeal: ModerationAppealRow;
+}
+export type SubmitProviderModerationAppealResponse =
+  ApiResponse<SubmitProviderModerationAppealData>;
+export interface WithdrawProviderModerationAppealData extends ModerationCaseData {
+  appeal: ModerationAppealRow;
+}
+export type WithdrawProviderModerationAppealResponse =
+  ApiResponse<WithdrawProviderModerationAppealData>;
 export interface AdminOperationalSummary {
   total_ngos: number | string;
   total_restaurants: number | string;
@@ -1348,6 +1444,24 @@ export const apiContracts = {
       response: "SubmitProviderCaseResponseResponse",
       statusCodes: [201, 400, 401, 403, 404, 409, 500],
     },
+    {
+      method: "POST",
+      path: "/api/v1/provider/moderation-cases/:id/appeal",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider", "reportLimiter", "upload.providerReportAttachments.array('attachments', 3)"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "SubmitProviderModerationAppealRequest", contentType: "multipart/form-data" },
+      response: "SubmitProviderModerationAppealResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/provider/moderation-cases/:id/appeal/withdraw",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider", "reportLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "WithdrawProviderModerationAppealResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
   ],
   ngo: [
     {
@@ -1710,6 +1824,42 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
       response: "ProviderReportsAdminResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/moderation-appeals",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "ModerationAppealsAdminQuery", body: "NoRequestBody" },
+      response: "ModerationAppealsAdminResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/moderation-appeals/:id/review",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateModerationAppealStatusRequest" },
+      response: "UpdateModerationAppealStatusResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/moderation-appeals/:id/accept",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateModerationAppealStatusRequest" },
+      response: "UpdateModerationAppealStatusResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/moderation-appeals/:id/reject",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateModerationAppealStatusRequest" },
+      response: "UpdateModerationAppealStatusResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
     },
     {
       method: "GET",

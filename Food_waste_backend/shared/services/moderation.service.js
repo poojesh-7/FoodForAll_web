@@ -33,6 +33,7 @@ const DUPLICATE_REPORT_MESSAGE =
 const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_REPORT_ATTACHMENTS = 3;
 const MAX_PROVIDER_RESPONSE_ATTACHMENTS = 3;
+const MAX_APPEAL_ATTACHMENTS = 3;
 const MAX_REPORT_ATTACHMENT_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024);
 const REPORT_ATTACHMENT_MIME_TYPES = new Set([
   "image/jpeg",
@@ -48,6 +49,18 @@ const MODERATION_CASE_STATUSES = new Set([
   "ESCALATED",
 ]);
 const TERMINAL_MODERATION_CASE_STATUSES = new Set(["VALIDATED", "DISMISSED"]);
+const MODERATION_APPEAL_STATUSES = new Set([
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "ACCEPTED",
+  "REJECTED",
+  "WITHDRAWN",
+]);
+const TERMINAL_MODERATION_APPEAL_STATUSES = new Set([
+  "ACCEPTED",
+  "REJECTED",
+  "WITHDRAWN",
+]);
 
 function normalizeReason(reason) {
   return sanitizePlainText(reason, { maxLength: 80 }).toLowerCase();
@@ -57,6 +70,14 @@ function normalizeCaseStatus(status) {
   const normalized = sanitizePlainText(status, { maxLength: 80 }).toUpperCase();
   if (!MODERATION_CASE_STATUSES.has(normalized)) {
     throw withStatus("Invalid moderation case status", 400);
+  }
+  return normalized;
+}
+
+function normalizeAppealStatus(status) {
+  const normalized = sanitizePlainText(status, { maxLength: 80 }).toUpperCase();
+  if (!MODERATION_APPEAL_STATUSES.has(normalized)) {
+    throw withStatus("Invalid appeal status", 400);
   }
   return normalized;
 }
@@ -102,8 +123,21 @@ function createResponseAttachmentPublicId(responseId, index) {
   return `provider_response_${normalizedResponseId}_${index + 1}_${id}`;
 }
 
+function createAppealAttachmentPublicId(appealId, index) {
+  const id =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : crypto.randomBytes(12).toString("hex");
+  const normalizedAppealId = String(appealId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `moderation_appeal_${normalizedAppealId}_${index + 1}_${id}`;
+}
+
 function isTerminalCaseStatus(status) {
   return TERMINAL_MODERATION_CASE_STATUSES.has(String(status || "").toUpperCase());
+}
+
+function isTerminalAppealStatus(status) {
+  return TERMINAL_MODERATION_APPEAL_STATUSES.has(String(status || "").toUpperCase());
 }
 
 function validateReportAttachmentFile(file) {
@@ -147,6 +181,42 @@ async function recordModerationCaseEvent({
               note, metadata, created_at
     `,
     [
+      caseId,
+      actorUserId,
+      eventType,
+      fromStatus,
+      toStatus,
+      sanitizedNote,
+      JSON.stringify(metadata || {}),
+    ]
+  );
+
+  return result.rows[0];
+}
+
+async function recordModerationAppealEvent({
+  client = pool,
+  appealId,
+  caseId,
+  actorUserId = null,
+  eventType,
+  fromStatus = null,
+  toStatus = null,
+  note = null,
+  metadata = {},
+}) {
+  const sanitizedNote = sanitizeCaseNote(note);
+  const result = await client.query(
+    `
+    INSERT INTO moderation_appeal_events
+      (appeal_id, case_id, actor_user_id, event_type, from_status, to_status,
+       note, metadata)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+    RETURNING id, appeal_id, case_id, actor_user_id, event_type, from_status,
+              to_status, note, metadata, created_at
+    `,
+    [
+      appealId,
       caseId,
       actorUserId,
       eventType,
@@ -620,6 +690,57 @@ async function addProviderCaseResponseAttachments({
   return attachments;
 }
 
+async function addModerationAppealAttachments({
+  client = pool,
+  appealId,
+  uploaderUserId,
+  files = [],
+  startingIndex = 0,
+}) {
+  await ensureRestrictionSchema(client);
+
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  if (files.length > MAX_APPEAL_ATTACHMENTS) {
+    throw withStatus("An appeal can include up to 3 images", 400);
+  }
+
+  const storagePrefix = process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local";
+  const attachments = [];
+
+  for (const [index, file] of files.entries()) {
+    const fileSize = validateReportAttachmentFile(file);
+    const uploadedImage = await uploadBuffer(file.buffer, {
+      folder: `food-rescue/${storagePrefix}/moderation-appeal-evidence`,
+      public_id: createAppealAttachmentPublicId(appealId, startingIndex + index),
+      mimetype: file.mimetype,
+    });
+
+    const result = await client.query(
+      `
+      INSERT INTO moderation_appeal_attachments
+        (appeal_id, uploader_user_id, file_url, mime_type, file_size_bytes)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING id, appeal_id, uploader_user_id, file_url, mime_type,
+                file_size_bytes, created_at
+      `,
+      [
+        appealId,
+        uploaderUserId,
+        uploadedImage.secure_url,
+        file.mimetype,
+        fileSize,
+      ]
+    );
+
+    attachments.push(result.rows[0]);
+  }
+
+  return attachments;
+}
+
 async function loadModerationCaseForProvider({
   client = pool,
   caseId,
@@ -686,6 +807,236 @@ async function listProviderCaseResponses({ client = pool, caseId }) {
   return result.rows;
 }
 
+async function listModerationAppealEvents({ client = pool, appealId }) {
+  const result = await client.query(
+    `
+    SELECT mae.id,
+           mae.appeal_id,
+           mae.case_id,
+           mae.actor_user_id,
+           actor.name AS actor_name,
+           actor.role AS actor_role,
+           mae.event_type,
+           mae.from_status,
+           mae.to_status,
+           mae.note,
+           mae.metadata,
+           mae.created_at
+    FROM moderation_appeal_events mae
+    LEFT JOIN users actor ON actor.id = mae.actor_user_id
+    WHERE mae.appeal_id=$1
+    ORDER BY mae.created_at ASC, mae.id ASC
+    `,
+    [appealId]
+  );
+
+  return result.rows;
+}
+
+async function appendAppealEvents({ client = pool, appeals = [] }) {
+  const enriched = [];
+  for (const appeal of appeals) {
+    enriched.push({
+      ...appeal,
+      events: await listModerationAppealEvents({ client, appealId: appeal.id }),
+    });
+  }
+  return enriched;
+}
+
+async function listModerationAppealsForCase({ client = pool, caseId }) {
+  const result = await client.query(
+    `
+    SELECT ma.id,
+           ma.case_id,
+           ma.provider_id,
+           provider.name AS provider_name,
+           reviewer.name AS reviewed_by_admin_name,
+           ma.status,
+           ma.appeal_text,
+           ma.decision_note,
+           ma.reviewed_by_admin,
+           ma.submitted_at,
+           ma.reviewed_at,
+           ma.withdrawn_at,
+           ma.withdrawn_by_user_id,
+           ma.created_at,
+           ma.updated_at,
+           COALESCE(appeal_attachments.attachments, '[]'::json) AS attachments
+    FROM moderation_appeals ma
+    JOIN users provider ON provider.id = ma.provider_id
+    LEFT JOIN users reviewer ON reviewer.id = ma.reviewed_by_admin
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id', maa.id,
+          'appeal_id', maa.appeal_id,
+          'uploader_user_id', maa.uploader_user_id,
+          'file_url', maa.file_url,
+          'mime_type', maa.mime_type,
+          'file_size_bytes', maa.file_size_bytes,
+          'created_at', maa.created_at
+        )
+        ORDER BY maa.created_at ASC, maa.id ASC
+      ) AS attachments
+      FROM moderation_appeal_attachments maa
+      WHERE maa.appeal_id = ma.id
+    ) appeal_attachments ON true
+    WHERE ma.case_id=$1
+    ORDER BY ma.created_at ASC, ma.id ASC
+    `,
+    [caseId]
+  );
+
+  return appendAppealEvents({ client, appeals: result.rows });
+}
+
+async function getModerationAppealDetail({ client = pool, appealId }) {
+  const result = await client.query(
+    `
+    SELECT ma.id,
+           ma.case_id,
+           ma.provider_id,
+           provider.name AS provider_name,
+           reviewer.name AS reviewed_by_admin_name,
+           ma.status,
+           ma.appeal_text,
+           ma.decision_note,
+           ma.reviewed_by_admin,
+           ma.submitted_at,
+           ma.reviewed_at,
+           ma.withdrawn_at,
+           ma.withdrawn_by_user_id,
+           ma.created_at,
+           ma.updated_at,
+           COALESCE(appeal_attachments.attachments, '[]'::json) AS attachments
+    FROM moderation_appeals ma
+    JOIN users provider ON provider.id = ma.provider_id
+    LEFT JOIN users reviewer ON reviewer.id = ma.reviewed_by_admin
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id', maa.id,
+          'appeal_id', maa.appeal_id,
+          'uploader_user_id', maa.uploader_user_id,
+          'file_url', maa.file_url,
+          'mime_type', maa.mime_type,
+          'file_size_bytes', maa.file_size_bytes,
+          'created_at', maa.created_at
+        )
+        ORDER BY maa.created_at ASC, maa.id ASC
+      ) AS attachments
+      FROM moderation_appeal_attachments maa
+      WHERE maa.appeal_id = ma.id
+    ) appeal_attachments ON true
+    WHERE ma.id=$1
+    LIMIT 1
+    `,
+    [appealId]
+  );
+
+  const appeal = result.rows[0];
+  if (!appeal) return null;
+  return (await appendAppealEvents({ client, appeals: [appeal] }))[0];
+}
+
+function normalizeAppealListStatus(status) {
+  const normalized = sanitizePlainText(status || "open", { maxLength: 80 }).toUpperCase();
+  if (normalized === "ALL") return "all";
+  if (normalized === "OPEN") return "open";
+  if (!MODERATION_APPEAL_STATUSES.has(normalized)) {
+    throw withStatus("Invalid appeal status filter", 400);
+  }
+  return normalized;
+}
+
+async function listModerationAppeals({ client = pool, status = "open" } = {}) {
+  await ensureRestrictionSchema(client);
+  const normalizedStatus = normalizeAppealListStatus(status);
+  const result = await client.query(
+    `
+    SELECT ma.id,
+           ma.case_id,
+           ma.provider_id,
+           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+           reviewer.name AS reviewed_by_admin_name,
+           ma.status,
+           ma.appeal_text,
+           ma.decision_note,
+           ma.reviewed_by_admin,
+           ma.submitted_at,
+           ma.reviewed_at,
+           ma.withdrawn_at,
+           ma.withdrawn_by_user_id,
+           ma.created_at,
+           ma.updated_at,
+           mc.status AS case_status,
+           mc.reason AS case_reason,
+           mc.summary AS case_summary,
+           pr.id AS report_id,
+           pr.reason AS report_reason,
+           pr.status AS report_status,
+           f.title AS listing_title,
+           COALESCE(appeal_attachments.attachment_count, 0)::int AS attachment_count,
+           COALESCE(appeal_attachments.attachments, '[]'::json) AS attachments
+    FROM moderation_appeals ma
+    JOIN moderation_cases mc ON mc.id = ma.case_id
+    JOIN users provider ON provider.id = ma.provider_id
+    LEFT JOIN users reviewer ON reviewer.id = ma.reviewed_by_admin
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id=provider.id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
+    LEFT JOIN provider_reports pr ON pr.id = mc.source_report_id
+      OR pr.moderation_case_id = mc.id
+    LEFT JOIN reservations r ON r.id = pr.reservation_id
+    LEFT JOIN food_listings f ON f.id = r.listing_id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS attachment_count,
+             json_agg(
+               json_build_object(
+                 'id', maa.id,
+                 'appeal_id', maa.appeal_id,
+                 'uploader_user_id', maa.uploader_user_id,
+                 'file_url', maa.file_url,
+                 'mime_type', maa.mime_type,
+                 'file_size_bytes', maa.file_size_bytes,
+                 'created_at', maa.created_at
+               )
+               ORDER BY maa.created_at ASC, maa.id ASC
+             ) AS attachments
+      FROM moderation_appeal_attachments maa
+      WHERE maa.appeal_id = ma.id
+    ) appeal_attachments ON true
+    WHERE (
+      $1::text = 'all'
+      OR ($1::text = 'open' AND ma.status IN ('SUBMITTED', 'UNDER_REVIEW'))
+      OR ma.status = $2
+    )
+    ORDER BY
+      CASE
+        WHEN ma.status='SUBMITTED' THEN 0
+        WHEN ma.status='UNDER_REVIEW' THEN 1
+        ELSE 2
+      END,
+      ma.updated_at DESC,
+      ma.created_at DESC
+    `,
+    [
+      normalizedStatus,
+      MODERATION_APPEAL_STATUSES.has(normalizedStatus)
+        ? normalizedStatus
+        : null,
+    ]
+  );
+
+  return result.rows;
+}
+
 async function listProviderModerationCases({ client = pool, providerId }) {
   await ensureRestrictionSchema(client);
   const result = await client.query(
@@ -709,7 +1060,12 @@ async function listProviderModerationCases({ client = pool, providerId }) {
            pcr.id AS provider_response_id,
            pcr.updated_at AS provider_response_updated_at,
            COALESCE(response_attachment_counts.attachment_count, 0)::int
-             AS provider_response_attachment_count
+             AS provider_response_attachment_count,
+           appeal.id AS appeal_id,
+           appeal.status AS appeal_status,
+           appeal.updated_at AS appeal_updated_at,
+           COALESCE(appeal_attachment_counts.attachment_count, 0)::int
+             AS appeal_attachment_count
     FROM moderation_cases mc
     LEFT JOIN provider_reports pr ON pr.id = mc.source_report_id
       OR pr.moderation_case_id = mc.id
@@ -717,11 +1073,18 @@ async function listProviderModerationCases({ client = pool, providerId }) {
     LEFT JOIN food_listings f ON f.id = r.listing_id
     LEFT JOIN provider_case_responses pcr ON pcr.case_id = mc.id
       AND pcr.provider_id = mc.subject_id
+    LEFT JOIN moderation_appeals appeal ON appeal.case_id = mc.id
+      AND appeal.provider_id = mc.subject_id
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int AS attachment_count
       FROM provider_case_response_attachments pcra
       WHERE pcra.response_id = pcr.id
     ) response_attachment_counts ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS attachment_count
+      FROM moderation_appeal_attachments maa
+      WHERE maa.appeal_id = appeal.id
+    ) appeal_attachment_counts ON true
     WHERE mc.subject_type='provider'
     AND mc.subject_id=$1
     ORDER BY
@@ -899,6 +1262,272 @@ async function submitProviderCaseResponse({
   return getProviderCaseResponse({ client, responseId: response.id });
 }
 
+async function submitProviderModerationAppeal({
+  client = pool,
+  caseId,
+  providerId,
+  appealText,
+  files = [],
+}) {
+  await ensureRestrictionSchema(client);
+  const sanitizedAppeal = sanitizeOptionalText(appealText, {
+    maxLength: 3000,
+    preserveNewlines: true,
+  });
+
+  if (!sanitizedAppeal) {
+    throw withStatus("Appeal explanation is required", 400);
+  }
+
+  if ((files?.length || 0) > MAX_APPEAL_ATTACHMENTS) {
+    throw withStatus("An appeal can include up to 3 images", 400);
+  }
+
+  const moderationCase = await loadModerationCaseForProvider({
+    client,
+    caseId,
+    providerId,
+    forUpdate: true,
+  });
+  if (!moderationCase) return null;
+
+  if (!isTerminalCaseStatus(moderationCase.status)) {
+    throw withStatus("Appeals are allowed only after a final moderation decision", 409);
+  }
+
+  const existing = await client.query(
+    `
+    SELECT *
+    FROM moderation_appeals
+    WHERE case_id=$1
+    AND provider_id=$2
+    FOR UPDATE
+    `,
+    [caseId, providerId]
+  );
+
+  if (existing.rows.length) {
+    throw withStatus("An appeal already exists for this moderation case", 409);
+  }
+
+  const inserted = await client.query(
+    `
+    INSERT INTO moderation_appeals
+      (case_id, provider_id, status, appeal_text)
+    VALUES ($1,$2,'SUBMITTED',$3)
+    RETURNING *
+    `,
+    [caseId, providerId, sanitizedAppeal]
+  );
+  const appeal = inserted.rows[0];
+
+  const attachments = await addModerationAppealAttachments({
+    client,
+    appealId: appeal.id,
+    uploaderUserId: providerId,
+    files,
+  });
+
+  await recordModerationAppealEvent({
+    client,
+    appealId: appeal.id,
+    caseId,
+    actorUserId: providerId,
+    eventType: "APPEAL_SUBMITTED",
+    toStatus: "SUBMITTED",
+    metadata: {
+      source: "provider_moderation_appeal",
+      attachment_count: attachments.length,
+    },
+  });
+
+  await recordModerationCaseEvent({
+    client,
+    caseId,
+    actorUserId: providerId,
+    eventType: "CASE_APPEAL_SUBMITTED",
+    metadata: {
+      source: "provider_moderation_appeal",
+      appeal_id: appeal.id,
+      attachment_count: attachments.length,
+    },
+  });
+
+  return getModerationAppealDetail({ client, appealId: appeal.id });
+}
+
+async function withdrawProviderModerationAppeal({
+  client = pool,
+  caseId,
+  providerId,
+  note = null,
+}) {
+  await ensureRestrictionSchema(client);
+  const moderationCase = await loadModerationCaseForProvider({
+    client,
+    caseId,
+    providerId,
+    forUpdate: true,
+  });
+  if (!moderationCase) return null;
+
+  const currentResult = await client.query(
+    `
+    SELECT *
+    FROM moderation_appeals
+    WHERE case_id=$1
+    AND provider_id=$2
+    FOR UPDATE
+    `,
+    [caseId, providerId]
+  );
+  const current = currentResult.rows[0];
+  if (!current) return null;
+
+  if (isTerminalAppealStatus(current.status)) {
+    throw withStatus("Terminal appeals cannot be withdrawn", 409);
+  }
+
+  const result = await client.query(
+    `
+    UPDATE moderation_appeals
+    SET status='WITHDRAWN',
+        withdrawn_at=NOW(),
+        withdrawn_by_user_id=$3,
+        updated_at=NOW()
+    WHERE id=$1
+    AND case_id=$2
+    RETURNING *
+    `,
+    [current.id, caseId, providerId]
+  );
+  const updated = result.rows[0];
+
+  await recordModerationAppealEvent({
+    client,
+    appealId: updated.id,
+    caseId,
+    actorUserId: providerId,
+    eventType: "APPEAL_WITHDRAWN",
+    fromStatus: current.status,
+    toStatus: "WITHDRAWN",
+    note,
+    metadata: {
+      source: "provider_moderation_appeal_withdrawal",
+    },
+  });
+
+  await recordModerationCaseEvent({
+    client,
+    caseId,
+    actorUserId: providerId,
+    eventType: "CASE_APPEAL_WITHDRAWN",
+    metadata: {
+      source: "provider_moderation_appeal_withdrawal",
+      appeal_id: updated.id,
+      previous_status: current.status,
+    },
+  });
+
+  return getModerationAppealDetail({ client, appealId: updated.id });
+}
+
+async function transitionModerationAppealStatus({
+  client = pool,
+  appealId,
+  adminId,
+  status,
+  note = null,
+}) {
+  await ensureRestrictionSchema(client);
+  await assertAdmin({ client, userId: adminId });
+
+  const nextStatus = normalizeAppealStatus(status);
+  if (!["UNDER_REVIEW", "ACCEPTED", "REJECTED"].includes(nextStatus)) {
+    throw withStatus("Invalid admin appeal action", 400);
+  }
+
+  const currentResult = await client.query(
+    `
+    SELECT ma.*, mc.status AS case_status
+    FROM moderation_appeals ma
+    JOIN moderation_cases mc ON mc.id = ma.case_id
+    WHERE ma.id=$1
+    FOR UPDATE
+    `,
+    [appealId]
+  );
+  const current = currentResult.rows[0];
+  if (!current) return null;
+
+  if (isTerminalAppealStatus(current.status)) {
+    throw withStatus("Terminal appeals cannot be changed", 409);
+  }
+
+  if (current.status === nextStatus) {
+    return getModerationAppealDetail({ client, appealId });
+  }
+
+  const sanitizedNote = sanitizeCaseNote(note);
+  const result = await client.query(
+    `
+    UPDATE moderation_appeals
+    SET status=$2,
+        reviewed_by_admin=CASE
+          WHEN $2 IN ('ACCEPTED', 'REJECTED') THEN $3
+          ELSE reviewed_by_admin
+        END,
+        reviewed_at=CASE
+          WHEN $2 IN ('ACCEPTED', 'REJECTED') THEN NOW()
+          ELSE reviewed_at
+        END,
+        decision_note=CASE
+          WHEN $2 IN ('ACCEPTED', 'REJECTED') THEN $4
+          ELSE decision_note
+        END,
+        updated_at=NOW()
+    WHERE id=$1
+    RETURNING *
+    `,
+    [appealId, nextStatus, adminId, sanitizedNote]
+  );
+  const updated = result.rows[0];
+
+  await recordModerationAppealEvent({
+    client,
+    appealId,
+    caseId: updated.case_id,
+    actorUserId: adminId,
+    eventType: "APPEAL_STATUS_CHANGED",
+    fromStatus: current.status,
+    toStatus: nextStatus,
+    note: sanitizedNote,
+    metadata: {
+      source: "admin_moderation_appeal_review",
+      previous_status: current.status,
+      next_status: nextStatus,
+    },
+  });
+
+  await recordModerationCaseEvent({
+    client,
+    caseId: updated.case_id,
+    actorUserId: adminId,
+    eventType: "CASE_APPEAL_STATUS_CHANGED",
+    fromStatus: current.case_status || null,
+    toStatus: current.case_status || null,
+    note: sanitizedNote,
+    metadata: {
+      source: "admin_moderation_appeal_review",
+      appeal_id: appealId,
+      appeal_from_status: current.status,
+      appeal_to_status: nextStatus,
+    },
+  });
+
+  return getModerationAppealDetail({ client, appealId });
+}
+
 async function validateProviderReport({ client = pool, reportId, adminId, note = null }) {
   await ensureRestrictionSchema(client);
   await assertAdmin({ client, userId: adminId });
@@ -1056,7 +1685,7 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
   return result.rows;
 }
 
-function buildModerationCaseDetail(row, events, providerResponses = []) {
+function buildModerationCaseDetail(row, events, providerResponses = [], appeals = []) {
   return {
     id: row.case_id,
     case_type: row.case_type,
@@ -1075,6 +1704,8 @@ function buildModerationCaseDetail(row, events, providerResponses = []) {
     assigned_admin_name: row.assigned_admin_name,
     provider_response: providerResponses[0] || null,
     provider_responses: providerResponses,
+    appeal: appeals[0] || null,
+    appeals,
     events,
     report: row.report_id
       ? {
@@ -1200,26 +1831,35 @@ async function getModerationCaseDetail({ client = pool, caseId }) {
     [caseId]
   );
   const providerResponses = await listProviderCaseResponses({ client, caseId });
+  const appeals = await listModerationAppealsForCase({ client, caseId });
 
-  return buildModerationCaseDetail(row, eventsResult.rows, providerResponses);
+  return buildModerationCaseDetail(row, eventsResult.rows, providerResponses, appeals);
 }
 
 module.exports = {
   DUPLICATE_REPORT_MESSAGE,
+  MAX_APPEAL_ATTACHMENTS,
   MAX_REPORT_ATTACHMENTS,
   MAX_PROVIDER_RESPONSE_ATTACHMENTS,
   MODERATION_CASE_STATUSES,
+  MODERATION_APPEAL_STATUSES,
   REPORT_REASONS,
+  addModerationAppealAttachments,
   addProviderCaseResponseAttachments,
   addProviderReportAttachments,
   applyProviderReportCooldown,
   createProviderReport,
   dismissProviderReport,
   getModerationCaseDetail,
+  getModerationAppealDetail,
   getProviderModerationCaseDetail,
+  listModerationAppeals,
   listProviderReports,
   listProviderModerationCases,
+  submitProviderModerationAppeal,
   submitProviderCaseResponse,
   transitionModerationCaseStatus,
+  transitionModerationAppealStatus,
   validateProviderReport,
+  withdrawProviderModerationAppeal,
 };

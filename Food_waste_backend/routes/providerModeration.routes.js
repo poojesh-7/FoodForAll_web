@@ -15,5 +15,16 @@ router.post(
   upload.providerReportAttachments.array("attachments", 3),
   providerModerationCtrl.submitMyModerationCaseResponse
 );
+router.post(
+  "/:id/appeal",
+  reportLimiter,
+  upload.providerReportAttachments.array("attachments", 3),
+  providerModerationCtrl.submitMyModerationCaseAppeal
+);
+router.patch(
+  "/:id/appeal/withdraw",
+  reportLimiter,
+  providerModerationCtrl.withdrawMyModerationCaseAppeal
+);
 
 module.exports = router;

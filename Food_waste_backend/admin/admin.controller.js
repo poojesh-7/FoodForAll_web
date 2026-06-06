@@ -18,11 +18,14 @@ const {
 const {
   dismissProviderReport,
   getModerationCaseDetail,
+  listModerationAppeals,
   listProviderReports,
+  transitionModerationAppealStatus,
   transitionModerationCaseStatus,
   validateProviderReport,
 } = require("../shared/services/moderation.service");
 const {
+  notifyProviderAppealStatus,
   notifyProviderModerationStatus,
 } = require("../shared/services/moderationNotification.service");
 const {
@@ -856,6 +859,111 @@ exports.getModerationCase = async (req, res) => {
     res.status(err.statusCode || 500).json({ error: "Failed to fetch moderation case" });
   }
 };
+
+exports.getModerationAppeals = async (req, res) => {
+  try {
+    const appeals = await listModerationAppeals({
+      status: req.query.status || "open",
+    });
+    res.json({ appeals });
+  } catch (err) {
+    logger.error("Failed to fetch moderation appeals", {
+      err,
+      adminId: req.user?.id,
+      status: req.query.status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch moderation appeals",
+    });
+  }
+};
+
+async function reviewModerationAppeal(req, res, status) {
+  const { id } = req.params;
+  const note = req.body?.note;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Appeal id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const appeal = await transitionModerationAppealStatus({
+      client,
+      appealId: id,
+      adminId: req.user.id,
+      status,
+      note,
+    });
+
+    if (!appeal) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Appeal not found" });
+    }
+
+    const moderationCase = await getModerationCaseDetail({
+      client,
+      caseId: appeal.case_id,
+    });
+
+    await client.query("COMMIT");
+
+    void notifyProviderAppealStatus({
+      providerId: appeal.provider_id,
+      caseId: appeal.case_id,
+      appealId: appeal.id,
+      status: appeal.status,
+    });
+
+    logger.security("Moderation appeal reviewed", {
+      adminId: req.user?.id,
+      appealId: id,
+      caseId: appeal.case_id,
+      status: appeal.status,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "moderation_appeal_reviewed",
+      metadata: {
+        adminId: req.user?.id,
+        appealId: id,
+        caseId: appeal.case_id,
+        status: appeal.status,
+      },
+    });
+
+    res.json({
+      message: `Appeal moved to ${appeal.status}`,
+      appeal,
+      case: moderationCase,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Moderation appeal review failed", {
+      err,
+      adminId: req.user?.id,
+      appealId: id,
+      status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Moderation appeal review failed",
+    });
+  } finally {
+    client.release();
+  }
+}
+
+exports.reviewModerationAppeal = (req, res) =>
+  reviewModerationAppeal(req, res, "UNDER_REVIEW");
+
+exports.acceptModerationAppeal = (req, res) =>
+  reviewModerationAppeal(req, res, "ACCEPTED");
+
+exports.rejectModerationAppeal = (req, res) =>
+  reviewModerationAppeal(req, res, "REJECTED");
 
 exports.updateModerationCaseStatus = async (req, res) => {
   const { id } = req.params;

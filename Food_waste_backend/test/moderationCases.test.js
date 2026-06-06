@@ -5,9 +5,13 @@ const {
   createProviderReport,
   dismissProviderReport,
   getModerationCaseDetail,
+  listModerationAppeals,
+  submitProviderModerationAppeal,
   submitProviderCaseResponse,
+  transitionModerationAppealStatus,
   transitionModerationCaseStatus,
   validateProviderReport,
+  withdrawProviderModerationAppeal,
 } = require("../shared/services/moderation.service");
 
 const PROVIDER_ID = "11111111-1111-4111-8111-111111111111";
@@ -17,6 +21,7 @@ const ADMIN_ID = "44444444-4444-4444-8444-444444444444";
 const REPORT_ID = "55555555-5555-4555-8555-555555555555";
 const CASE_ID = "66666666-6666-4666-8666-666666666666";
 const RESPONSE_ID = "77777777-7777-4777-8777-777777777777";
+const APPEAL_ID = "88888888-8888-4888-8888-888888888888";
 
 function providerReport(status = "pending", moderationCaseId = CASE_ID) {
   return {
@@ -75,6 +80,45 @@ function providerResponse({
   };
 }
 
+function moderationAppeal({
+  status = "SUBMITTED",
+  appealText = "The report outcome missed our sealed handoff evidence.",
+  attachmentCount = 0,
+} = {}) {
+  return {
+    id: APPEAL_ID,
+    case_id: CASE_ID,
+    provider_id: PROVIDER_ID,
+    provider_name: "Green Kitchen",
+    reviewed_by_admin_name: status === "SUBMITTED" ? null : "Admin User",
+    status,
+    appeal_text: appealText,
+    decision_note: ["ACCEPTED", "REJECTED"].includes(status)
+      ? "Decision note"
+      : null,
+    reviewed_by_admin: ["ACCEPTED", "REJECTED"].includes(status)
+      ? ADMIN_ID
+      : null,
+    submitted_at: "2026-06-05T02:00:00.000Z",
+    reviewed_at: ["ACCEPTED", "REJECTED"].includes(status)
+      ? "2026-06-05T03:00:00.000Z"
+      : null,
+    withdrawn_at: status === "WITHDRAWN" ? "2026-06-05T03:00:00.000Z" : null,
+    withdrawn_by_user_id: status === "WITHDRAWN" ? PROVIDER_ID : null,
+    created_at: "2026-06-05T02:00:00.000Z",
+    updated_at: "2026-06-05T02:00:00.000Z",
+    attachments: Array.from({ length: attachmentCount }, (_, index) => ({
+      id: `appeal-attachment-${index + 1}`,
+      appeal_id: APPEAL_ID,
+      uploader_user_id: PROVIDER_ID,
+      file_url: `https://res.cloudinary.com/demo/image/upload/appeal-${index + 1}.webp`,
+      mime_type: "image/webp",
+      file_size_bytes: 1024,
+      created_at: "2026-06-05T02:01:00.000Z",
+    })),
+  };
+}
+
 function createClient(options = {}) {
   const calls = [];
   let currentCase = moderationCase(options.caseStatus || "OPEN");
@@ -82,6 +126,13 @@ function createClient(options = {}) {
     ? providerResponse({
         responseText: options.responseText,
         attachmentCount: options.responseAttachmentCount || 0,
+      })
+    : null;
+  let currentAppeal = options.existingAppeal
+    ? moderationAppeal({
+        status: options.appealStatus || "SUBMITTED",
+        appealText: options.appealText,
+        attachmentCount: options.appealAttachmentCount || 0,
       })
     : null;
   let createdCaseCount = 0;
@@ -157,6 +208,131 @@ function createClient(options = {}) {
       }
 
       if (
+        sql.includes("SELECT *") &&
+        sql.includes("FROM moderation_appeals")
+      ) {
+        return { rows: currentAppeal ? [currentAppeal] : [] };
+      }
+
+      if (
+        sql.includes("INSERT INTO moderation_appeals") &&
+        sql.includes("RETURNING *")
+      ) {
+        currentAppeal = moderationAppeal({
+          status: "SUBMITTED",
+          appealText: params[2],
+        });
+        return { rows: [currentAppeal] };
+      }
+
+      if (sql.includes("INSERT INTO moderation_appeal_attachments")) {
+        const attachment = {
+          id: `appeal-attachment-${(currentAppeal?.attachments?.length || 0) + 1}`,
+          appeal_id: params[0],
+          uploader_user_id: params[1],
+          file_url: params[2],
+          mime_type: params[3],
+          file_size_bytes: params[4],
+          created_at: "2026-06-05T02:01:00.000Z",
+        };
+        currentAppeal = {
+          ...(currentAppeal || moderationAppeal()),
+          attachments: [...(currentAppeal?.attachments || []), attachment],
+        };
+        return { rows: [attachment] };
+      }
+
+      if (
+        sql.includes("SELECT ma.*, mc.status AS case_status") &&
+        sql.includes("FROM moderation_appeals ma")
+      ) {
+        return {
+          rows: currentAppeal
+            ? [{ ...currentAppeal, case_status: currentCase.status }]
+            : [],
+        };
+      }
+
+      if (
+        sql.includes("UPDATE moderation_appeals") &&
+        sql.includes("status='WITHDRAWN'")
+      ) {
+        currentAppeal = {
+          ...(currentAppeal || moderationAppeal()),
+          status: "WITHDRAWN",
+          withdrawn_at: "2026-06-05T03:00:00.000Z",
+          withdrawn_by_user_id: params[2],
+          updated_at: "2026-06-05T03:00:00.000Z",
+        };
+        return { rows: [currentAppeal] };
+      }
+
+      if (
+        sql.includes("UPDATE moderation_appeals") &&
+        sql.includes("SET status=$2")
+      ) {
+        currentAppeal = {
+          ...(currentAppeal || moderationAppeal()),
+          status: params[1],
+          reviewed_by_admin: ["ACCEPTED", "REJECTED"].includes(params[1])
+            ? params[2]
+            : currentAppeal?.reviewed_by_admin || null,
+          reviewed_at: ["ACCEPTED", "REJECTED"].includes(params[1])
+            ? "2026-06-05T03:00:00.000Z"
+            : currentAppeal?.reviewed_at || null,
+          decision_note: ["ACCEPTED", "REJECTED"].includes(params[1])
+            ? params[3]
+            : currentAppeal?.decision_note || null,
+          updated_at: "2026-06-05T03:00:00.000Z",
+        };
+        return { rows: [currentAppeal] };
+      }
+
+      if (
+        sql.includes("FROM moderation_appeals ma") &&
+        sql.includes("WHERE ma.id=$1")
+      ) {
+        return { rows: currentAppeal ? [currentAppeal] : [] };
+      }
+
+      if (
+        sql.includes("FROM moderation_appeals ma") &&
+        sql.includes("WHERE ma.case_id=$1")
+      ) {
+        return { rows: currentAppeal ? [currentAppeal] : [] };
+      }
+
+      if (
+        sql.includes("FROM moderation_appeals ma") &&
+        sql.includes("JOIN moderation_cases mc")
+      ) {
+        return { rows: currentAppeal ? [currentAppeal] : [] };
+      }
+
+      if (sql.includes("FROM moderation_appeal_events mae")) {
+        return {
+          rows: currentAppeal
+            ? [
+                {
+                  id: "appeal-event-1",
+                  appeal_id: APPEAL_ID,
+                  case_id: CASE_ID,
+                  actor_user_id: PROVIDER_ID,
+                  actor_name: "Green Kitchen",
+                  actor_role: "provider",
+                  event_type: "APPEAL_SUBMITTED",
+                  from_status: null,
+                  to_status: "SUBMITTED",
+                  note: null,
+                  metadata: {},
+                  created_at: "2026-06-05T02:00:00.000Z",
+                },
+              ]
+            : [],
+        };
+      }
+
+      if (
         sql.includes("FROM provider_case_responses pcr") &&
         sql.includes("WHERE pcr.id=$1")
       ) {
@@ -193,6 +369,26 @@ function createClient(options = {}) {
 
       if (sql.includes("FROM moderation_case_events") && sql.includes("CASE_OPENED")) {
         return { rows: [] };
+      }
+
+      if (sql.includes("INSERT INTO moderation_appeal_events") && sql.includes("VALUES")) {
+        eventCount += 1;
+        return {
+          rows: [
+            {
+              id: `appeal-event-${eventCount}`,
+              appeal_id: params[0],
+              case_id: params[1],
+              actor_user_id: params[2],
+              event_type: params[3],
+              from_status: params[4],
+              to_status: params[5],
+              note: params[6],
+              metadata: JSON.parse(params[7] || "{}"),
+              created_at: "2026-06-05T02:00:00.000Z",
+            },
+          ],
+        };
       }
 
       if (sql.includes("INSERT INTO moderation_case_events") && sql.includes("VALUES")) {
@@ -528,4 +724,189 @@ test("moderation case detail includes provider response and evidence", async () 
   assert.equal(detail.provider_response.id, RESPONSE_ID);
   assert.equal(detail.provider_response.attachments.length, 1);
   assert.equal(detail.provider_responses.length, 1);
+});
+
+test("provider appeal is allowed only after terminal moderation decisions", async () => {
+  const client = createClient({ caseStatus: "VALIDATED" });
+
+  const appeal = await submitProviderModerationAppeal({
+    client,
+    caseId: CASE_ID,
+    providerId: PROVIDER_ID,
+    appealText: "The delivery evidence shows the report should be reconsidered.",
+    files: [],
+  });
+
+  assert.equal(appeal.id, APPEAL_ID);
+  assert.equal(appeal.status, "SUBMITTED");
+  assert.equal(
+    client.calls.some((call) => call.sql.includes("INSERT INTO trust_events")),
+    false
+  );
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_appeal_events") &&
+        call.params[3] === "APPEAL_SUBMITTED"
+    )
+  );
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_case_events") &&
+        call.params[2] === "CASE_APPEAL_SUBMITTED"
+    )
+  );
+});
+
+test("provider appeal rejects active cases, duplicate appeals, and non-owners", async () => {
+  await assert.rejects(
+    () =>
+      submitProviderModerationAppeal({
+        client: createClient({ caseStatus: "UNDER_REVIEW" }),
+        caseId: CASE_ID,
+        providerId: PROVIDER_ID,
+        appealText: "Appealing too early.",
+        files: [],
+      }),
+    (err) => err.statusCode === 409
+  );
+
+  await assert.rejects(
+    () =>
+      submitProviderModerationAppeal({
+        client: createClient({ caseStatus: "VALIDATED", existingAppeal: true }),
+        caseId: CASE_ID,
+        providerId: PROVIDER_ID,
+        appealText: "Second appeal.",
+        files: [],
+      }),
+    (err) => err.statusCode === 409
+  );
+
+  await assert.rejects(
+    () =>
+      submitProviderModerationAppeal({
+        client: createClient({ caseStatus: "VALIDATED" }),
+        caseId: CASE_ID,
+        providerId: REPORTER_ID,
+        appealText: "Wrong owner.",
+        files: [],
+      }),
+    (err) => err.statusCode === 403
+  );
+});
+
+test("provider appeal withdrawal writes appeal and case audit events", async () => {
+  const client = createClient({
+    caseStatus: "VALIDATED",
+    existingAppeal: true,
+  });
+
+  const appeal = await withdrawProviderModerationAppeal({
+    client,
+    caseId: CASE_ID,
+    providerId: PROVIDER_ID,
+  });
+
+  assert.equal(appeal.status, "WITHDRAWN");
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_appeal_events") &&
+        call.params[3] === "APPEAL_WITHDRAWN" &&
+        call.params[5] === "WITHDRAWN"
+    )
+  );
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_case_events") &&
+        call.params[2] === "CASE_APPEAL_WITHDRAWN"
+    )
+  );
+});
+
+test("admin appeal acceptance records audit without direct trust mutation", async () => {
+  const client = createClient({
+    caseStatus: "VALIDATED",
+    existingAppeal: true,
+  });
+
+  const appeal = await transitionModerationAppealStatus({
+    client,
+    appealId: APPEAL_ID,
+    adminId: ADMIN_ID,
+    status: "ACCEPTED",
+    note: "Provider evidence is credible.",
+  });
+
+  assert.equal(appeal.status, "ACCEPTED");
+  assert.equal(
+    client.calls.some((call) => call.sql.includes("INSERT INTO trust_events")),
+    false
+  );
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_appeal_events") &&
+        call.params[3] === "APPEAL_STATUS_CHANGED" &&
+        call.params[5] === "ACCEPTED"
+    )
+  );
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_case_events") &&
+        call.params[2] === "CASE_APPEAL_STATUS_CHANGED" &&
+        JSON.parse(call.params[6]).appeal_to_status === "ACCEPTED"
+    )
+  );
+});
+
+test("terminal appeals cannot be changed by provider or admin", async () => {
+  await assert.rejects(
+    () =>
+      withdrawProviderModerationAppeal({
+        client: createClient({
+          caseStatus: "VALIDATED",
+          existingAppeal: true,
+          appealStatus: "ACCEPTED",
+        }),
+        caseId: CASE_ID,
+        providerId: PROVIDER_ID,
+      }),
+    (err) => err.statusCode === 409
+  );
+
+  await assert.rejects(
+    () =>
+      transitionModerationAppealStatus({
+        client: createClient({
+          caseStatus: "VALIDATED",
+          existingAppeal: true,
+          appealStatus: "REJECTED",
+        }),
+        appealId: APPEAL_ID,
+        adminId: ADMIN_ID,
+        status: "UNDER_REVIEW",
+      }),
+    (err) => err.statusCode === 409
+  );
+});
+
+test("moderation case detail and admin appeal queue include appeal history", async () => {
+  const client = createClient({
+    caseStatus: "VALIDATED",
+    existingAppeal: true,
+    appealAttachmentCount: 1,
+  });
+
+  const detail = await getModerationCaseDetail({ client, caseId: CASE_ID });
+  const appeals = await listModerationAppeals({ client, status: "open" });
+
+  assert.equal(detail.appeal.id, APPEAL_ID);
+  assert.equal(detail.appeal.attachments.length, 1);
+  assert.equal(detail.appeal.events[0].event_type, "APPEAL_SUBMITTED");
+  assert.equal(appeals[0].id, APPEAL_ID);
 });

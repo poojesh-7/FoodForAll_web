@@ -7,10 +7,17 @@ import type {
   ProviderModerationCaseSummary,
   ProviderModerationCasesResponse,
   SubmitProviderCaseResponseResponse,
+  SubmitProviderModerationAppealResponse,
+  WithdrawProviderModerationAppealResponse,
 } from "@shared/contracts/api-contracts";
 
 type ProviderResponsePayload = {
   response_text: string;
+  attachments?: File[];
+};
+
+type ProviderAppealPayload = {
+  appeal_text: string;
   attachments?: File[];
 };
 
@@ -92,10 +99,44 @@ export async function submitProviderCaseResponse(
   return getEnvelopeData<{ case: ModerationCaseDetail }>(data).case;
 }
 
+export async function submitProviderModerationAppeal(
+  id: DbId,
+  payload: ProviderAppealPayload
+): Promise<ModerationCaseDetail> {
+  const attachments = payload.attachments?.filter(Boolean) ?? [];
+  const formData = new FormData();
+  formData.append("appeal_text", payload.appeal_text);
+  attachments.forEach((file) => {
+    formData.append("attachments", file);
+  });
+
+  const { data } = await api.post<
+    SubmitProviderModerationAppealResponse | { case: ModerationCaseDetail }
+  >(`/provider/moderation-cases/${encodeId(id)}/appeal`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
+
+  return getEnvelopeData<{ case: ModerationCaseDetail }>(data).case;
+}
+
+export async function withdrawProviderModerationAppeal(
+  id: DbId
+): Promise<ModerationCaseDetail> {
+  const { data } = await api.patch<
+    WithdrawProviderModerationAppealResponse | { case: ModerationCaseDetail }
+  >(`/provider/moderation-cases/${encodeId(id)}/appeal/withdraw`);
+
+  return getEnvelopeData<{ case: ModerationCaseDetail }>(data).case;
+}
+
 export const providerModerationService = {
   getProviderModerationCases,
   getProviderModerationCase,
   submitProviderCaseResponse,
+  submitProviderModerationAppeal,
+  withdrawProviderModerationAppeal,
   getAssetUrl,
   getErrorMessage,
 };

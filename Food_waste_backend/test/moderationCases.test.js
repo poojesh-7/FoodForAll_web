@@ -5,6 +5,7 @@ const {
   createProviderReport,
   dismissProviderReport,
   getModerationCaseDetail,
+  submitProviderCaseResponse,
   transitionModerationCaseStatus,
   validateProviderReport,
 } = require("../shared/services/moderation.service");
@@ -15,6 +16,7 @@ const RESERVATION_ID = "33333333-3333-4333-8333-333333333333";
 const ADMIN_ID = "44444444-4444-4444-8444-444444444444";
 const REPORT_ID = "55555555-5555-4555-8555-555555555555";
 const CASE_ID = "66666666-6666-4666-8666-666666666666";
+const RESPONSE_ID = "77777777-7777-4777-8777-777777777777";
 
 function providerReport(status = "pending", moderationCaseId = CASE_ID) {
   return {
@@ -50,9 +52,38 @@ function moderationCase(status = "OPEN") {
   };
 }
 
-function createClient() {
+function providerResponse({
+  responseText = "We checked the batch and can share pickup notes.",
+  attachmentCount = 0,
+} = {}) {
+  return {
+    id: RESPONSE_ID,
+    case_id: CASE_ID,
+    provider_id: PROVIDER_ID,
+    provider_name: "Green Kitchen",
+    response_text: responseText,
+    created_at: "2026-06-05T00:30:00.000Z",
+    updated_at: "2026-06-05T00:30:00.000Z",
+    attachments: Array.from({ length: attachmentCount }, (_, index) => ({
+      id: `response-attachment-${index + 1}`,
+      response_id: RESPONSE_ID,
+      file_url: `https://res.cloudinary.com/demo/image/upload/provider-response-${index + 1}.webp`,
+      mime_type: "image/webp",
+      file_size_bytes: 1024,
+      created_at: "2026-06-05T00:31:00.000Z",
+    })),
+  };
+}
+
+function createClient(options = {}) {
   const calls = [];
-  let currentCase = moderationCase("OPEN");
+  let currentCase = moderationCase(options.caseStatus || "OPEN");
+  let currentResponse = options.existingResponse
+    ? providerResponse({
+        responseText: options.responseText,
+        attachmentCount: options.responseAttachmentCount || 0,
+      })
+    : null;
   let createdCaseCount = 0;
   let eventCount = 0;
 
@@ -80,6 +111,63 @@ function createClient() {
 
       if (sql.includes("SELECT id") && sql.includes("FROM provider_reports")) {
         return { rows: [] };
+      }
+
+      if (
+        sql.includes("SELECT *") &&
+        sql.includes("FROM provider_case_responses")
+      ) {
+        return { rows: currentResponse ? [currentResponse] : [] };
+      }
+
+      if (
+        sql.includes("UPDATE provider_case_responses") &&
+        sql.includes("RETURNING *")
+      ) {
+        currentResponse = {
+          ...(currentResponse || providerResponse()),
+          response_text: params[2],
+          updated_at: "2026-06-05T00:40:00.000Z",
+        };
+        return { rows: [currentResponse] };
+      }
+
+      if (
+        sql.includes("INSERT INTO provider_case_responses") &&
+        sql.includes("RETURNING *")
+      ) {
+        currentResponse = providerResponse({
+          responseText: params[2],
+          attachmentCount: 0,
+        });
+        return { rows: [currentResponse] };
+      }
+
+      if (
+        sql.includes("COUNT(*)::int AS attachment_count") &&
+        sql.includes("FROM provider_case_response_attachments")
+      ) {
+        return {
+          rows: [
+            {
+              attachment_count: currentResponse?.attachments?.length || 0,
+            },
+          ],
+        };
+      }
+
+      if (
+        sql.includes("FROM provider_case_responses pcr") &&
+        sql.includes("WHERE pcr.id=$1")
+      ) {
+        return { rows: currentResponse ? [currentResponse] : [] };
+      }
+
+      if (
+        sql.includes("FROM provider_case_responses pcr") &&
+        sql.includes("WHERE pcr.case_id=$1")
+      ) {
+        return { rows: currentResponse ? [currentResponse] : [] };
       }
 
       if (sql.includes("COUNT(*)::int AS report_count")) {
@@ -352,4 +440,92 @@ test("moderation case detail includes linked report, attachments, and timeline",
   assert.equal(detail.report.attachments.length, 1);
   assert.equal(detail.events.length, 1);
   assert.equal(detail.events[0].event_type, "CASE_OPENED");
+});
+
+test("provider response creates immutable moderation timeline event", async () => {
+  const client = createClient({ caseStatus: "AWAITING_RESPONSE" });
+
+  const response = await submitProviderCaseResponse({
+    client,
+    caseId: CASE_ID,
+    providerId: PROVIDER_ID,
+    responseText: "Batch was sealed and handed over on time.",
+    files: [],
+  });
+
+  assert.equal(response.id, RESPONSE_ID);
+  assert.equal(response.response_text, "Batch was sealed and handed over on time.");
+  assert.ok(
+    client.calls.some(
+      (call) =>
+        call.sql.includes("INSERT INTO moderation_case_events") &&
+        call.params[2] === "CASE_PROVIDER_RESPONSE_SUBMITTED" &&
+        JSON.parse(call.params[6]).attachment_count === 0
+    )
+  );
+});
+
+test("provider response rejects providers that do not own the case", async () => {
+  const client = createClient({ caseStatus: "AWAITING_RESPONSE" });
+
+  await assert.rejects(
+    () =>
+      submitProviderCaseResponse({
+        client,
+        caseId: CASE_ID,
+        providerId: REPORTER_ID,
+        responseText: "I should not be able to answer this case.",
+        files: [],
+      }),
+    (err) => err.statusCode === 403
+  );
+});
+
+test("provider response is read-only after terminal case decision", async () => {
+  const client = createClient({ caseStatus: "VALIDATED" });
+
+  await assert.rejects(
+    () =>
+      submitProviderCaseResponse({
+        client,
+        caseId: CASE_ID,
+        providerId: PROVIDER_ID,
+        responseText: "Trying to update a closed case.",
+        files: [],
+      }),
+    (err) => err.statusCode === 409
+  );
+});
+
+test("provider response rejects attachments beyond three total images", async () => {
+  const client = createClient({
+    caseStatus: "AWAITING_RESPONSE",
+    existingResponse: true,
+    responseAttachmentCount: 3,
+  });
+
+  await assert.rejects(
+    () =>
+      submitProviderCaseResponse({
+        client,
+        caseId: CASE_ID,
+        providerId: PROVIDER_ID,
+        responseText: "Adding one more image should fail.",
+        files: [{ originalname: "extra.webp" }],
+      }),
+    (err) => err.statusCode === 400
+  );
+});
+
+test("moderation case detail includes provider response and evidence", async () => {
+  const client = createClient({
+    existingResponse: true,
+    responseAttachmentCount: 1,
+  });
+
+  const detail = await getModerationCaseDetail({ client, caseId: CASE_ID });
+
+  assert.equal(detail.provider_response.id, RESPONSE_ID);
+  assert.equal(detail.provider_response.attachments.length, 1);
+  assert.equal(detail.provider_responses.length, 1);
 });

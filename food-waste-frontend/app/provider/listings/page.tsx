@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
+import { Plus, ShieldAlert } from "lucide-react";
 import toast from "react-hot-toast";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatFoodDate, getListingPrice, isFreeRescueListing } from "@/lib/food";
@@ -419,12 +420,22 @@ export default function ProviderListingsPage() {
               Manage active food availability first, then review inactive listings.
             </p>
           </div>
-          <Link
-            href="/provider/listings/create"
-            className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white"
-          >
-            Create
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/provider/moderation-cases"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-white"
+            >
+              <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+              Moderation
+            </Link>
+            <Link
+              href="/provider/listings/create"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Create
+            </Link>
+          </div>
         </div>
 
         {(error || success) && (

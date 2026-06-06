@@ -32,6 +32,7 @@ const DUPLICATE_REPORT_MESSAGE =
   "You already reported this provider for this reservation.";
 const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_REPORT_ATTACHMENTS = 3;
+const MAX_PROVIDER_RESPONSE_ATTACHMENTS = 3;
 const MAX_REPORT_ATTACHMENT_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024);
 const REPORT_ATTACHMENT_MIME_TYPES = new Set([
   "image/jpeg",
@@ -90,6 +91,19 @@ function createAttachmentPublicId(reportId, index) {
       : crypto.randomBytes(12).toString("hex");
   const normalizedReportId = String(reportId).replace(/[^a-zA-Z0-9_-]/g, "_");
   return `report_${normalizedReportId}_${index + 1}_${id}`;
+}
+
+function createResponseAttachmentPublicId(responseId, index) {
+  const id =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : crypto.randomBytes(12).toString("hex");
+  const normalizedResponseId = String(responseId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `provider_response_${normalizedResponseId}_${index + 1}_${id}`;
+}
+
+function isTerminalCaseStatus(status) {
+  return TERMINAL_MODERATION_CASE_STATUSES.has(String(status || "").toUpperCase());
 }
 
 function validateReportAttachmentFile(file) {
@@ -558,6 +572,333 @@ async function addProviderReportAttachments({
   return attachments;
 }
 
+async function addProviderCaseResponseAttachments({
+  client = pool,
+  responseId,
+  files = [],
+  startingIndex = 0,
+}) {
+  await ensureRestrictionSchema(client);
+
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  if (files.length > MAX_PROVIDER_RESPONSE_ATTACHMENTS) {
+    throw withStatus("A provider response can include up to 3 images", 400);
+  }
+
+  const storagePrefix = process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local";
+  const attachments = [];
+
+  for (const [index, file] of files.entries()) {
+    const fileSize = validateReportAttachmentFile(file);
+    const uploadedImage = await uploadBuffer(file.buffer, {
+      folder: `food-rescue/${storagePrefix}/provider-response-evidence`,
+      public_id: createResponseAttachmentPublicId(responseId, startingIndex + index),
+      mimetype: file.mimetype,
+    });
+
+    const result = await client.query(
+      `
+      INSERT INTO provider_case_response_attachments
+        (response_id, file_url, mime_type, file_size_bytes)
+      VALUES ($1,$2,$3,$4)
+      RETURNING id, response_id, file_url, mime_type, file_size_bytes, created_at
+      `,
+      [
+        responseId,
+        uploadedImage.secure_url,
+        file.mimetype,
+        fileSize,
+      ]
+    );
+
+    attachments.push(result.rows[0]);
+  }
+
+  return attachments;
+}
+
+async function loadModerationCaseForProvider({
+  client = pool,
+  caseId,
+  providerId,
+  forUpdate = false,
+}) {
+  await ensureRestrictionSchema(client);
+  const result = await client.query(
+    `
+    SELECT *
+    FROM moderation_cases
+    WHERE id=$1
+    ${forUpdate ? "FOR UPDATE" : ""}
+    `,
+    [caseId]
+  );
+  const moderationCase = result.rows[0];
+  if (!moderationCase) return null;
+
+  if (
+    moderationCase.subject_type !== "provider" ||
+    String(moderationCase.subject_id) !== String(providerId)
+  ) {
+    throw withStatus("Provider is not authorized for this moderation case", 403);
+  }
+
+  return moderationCase;
+}
+
+async function listProviderCaseResponses({ client = pool, caseId }) {
+  const result = await client.query(
+    `
+    SELECT pcr.id,
+           pcr.case_id,
+           pcr.provider_id,
+           provider.name AS provider_name,
+           pcr.response_text,
+           pcr.created_at,
+           pcr.updated_at,
+           COALESCE(response_attachments.attachments, '[]'::json) AS attachments
+    FROM provider_case_responses pcr
+    JOIN users provider ON provider.id = pcr.provider_id
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id', pcra.id,
+          'response_id', pcra.response_id,
+          'file_url', pcra.file_url,
+          'mime_type', pcra.mime_type,
+          'file_size_bytes', pcra.file_size_bytes,
+          'created_at', pcra.created_at
+        )
+        ORDER BY pcra.created_at ASC, pcra.id ASC
+      ) AS attachments
+      FROM provider_case_response_attachments pcra
+      WHERE pcra.response_id = pcr.id
+    ) response_attachments ON true
+    WHERE pcr.case_id=$1
+    ORDER BY pcr.created_at ASC, pcr.id ASC
+    `,
+    [caseId]
+  );
+
+  return result.rows;
+}
+
+async function listProviderModerationCases({ client = pool, providerId }) {
+  await ensureRestrictionSchema(client);
+  const result = await client.query(
+    `
+    SELECT mc.id,
+           mc.case_type,
+           mc.subject_type,
+           mc.subject_id,
+           mc.status,
+           mc.reason,
+           mc.summary,
+           mc.source_report_id,
+           mc.created_at,
+           mc.updated_at,
+           mc.closed_at,
+           pr.id AS report_id,
+           pr.reason AS report_reason,
+           pr.status AS report_status,
+           pr.created_at AS report_created_at,
+           f.title AS listing_title,
+           pcr.id AS provider_response_id,
+           pcr.updated_at AS provider_response_updated_at,
+           COALESCE(response_attachment_counts.attachment_count, 0)::int
+             AS provider_response_attachment_count
+    FROM moderation_cases mc
+    LEFT JOIN provider_reports pr ON pr.id = mc.source_report_id
+      OR pr.moderation_case_id = mc.id
+    LEFT JOIN reservations r ON r.id = pr.reservation_id
+    LEFT JOIN food_listings f ON f.id = r.listing_id
+    LEFT JOIN provider_case_responses pcr ON pcr.case_id = mc.id
+      AND pcr.provider_id = mc.subject_id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS attachment_count
+      FROM provider_case_response_attachments pcra
+      WHERE pcra.response_id = pcr.id
+    ) response_attachment_counts ON true
+    WHERE mc.subject_type='provider'
+    AND mc.subject_id=$1
+    ORDER BY
+      CASE
+        WHEN mc.status='AWAITING_RESPONSE' THEN 0
+        WHEN mc.status IN ('OPEN', 'UNDER_REVIEW', 'ESCALATED') THEN 1
+        ELSE 2
+      END,
+      mc.updated_at DESC,
+      mc.created_at DESC
+    `,
+    [providerId]
+  );
+
+  return result.rows;
+}
+
+async function getProviderModerationCaseDetail({
+  client = pool,
+  caseId,
+  providerId,
+}) {
+  const moderationCase = await loadModerationCaseForProvider({
+    client,
+    caseId,
+    providerId,
+  });
+  if (!moderationCase) return null;
+
+  return getModerationCaseDetail({ client, caseId });
+}
+
+async function getProviderCaseResponse({ client = pool, responseId }) {
+  const result = await client.query(
+    `
+    SELECT pcr.id,
+           pcr.case_id,
+           pcr.provider_id,
+           provider.name AS provider_name,
+           pcr.response_text,
+           pcr.created_at,
+           pcr.updated_at,
+           COALESCE(response_attachments.attachments, '[]'::json) AS attachments
+    FROM provider_case_responses pcr
+    JOIN users provider ON provider.id = pcr.provider_id
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id', pcra.id,
+          'response_id', pcra.response_id,
+          'file_url', pcra.file_url,
+          'mime_type', pcra.mime_type,
+          'file_size_bytes', pcra.file_size_bytes,
+          'created_at', pcra.created_at
+        )
+        ORDER BY pcra.created_at ASC, pcra.id ASC
+      ) AS attachments
+      FROM provider_case_response_attachments pcra
+      WHERE pcra.response_id = pcr.id
+    ) response_attachments ON true
+    WHERE pcr.id=$1
+    LIMIT 1
+    `,
+    [responseId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function submitProviderCaseResponse({
+  client = pool,
+  caseId,
+  providerId,
+  responseText,
+  files = [],
+}) {
+  await ensureRestrictionSchema(client);
+  const sanitizedResponse = sanitizeOptionalText(responseText, {
+    maxLength: 3000,
+    preserveNewlines: true,
+  });
+
+  if (!sanitizedResponse) {
+    throw withStatus("Response text is required", 400);
+  }
+
+  const moderationCase = await loadModerationCaseForProvider({
+    client,
+    caseId,
+    providerId,
+    forUpdate: true,
+  });
+  if (!moderationCase) return null;
+
+  if (isTerminalCaseStatus(moderationCase.status)) {
+    throw withStatus("Terminal moderation cases are read-only", 409);
+  }
+
+  const responseResult = await client.query(
+    `
+    SELECT *
+    FROM provider_case_responses
+    WHERE case_id=$1
+    AND provider_id=$2
+    FOR UPDATE
+    `,
+    [caseId, providerId]
+  );
+  const existingResponse = responseResult.rows[0];
+  let response;
+  let responseAction = "created";
+
+  if (existingResponse) {
+    responseAction = "updated";
+    const updated = await client.query(
+      `
+      UPDATE provider_case_responses
+      SET response_text=$3,
+          updated_at=NOW()
+      WHERE case_id=$1
+      AND provider_id=$2
+      RETURNING *
+      `,
+      [caseId, providerId, sanitizedResponse]
+    );
+    response = updated.rows[0];
+  } else {
+    const inserted = await client.query(
+      `
+      INSERT INTO provider_case_responses
+        (case_id, provider_id, response_text)
+      VALUES ($1,$2,$3)
+      RETURNING *
+      `,
+      [caseId, providerId, sanitizedResponse]
+    );
+    response = inserted.rows[0];
+  }
+
+  const existingAttachmentCount = await client.query(
+    `
+    SELECT COUNT(*)::int AS attachment_count
+    FROM provider_case_response_attachments
+    WHERE response_id=$1
+    `,
+    [response.id]
+  );
+  const attachmentCount = Number(existingAttachmentCount.rows[0]?.attachment_count || 0);
+
+  if (attachmentCount + (files?.length || 0) > MAX_PROVIDER_RESPONSE_ATTACHMENTS) {
+    throw withStatus("A provider response can include up to 3 images", 400);
+  }
+
+  const attachments = await addProviderCaseResponseAttachments({
+    client,
+    responseId: response.id,
+    files,
+    startingIndex: attachmentCount,
+  });
+
+  await recordModerationCaseEvent({
+    client,
+    caseId,
+    actorUserId: providerId,
+    eventType: "CASE_PROVIDER_RESPONSE_SUBMITTED",
+    metadata: {
+      source: "provider_case_response",
+      response_id: response.id,
+      response_action: responseAction,
+      attachment_count: attachments.length,
+      total_attachment_count: attachmentCount + attachments.length,
+    },
+  });
+
+  return getProviderCaseResponse({ client, responseId: response.id });
+}
+
 async function validateProviderReport({ client = pool, reportId, adminId, note = null }) {
   await ensureRestrictionSchema(client);
   await assertAdmin({ client, userId: adminId });
@@ -715,7 +1056,7 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
   return result.rows;
 }
 
-function buildModerationCaseDetail(row, events) {
+function buildModerationCaseDetail(row, events, providerResponses = []) {
   return {
     id: row.case_id,
     case_type: row.case_type,
@@ -732,6 +1073,8 @@ function buildModerationCaseDetail(row, events) {
     closed_at: row.closed_at,
     provider_name: row.provider_name,
     assigned_admin_name: row.assigned_admin_name,
+    provider_response: providerResponses[0] || null,
+    provider_responses: providerResponses,
     events,
     report: row.report_id
       ? {
@@ -856,21 +1199,27 @@ async function getModerationCaseDetail({ client = pool, caseId }) {
     `,
     [caseId]
   );
+  const providerResponses = await listProviderCaseResponses({ client, caseId });
 
-  return buildModerationCaseDetail(row, eventsResult.rows);
+  return buildModerationCaseDetail(row, eventsResult.rows, providerResponses);
 }
 
 module.exports = {
   DUPLICATE_REPORT_MESSAGE,
   MAX_REPORT_ATTACHMENTS,
+  MAX_PROVIDER_RESPONSE_ATTACHMENTS,
   MODERATION_CASE_STATUSES,
   REPORT_REASONS,
+  addProviderCaseResponseAttachments,
   addProviderReportAttachments,
   applyProviderReportCooldown,
   createProviderReport,
   dismissProviderReport,
   getModerationCaseDetail,
+  getProviderModerationCaseDetail,
   listProviderReports,
+  listProviderModerationCases,
+  submitProviderCaseResponse,
   transitionModerationCaseStatus,
   validateProviderReport,
 };

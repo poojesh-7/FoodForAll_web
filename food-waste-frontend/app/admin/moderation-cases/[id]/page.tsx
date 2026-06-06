@@ -23,6 +23,7 @@ import {
 } from "@/services/admin.service";
 import type {
   ModerationCaseStatus,
+  ProviderCaseResponseAttachmentRow,
   ProviderReportAttachmentRow,
 } from "@shared/contracts/api-contracts";
 
@@ -32,6 +33,10 @@ type StatusAction = {
   tone: string;
   icon: typeof Clock3;
 };
+
+type EvidenceAttachment =
+  | ProviderReportAttachmentRow
+  | ProviderCaseResponseAttachmentRow;
 
 const WORKFLOW_ACTIONS: StatusAction[] = [
   {
@@ -91,6 +96,9 @@ function statusBadge(status: unknown) {
 function eventTitle(eventType: string) {
   if (eventType === "CASE_OPENED") return "Case opened";
   if (eventType === "CASE_STATUS_CHANGED") return "Status changed";
+  if (eventType === "CASE_PROVIDER_RESPONSE_SUBMITTED") {
+    return "Provider response submitted";
+  }
   return displayLabel(eventType);
 }
 
@@ -104,7 +112,7 @@ export default function ModerationCaseDetailPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [previewAttachment, setPreviewAttachment] =
-    useState<ProviderReportAttachmentRow | null>(null);
+    useState<EvidenceAttachment | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -149,6 +157,10 @@ export default function ModerationCaseDetailPage() {
 
   const report = moderationCase?.report || null;
   const attachments = Array.isArray(report?.attachments) ? report.attachments : [];
+  const providerResponse = moderationCase?.provider_response || null;
+  const providerResponseAttachments = Array.isArray(providerResponse?.attachments)
+    ? providerResponse.attachments
+    : [];
   const terminal = TERMINAL_STATUSES.has(String(moderationCase?.status || ""));
   const pendingReport = report?.status === "pending";
 
@@ -299,7 +311,7 @@ export default function ModerationCaseDetailPage() {
               {attachments.length > 0 && (
                 <div className="mt-4">
                   <p className="text-xs font-medium uppercase text-zinc-500">
-                    Evidence
+                    Reporter Evidence
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {attachments.map((attachment) => {
@@ -329,6 +341,80 @@ export default function ModerationCaseDetailPage() {
                     })}
                   </div>
                 </div>
+              )}
+            </article>
+
+            <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase text-zinc-500">
+                    Provider Response
+                  </p>
+                  <h2 className="mt-1 text-base font-semibold text-zinc-950">
+                    {providerResponse ? "Response on file" : "No provider response yet"}
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    {providerResponse
+                      ? `Updated ${formatDate(providerResponse.updated_at)}`
+                      : "Move the case to awaiting response when provider input is needed."}
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${
+                    providerResponse
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-zinc-200 bg-zinc-100 text-zinc-600"
+                  }`}
+                >
+                  {providerResponse ? "Submitted" : "Pending"}
+                </span>
+              </div>
+
+              {providerResponse ? (
+                <>
+                  <p className="mt-4 whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm leading-6 text-zinc-700">
+                    {providerResponse.response_text}
+                  </p>
+
+                  {providerResponseAttachments.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-medium uppercase text-zinc-500">
+                        Provider Evidence
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {providerResponseAttachments.map((attachment) => {
+                          const url = adminService.getAssetUrl(attachment.file_url);
+                          if (!url) return null;
+
+                          return (
+                            <button
+                              key={String(attachment.id)}
+                              type="button"
+                              onClick={() => setPreviewAttachment(attachment)}
+                              className="group overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-left transition hover:border-zinc-400"
+                            >
+                              <span className="block aspect-[4/3] overflow-hidden">
+                                <img
+                                  src={url}
+                                  alt="Provider response evidence"
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                />
+                              </span>
+                              <span className="block truncate px-2 py-1 text-xs text-zinc-500">
+                                {formatFileSize(attachment.file_size_bytes) ||
+                                  displayValue(attachment.mime_type)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+                  The provider has not submitted a response for this case.
+                </p>
               )}
             </article>
           </section>

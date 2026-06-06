@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ShieldAlert } from "lucide-react";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import { formatFoodDate } from "@/lib/food";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -467,7 +469,7 @@ export default function ProviderReservationsPage() {
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
       <div className="mx-auto max-w-7xl space-y-5">
-        <header>
+        <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <h1 className="text-2xl font-semibold text-zinc-950">
               Provider Reservations
@@ -476,6 +478,13 @@ export default function ProviderReservationsPage() {
               Track active pickups first, then review completed reservation history.
             </p>
           </div>
+          <Link
+            href="/provider/moderation-cases"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-white"
+          >
+            <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+            Moderation
+          </Link>
         </header>
 
         {error && (

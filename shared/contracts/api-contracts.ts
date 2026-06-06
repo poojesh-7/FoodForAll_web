@@ -818,6 +818,26 @@ export interface ModerationCaseEventRow extends DbRow {
   created_at?: ISODateString;
 }
 
+export interface ProviderCaseResponseAttachmentRow extends DbRow {
+  id?: DbId;
+  response_id?: DbId;
+  file_url?: string;
+  mime_type?: string;
+  file_size_bytes?: number | string;
+  created_at?: ISODateString;
+}
+
+export interface ProviderCaseResponseRow extends DbRow {
+  id?: DbId;
+  case_id?: DbId;
+  provider_id?: DbId;
+  provider_name?: string | null;
+  response_text?: string;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+  attachments?: ProviderCaseResponseAttachmentRow[];
+}
+
 export interface ModerationCaseDetail extends DbRow {
   id: DbId;
   case_type: string;
@@ -835,6 +855,8 @@ export interface ModerationCaseDetail extends DbRow {
   provider_name?: string | null;
   assigned_admin_name?: string | null;
   report?: ProviderReportRow | null;
+  provider_response?: ProviderCaseResponseRow | null;
+  provider_responses?: ProviderCaseResponseRow[];
   events: ModerationCaseEventRow[];
 }
 
@@ -891,6 +913,41 @@ export interface UpdateModerationCaseStatusRequest {
   note?: string | null;
 }
 export type UpdateModerationCaseStatusResponse = ApiResponse<ModerationCaseData>;
+export interface ProviderModerationCaseSummary extends DbRow {
+  id: DbId;
+  case_type?: string;
+  subject_type?: string;
+  subject_id?: DbId;
+  status: ModerationCaseStatus | string;
+  reason?: string | null;
+  summary?: string | null;
+  source_report_id?: DbId | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+  closed_at?: ISODateString | null;
+  report_id?: DbId | null;
+  report_reason?: string | null;
+  report_status?: string | null;
+  report_created_at?: ISODateString | null;
+  listing_title?: string | null;
+  provider_response_id?: DbId | null;
+  provider_response_updated_at?: ISODateString | null;
+  provider_response_attachment_count?: number | string;
+}
+export interface ProviderModerationCasesData {
+  cases: ProviderModerationCaseSummary[];
+}
+export type ProviderModerationCasesResponse = ApiResponse<ProviderModerationCasesData>;
+export type ProviderModerationCaseResponse = ApiResponse<ModerationCaseData>;
+export interface SubmitProviderCaseResponseRequest {
+  response_text: string;
+  attachments?: File[];
+}
+export interface SubmitProviderCaseResponseData extends ModerationCaseData {
+  response: ProviderCaseResponseRow;
+}
+export type SubmitProviderCaseResponseResponse =
+  ApiResponse<SubmitProviderCaseResponseData>;
 export interface AdminOperationalSummary {
   total_ngos: number | string;
   total_restaurants: number | string;
@@ -1261,6 +1318,35 @@ export const apiContracts = {
       request: { params: "IdParams", query: "NoRequestQuery", body: "MarkAsPickedUpRequest" },
       response: "MarkAsPickedUpResponse",
       statusCodes: [200, 400, 401, 403, 404],
+    },
+  ],
+  providerModeration: [
+    {
+      method: "GET",
+      path: "/api/v1/provider/moderation-cases",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ProviderModerationCasesResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/provider/moderation-cases/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ProviderModerationCaseResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/provider/moderation-cases/:id/response",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider", "reportLimiter", "upload.providerReportAttachments.array('attachments', 3)"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "SubmitProviderCaseResponseRequest", contentType: "multipart/form-data" },
+      response: "SubmitProviderCaseResponseResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409, 500],
     },
   ],
   ngo: [

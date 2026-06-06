@@ -17,7 +17,9 @@ const {
 } = require("../shared/services/financialLedger.service");
 const {
   dismissProviderReport,
+  getModerationCaseDetail,
   listProviderReports,
+  transitionModerationCaseStatus,
   validateProviderReport,
 } = require("../shared/services/moderation.service");
 const {
@@ -791,6 +793,120 @@ exports.getProviderReports = async (req, res) => {
   }
 };
 
+exports.getModerationCase = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Moderation case id is required" });
+  }
+
+  try {
+    const moderationCase = await getModerationCaseDetail({ caseId: id });
+    if (!moderationCase) {
+      return res.status(404).json({ error: "Moderation case not found" });
+    }
+
+    res.json({ case: moderationCase });
+  } catch (err) {
+    logger.error("Failed to fetch moderation case", {
+      err,
+      adminId: req.user?.id,
+      caseId: id,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch moderation case" });
+  }
+};
+
+exports.updateModerationCaseStatus = async (req, res) => {
+  const { id } = req.params;
+  const status = req.body?.status;
+  const note = req.body?.note;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Moderation case id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const currentDetail = await getModerationCaseDetail({ client, caseId: id });
+    if (!currentDetail) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Moderation case not found" });
+    }
+
+    if (
+      ["VALIDATED", "DISMISSED"].includes(String(status || "").toUpperCase()) &&
+      currentDetail.report?.id &&
+      currentDetail.report.status === "pending"
+    ) {
+      if (String(status).toUpperCase() === "VALIDATED") {
+        await validateProviderReport({
+          client,
+          reportId: currentDetail.report.id,
+          adminId: req.user.id,
+          note,
+        });
+      } else {
+        await dismissProviderReport({
+          client,
+          reportId: currentDetail.report.id,
+          adminId: req.user.id,
+          note,
+        });
+      }
+    } else {
+      const updated = await transitionModerationCaseStatus({
+        client,
+        caseId: id,
+        adminId: req.user.id,
+        status,
+        note,
+        metadata: {
+          source: "admin_case_status_update",
+        },
+      });
+
+      if (!updated) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Moderation case not found" });
+      }
+    }
+
+    const moderationCase = await getModerationCaseDetail({ client, caseId: id });
+    await client.query("COMMIT");
+
+    logger.security("Moderation case status updated", {
+      adminId: req.user?.id,
+      caseId: id,
+      status,
+    });
+    void recordOperationalEvent({
+      category: "security",
+      severity: "info",
+      eventName: "moderation_case_status_updated",
+      metadata: { adminId: req.user?.id, caseId: id, status },
+    });
+
+    res.json({ message: "Moderation case updated", case: moderationCase });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Moderation case update failed", {
+      err,
+      adminId: req.user?.id,
+      caseId: id,
+      status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Moderation case update failed",
+    });
+  } finally {
+    client.release();
+  }
+};
+
 async function reviewProviderReport(req, res, action) {
   const { id } = req.params;
 
@@ -804,8 +920,18 @@ async function reviewProviderReport(req, res, action) {
     await client.query("BEGIN");
     const report =
       action === "validate"
-        ? await validateProviderReport({ client, reportId: id, adminId: req.user.id })
-        : await dismissProviderReport({ client, reportId: id, adminId: req.user.id });
+        ? await validateProviderReport({
+            client,
+            reportId: id,
+            adminId: req.user.id,
+            note: req.body?.note,
+          })
+        : await dismissProviderReport({
+            client,
+            reportId: id,
+            adminId: req.user.id,
+            note: req.body?.note,
+          });
 
     if (!report) {
       await client.query("ROLLBACK");

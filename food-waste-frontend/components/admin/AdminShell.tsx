@@ -43,7 +43,10 @@ export default function AdminShell({
               const active =
                 item.href === "/admin"
                   ? pathname === item.href
-                  : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  : pathname === item.href ||
+                    pathname.startsWith(`${item.href}/`) ||
+                    (item.href === "/admin/provider-reports" &&
+                      pathname.startsWith("/admin/moderation-cases/"));
 
               return (
                 <Link

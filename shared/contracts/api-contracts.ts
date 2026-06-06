@@ -772,15 +772,27 @@ export interface ProviderReportAttachmentRow extends DbRow {
   file_size_bytes?: number | string;
   created_at?: ISODateString;
 }
+export type ModerationCaseStatus =
+  | "OPEN"
+  | "UNDER_REVIEW"
+  | "AWAITING_RESPONSE"
+  | "VALIDATED"
+  | "DISMISSED"
+  | "ESCALATED";
+
 export interface ProviderReportRow extends DbRow {
   id?: DbId;
   provider_id?: DbId;
   reported_by?: DbId;
   reservation_id?: DbId | null;
+  moderation_case_id?: DbId | null;
+  moderation_case_status?: ModerationCaseStatus | string | null;
   reason?: string;
   description?: string | null;
   status?: string;
   created_at?: ISODateString;
+  resolved_at?: ISODateString | null;
+  reviewed_by_admin?: DbId | null;
   provider_name?: string | null;
   reporter_name?: string | null;
   reporter_role?: UserRole | string | null;
@@ -791,6 +803,40 @@ export interface ProviderReportRow extends DbRow {
   attachments?: ProviderReportAttachmentRow[];
 }
 export type ReportProviderResponse = ApiResponse<ProviderReportRow>;
+
+export interface ModerationCaseEventRow extends DbRow {
+  id: DbId;
+  case_id: DbId;
+  actor_user_id?: DbId | null;
+  actor_name?: string | null;
+  actor_role?: UserRole | string | null;
+  event_type: string;
+  from_status?: ModerationCaseStatus | string | null;
+  to_status?: ModerationCaseStatus | string | null;
+  note?: string | null;
+  metadata?: DbRow;
+  created_at?: ISODateString;
+}
+
+export interface ModerationCaseDetail extends DbRow {
+  id: DbId;
+  case_type: string;
+  subject_type: string;
+  subject_id: DbId;
+  status: ModerationCaseStatus | string;
+  opened_by_user_id?: DbId | null;
+  assigned_admin_id?: DbId | null;
+  source_report_id?: DbId | null;
+  reason?: string | null;
+  summary?: string | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+  closed_at?: ISODateString | null;
+  provider_name?: string | null;
+  assigned_admin_name?: string | null;
+  report?: ProviderReportRow | null;
+  events: ModerationCaseEventRow[];
+}
 
 // Rating requests/responses
 export interface CreateRatingRequest {
@@ -829,6 +875,22 @@ export interface RejectRestaurantRequest {
   reason?: string;
 }
 export type RejectRestaurantResponse = ApiResponse<EmptyData>;
+export interface ProviderReportsAdminData {
+  reports: ProviderReportRow[];
+}
+export interface ProviderReportsAdminQuery {
+  status?: "pending" | "all" | string;
+}
+export type ProviderReportsAdminResponse = ApiResponse<ProviderReportsAdminData>;
+export interface ModerationCaseData {
+  case: ModerationCaseDetail;
+}
+export type GetModerationCaseResponse = ApiResponse<ModerationCaseData>;
+export interface UpdateModerationCaseStatusRequest {
+  status: ModerationCaseStatus;
+  note?: string | null;
+}
+export type UpdateModerationCaseStatusResponse = ApiResponse<ModerationCaseData>;
 export interface AdminOperationalSummary {
   total_ngos: number | string;
   total_restaurants: number | string;
@@ -1553,6 +1615,33 @@ export const apiContracts = {
       request: { params: "IdParams", query: "NoRequestQuery", body: "RejectRestaurantRequest" },
       response: "RejectRestaurantResponse",
       statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/provider-reports",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
+      response: "ProviderReportsAdminResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/moderation-cases/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetModerationCaseResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/moderation-cases/:id/status",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateModerationCaseStatusRequest" },
+      response: "UpdateModerationCaseStatusResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
     },
     {
       method: "GET",

@@ -12,6 +12,9 @@ import type {
   AdminSecurityEvent,
   AdminSecurityEventsResponse,
   DbId,
+  GetModerationCaseResponse,
+  ModerationCaseDetail,
+  ModerationCaseStatus,
   PendingNGORow,
   PendingNGOsResponse,
   PendingRestaurantRow,
@@ -53,6 +56,8 @@ export type AdminProviderReport = {
   provider_id: DbId;
   reported_by: DbId;
   reservation_id?: DbId | null;
+  moderation_case_id?: DbId | null;
+  moderation_case_status?: ModerationCaseStatus | string | null;
   reason: string;
   description?: string | null;
   status: string;
@@ -66,6 +71,7 @@ export type AdminProviderReport = {
   listing_title?: string | null;
   attachments?: ProviderReportAttachmentRow[];
 };
+export type AdminModerationCase = ModerationCaseDetail;
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -207,6 +213,26 @@ export async function dismissProviderReport(id: DbId): Promise<void> {
   await api.patch<MessageResponse>(`/admin/provider-reports/${String(id)}/dismiss`);
 }
 
+export async function getModerationCase(id: DbId): Promise<AdminModerationCase> {
+  const { data } = await api.get<
+    GetModerationCaseResponse | { case: AdminModerationCase }
+  >(`/admin/moderation-cases/${String(id)}`);
+
+  return getEnvelopeData<{ case: AdminModerationCase }>(data).case;
+}
+
+export async function updateModerationCaseStatus(
+  id: DbId,
+  status: ModerationCaseStatus,
+  note?: string | null
+): Promise<AdminModerationCase> {
+  const { data } = await api.patch<
+    { case: AdminModerationCase } | { data: { case: AdminModerationCase } }
+  >(`/admin/moderation-cases/${String(id)}/status`, { status, note });
+
+  return getEnvelopeData<{ case: AdminModerationCase }>(data).case;
+}
+
 export const adminService = {
   getPendingNGOs,
   approveNGO,
@@ -223,6 +249,8 @@ export const adminService = {
   getProviderReports,
   validateProviderReport,
   dismissProviderReport,
+  getModerationCase,
+  updateModerationCaseStatus,
   getBullBoardUrl,
   getAssetUrl,
   getErrorMessage,

@@ -36,6 +36,12 @@ router.get("/trust/:subjectType/:subjectId/projection", adminCtrl.getTrustProjec
 router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
 router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
 router.get("/provider-reports", adminCtrl.getProviderReports);
+router.get("/moderation-cases/:id", adminCtrl.getModerationCase);
+router.patch(
+  "/moderation-cases/:id/status",
+  adminActionLimiter,
+  adminCtrl.updateModerationCaseStatus,
+);
 router.patch(
   "/provider-reports/:id/validate",
   adminActionLimiter,

@@ -9,6 +9,7 @@ const navItems = [
   { href: "/admin/restaurants", label: "Restaurant Moderation" },
   { href: "/admin/provider-reports", label: "Provider Reports" },
   { href: "/admin/moderation-appeals", label: "Appeals" },
+  { href: "/admin/governance-intelligence", label: "Intelligence" },
   { href: "/admin/trust", label: "Trust" },
   { href: "/admin/queues", label: "Queues" },
 ];

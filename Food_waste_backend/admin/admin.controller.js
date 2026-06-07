@@ -56,6 +56,14 @@ const {
 const {
   getAbuseAnalytics,
 } = require("../shared/services/abuseGuard.service");
+const {
+  getEscalationAnalytics,
+  getGovernanceIntelligenceSummary,
+  getModerationGovernanceMetrics,
+  listGovernanceSignals,
+  listProviderGovernanceMetrics,
+  listReporterReputations,
+} = require("../shared/services/governanceIntelligence.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -985,6 +993,102 @@ exports.getModerationAppeals = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch moderation appeals",
+    });
+  }
+};
+
+exports.getGovernanceIntelligence = async (req, res) => {
+  try {
+    const intelligence = await getGovernanceIntelligenceSummary(req.query);
+    res.json({ intelligence });
+  } catch (err) {
+    logger.error("Failed to fetch governance intelligence", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch governance intelligence",
+    });
+  }
+};
+
+exports.getGovernanceReporterReputation = async (req, res) => {
+  try {
+    const reporters = await listReporterReputations(req.query);
+    res.json({ reporters });
+  } catch (err) {
+    logger.error("Failed to fetch reporter reputation intelligence", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch reporter reputation",
+    });
+  }
+};
+
+exports.getGovernanceProviderMetrics = async (req, res) => {
+  try {
+    const providers = await listProviderGovernanceMetrics(req.query);
+    res.json({ providers });
+  } catch (err) {
+    logger.error("Failed to fetch provider governance intelligence", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch provider governance metrics",
+    });
+  }
+};
+
+exports.getGovernanceSignals = async (req, res) => {
+  try {
+    const signals = await listGovernanceSignals(req.query);
+    res.json({ signals });
+  } catch (err) {
+    logger.error("Failed to fetch governance signals", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch governance signals",
+    });
+  }
+};
+
+exports.getGovernanceMetrics = async (req, res) => {
+  try {
+    const metrics = await getModerationGovernanceMetrics(req.query);
+    res.json({ metrics });
+  } catch (err) {
+    logger.error("Failed to fetch governance metrics", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch governance metrics",
+    });
+  }
+};
+
+exports.getGovernanceEscalations = async (req, res) => {
+  try {
+    const escalation = await getEscalationAnalytics(req.query);
+    res.json({ escalation });
+  } catch (err) {
+    logger.error("Failed to fetch governance escalation analytics", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch governance escalations",
     });
   }
 };

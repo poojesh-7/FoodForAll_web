@@ -42,6 +42,21 @@ router.post(
 router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
 router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
 router.get("/provider-reports", adminCtrl.getProviderReports);
+router.get("/governance-intelligence", adminCtrl.getGovernanceIntelligence);
+router.get(
+  "/governance-intelligence/reporters",
+  adminCtrl.getGovernanceReporterReputation,
+);
+router.get(
+  "/governance-intelligence/providers",
+  adminCtrl.getGovernanceProviderMetrics,
+);
+router.get("/governance-intelligence/signals", adminCtrl.getGovernanceSignals);
+router.get("/governance-intelligence/metrics", adminCtrl.getGovernanceMetrics);
+router.get(
+  "/governance-intelligence/escalations",
+  adminCtrl.getGovernanceEscalations,
+);
 router.get("/moderation-cases/:id", adminCtrl.getModerationCase);
 router.get("/moderation-appeals", adminCtrl.getModerationAppeals);
 router.patch(

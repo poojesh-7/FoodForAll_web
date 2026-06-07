@@ -992,6 +992,192 @@ export interface UpdateModerationAppealStatusData extends ModerationCaseData {
 export type UpdateModerationAppealStatusResponse =
   ApiResponse<UpdateModerationAppealStatusData>;
 
+export type GovernanceRiskLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export interface GovernanceSignalCount {
+  label: string;
+  value: number | string;
+}
+
+export interface GovernanceSignal extends DbRow {
+  id: string;
+  actor_type: "reporter" | "provider" | string;
+  actor_id?: DbId | null;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  signal_type: string;
+  title: string;
+  risk_level: GovernanceRiskLevel | string;
+  reason: string;
+  recommendation?: string | null;
+  metrics?: DbRow;
+  supporting_counts?: GovernanceSignalCount[];
+  window?: {
+    days?: number | string;
+    start_at?: ISODateString;
+    end_at?: ISODateString;
+  };
+  generated_at?: ISODateString;
+  informational_only: boolean;
+  enforcement_action?: null;
+}
+
+export interface GovernanceReporterReputation extends DbRow {
+  reporter_id: DbId;
+  reporter_name?: string | null;
+  reporter_role?: string | null;
+  reports_submitted: number | string;
+  reports_validated: number | string;
+  reports_dismissed: number | string;
+  reports_pending: number | string;
+  validation_rate: number | string;
+  dismissal_rate: number | string;
+  unique_providers_reported: number | string;
+  repeated_target_count: number | string;
+  max_reports_against_single_provider: number | string;
+  linked_appeals_submitted: number | string;
+  accepted_appeal_reversals: number | string;
+  first_report_at?: ISODateString | null;
+  last_report_at?: ISODateString | null;
+  risk_level: GovernanceRiskLevel | string;
+  signals?: GovernanceSignal[];
+  informational_only: boolean;
+}
+
+export interface GovernanceProviderMetrics extends DbRow {
+  provider_id: DbId;
+  provider_name?: string | null;
+  reports_received: number | string;
+  reports_validated: number | string;
+  reports_dismissed: number | string;
+  reports_pending: number | string;
+  total_cases: number | string;
+  open_cases: number | string;
+  validated_cases: number | string;
+  dismissed_cases: number | string;
+  cases_escalated: number | string;
+  escalation_events: number | string;
+  escalation_rate: number | string;
+  appeals_submitted: number | string;
+  appeals_accepted: number | string;
+  appeals_rejected: number | string;
+  appeal_acceptance_rate: number | string;
+  first_case_at?: ISODateString | null;
+  last_case_at?: ISODateString | null;
+  risk_level: GovernanceRiskLevel | string;
+  signals?: GovernanceSignal[];
+  informational_only: boolean;
+}
+
+export interface GovernanceAdminPerformance extends DbRow {
+  admin_id?: DbId | null;
+  admin_name?: string | null;
+  cases_reviewed: number | string;
+  cases_validated: number | string;
+  cases_dismissed: number | string;
+  cases_escalated: number | string;
+  average_resolution_hours: number | string;
+}
+
+export interface GovernanceModerationMetrics extends DbRow {
+  total_cases: number | string;
+  open_cases: number | string;
+  validated_cases: number | string;
+  dismissed_cases: number | string;
+  escalated_cases: number | string;
+  appeals_submitted: number | string;
+  appeals_under_review: number | string;
+  appeals_accepted: number | string;
+  appeals_rejected: number | string;
+  appeals_withdrawn: number | string;
+  average_resolution_hours: number | string;
+  admin_performance: GovernanceAdminPerformance[];
+  informational_only: boolean;
+}
+
+export interface GovernanceEscalationProvider extends DbRow {
+  provider_id: DbId;
+  provider_name?: string | null;
+  cases_escalated: number | string;
+  escalation_events: number | string;
+}
+
+export interface GovernanceEscalationAnalytics extends DbRow {
+  total_cases: number | string;
+  cases_escalated: number | string;
+  escalation_events: number | string;
+  escalation_rate: number | string;
+  repeated_escalations: number | string;
+  repeated_escalation_providers: GovernanceEscalationProvider[];
+  informational_only: boolean;
+}
+
+export interface GovernanceIntelligenceFilters {
+  window_days?: number | string;
+  limit?: number | string;
+  risk?: GovernanceRiskLevel | string | null;
+  reporter_id?: DbId | null;
+  provider_id?: DbId | null;
+}
+
+export interface GovernanceIntelligenceData {
+  generated_at: ISODateString;
+  filters: GovernanceIntelligenceFilters;
+  window: {
+    days: number | string;
+    start_at: ISODateString;
+    end_at: ISODateString;
+  };
+  informational_only: boolean;
+  enforcement_action?: null;
+  moderation: GovernanceModerationMetrics;
+  reporters: GovernanceReporterReputation[];
+  providers: GovernanceProviderMetrics[];
+  escalation: GovernanceEscalationAnalytics;
+  signals: GovernanceSignal[];
+}
+
+export interface GovernanceIntelligenceQuery {
+  windowDays?: string;
+  window_days?: string;
+  limit?: string;
+  risk?: GovernanceRiskLevel | string;
+  reporterId?: string;
+  reporter_id?: string;
+  providerId?: string;
+  provider_id?: string;
+}
+
+export interface GovernanceIntelligenceDataEnvelope {
+  intelligence: GovernanceIntelligenceData;
+}
+export interface GovernanceReporterReputationData {
+  reporters: GovernanceReporterReputation[];
+}
+export interface GovernanceProviderMetricsData {
+  providers: GovernanceProviderMetrics[];
+}
+export interface GovernanceSignalsData {
+  signals: GovernanceSignal[];
+}
+export interface GovernanceModerationMetricsData {
+  metrics: GovernanceModerationMetrics;
+}
+export interface GovernanceEscalationData {
+  escalation: GovernanceEscalationAnalytics;
+}
+
+export type GovernanceIntelligenceResponse =
+  ApiResponse<GovernanceIntelligenceDataEnvelope>;
+export type GovernanceReporterReputationResponse =
+  ApiResponse<GovernanceReporterReputationData>;
+export type GovernanceProviderMetricsResponse =
+  ApiResponse<GovernanceProviderMetricsData>;
+export type GovernanceSignalsResponse = ApiResponse<GovernanceSignalsData>;
+export type GovernanceModerationMetricsResponse =
+  ApiResponse<GovernanceModerationMetricsData>;
+export type GovernanceEscalationResponse = ApiResponse<GovernanceEscalationData>;
+
 export type TrustSubjectType = "user" | "ngo" | "volunteer" | "provider";
 export type AdminTrustActionType =
   | "MANUAL_RESTRICTION"
@@ -1980,6 +2166,60 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
       response: "ProviderReportsAdminResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceIntelligenceResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence/reporters",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceReporterReputationResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence/providers",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceProviderMetricsResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence/signals",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceSignalsResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence/metrics",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceModerationMetricsResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-intelligence/escalations",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceEscalationResponse",
+      statusCodes: [200, 400, 401, 403, 500],
     },
     {
       method: "GET",

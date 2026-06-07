@@ -1,0 +1,6 @@
+DROP INDEX IF EXISTS idx_moderation_appeals_provider_status_created;
+DROP INDEX IF EXISTS idx_moderation_appeals_case_status_created;
+DROP INDEX IF EXISTS idx_moderation_case_events_type_status_created;
+DROP INDEX IF EXISTS idx_moderation_cases_subject_created;
+DROP INDEX IF EXISTS idx_provider_reports_reporter_provider_created;
+DROP INDEX IF EXISTS idx_provider_reports_reporter_status_created;

@@ -12,6 +12,18 @@ import type {
   AdminSecurityEvent,
   AdminSecurityEventsResponse,
   DbId,
+  GovernanceEscalationAnalytics,
+  GovernanceEscalationResponse,
+  GovernanceIntelligenceData,
+  GovernanceIntelligenceResponse,
+  GovernanceModerationMetrics,
+  GovernanceModerationMetricsResponse,
+  GovernanceProviderMetrics,
+  GovernanceProviderMetricsResponse,
+  GovernanceReporterReputation,
+  GovernanceReporterReputationResponse,
+  GovernanceSignal,
+  GovernanceSignalsResponse,
   GetModerationCaseResponse,
   ModerationCaseDetail,
   ModerationAppealsAdminResponse,
@@ -83,6 +95,15 @@ export type AdminProviderReport = {
 };
 export type AdminModerationCase = ModerationCaseDetail;
 export type AdminModerationAppeal = ModerationAppealRow;
+export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
+
+export type GovernanceIntelligenceParams = {
+  windowDays?: number | string;
+  limit?: number | string;
+  risk?: string;
+  reporterId?: DbId;
+  providerId?: DbId;
+};
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -242,6 +263,70 @@ export async function getModerationAppeals(
   return getEnvelopeData<{ appeals: AdminModerationAppeal[] }>(data).appeals;
 }
 
+export async function getGovernanceIntelligence(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceIntelligenceData> {
+  const { data } = await api.get<
+    GovernanceIntelligenceResponse | { intelligence: GovernanceIntelligenceData }
+  >("/admin/governance-intelligence", { params });
+
+  return getEnvelopeData<{ intelligence: GovernanceIntelligenceData }>(data)
+    .intelligence;
+}
+
+export async function getGovernanceReporterReputation(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceReporterReputation[]> {
+  const { data } = await api.get<
+    GovernanceReporterReputationResponse | { reporters: GovernanceReporterReputation[] }
+  >("/admin/governance-intelligence/reporters", { params });
+
+  return getEnvelopeData<{ reporters: GovernanceReporterReputation[] }>(data)
+    .reporters;
+}
+
+export async function getGovernanceProviderMetrics(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceProviderMetrics[]> {
+  const { data } = await api.get<
+    GovernanceProviderMetricsResponse | { providers: GovernanceProviderMetrics[] }
+  >("/admin/governance-intelligence/providers", { params });
+
+  return getEnvelopeData<{ providers: GovernanceProviderMetrics[] }>(data)
+    .providers;
+}
+
+export async function getGovernanceSignals(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceSignal[]> {
+  const { data } = await api.get<
+    GovernanceSignalsResponse | { signals: GovernanceSignal[] }
+  >("/admin/governance-intelligence/signals", { params });
+
+  return getEnvelopeData<{ signals: GovernanceSignal[] }>(data).signals;
+}
+
+export async function getGovernanceMetrics(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceModerationMetrics> {
+  const { data } = await api.get<
+    GovernanceModerationMetricsResponse | { metrics: GovernanceModerationMetrics }
+  >("/admin/governance-intelligence/metrics", { params });
+
+  return getEnvelopeData<{ metrics: GovernanceModerationMetrics }>(data).metrics;
+}
+
+export async function getGovernanceEscalations(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceEscalationAnalytics> {
+  const { data } = await api.get<
+    GovernanceEscalationResponse | { escalation: GovernanceEscalationAnalytics }
+  >("/admin/governance-intelligence/escalations", { params });
+
+  return getEnvelopeData<{ escalation: GovernanceEscalationAnalytics }>(data)
+    .escalation;
+}
+
 async function patchModerationAppeal(
   id: DbId,
   action: "review" | "accept" | "reject",
@@ -335,6 +420,12 @@ export const adminService = {
   dismissProviderReport,
   getModerationCase,
   getModerationAppeals,
+  getGovernanceIntelligence,
+  getGovernanceReporterReputation,
+  getGovernanceProviderMetrics,
+  getGovernanceSignals,
+  getGovernanceMetrics,
+  getGovernanceEscalations,
   reviewModerationAppeal,
   acceptModerationAppeal,
   rejectModerationAppeal,

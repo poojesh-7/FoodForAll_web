@@ -22,6 +22,13 @@ import type {
   PendingRestaurantRow,
   PendingRestaurantsResponse,
   ProviderReportAttachmentRow,
+  GetTrustExplainabilityData,
+  GetTrustExplainabilityResponse,
+  RecordAdminTrustActionData,
+  RecordAdminTrustActionRequest,
+  RecordAdminTrustActionResponse,
+  TrustExplainability,
+  TrustSubjectType,
   UpdateModerationAppealStatusResponse,
 } from "@shared/contracts/api-contracts";
 
@@ -284,6 +291,32 @@ export async function updateModerationCaseStatus(
   return getEnvelopeData<{ case: AdminModerationCase }>(data).case;
 }
 
+export async function getTrustExplainability(
+  subjectType: TrustSubjectType | string,
+  subjectId: DbId
+): Promise<TrustExplainability> {
+  const { data } = await api.get<
+    GetTrustExplainabilityResponse | GetTrustExplainabilityData
+  >(`/admin/trust/${encodeURIComponent(subjectType)}/${encodeURIComponent(String(subjectId))}/explain`);
+
+  return getEnvelopeData<GetTrustExplainabilityData>(data).explanation;
+}
+
+export async function recordAdminTrustAction(
+  subjectType: TrustSubjectType | string,
+  subjectId: DbId,
+  payload: RecordAdminTrustActionRequest
+): Promise<RecordAdminTrustActionData> {
+  const { data } = await api.post<
+    RecordAdminTrustActionResponse | RecordAdminTrustActionData
+  >(
+    `/admin/trust/${encodeURIComponent(subjectType)}/${encodeURIComponent(String(subjectId))}/actions`,
+    payload
+  );
+
+  return getEnvelopeData<RecordAdminTrustActionData>(data);
+}
+
 export const adminService = {
   getPendingNGOs,
   approveNGO,
@@ -306,6 +339,8 @@ export const adminService = {
   acceptModerationAppeal,
   rejectModerationAppeal,
   updateModerationCaseStatus,
+  getTrustExplainability,
+  recordAdminTrustAction,
   getBullBoardUrl,
   getAssetUrl,
   getErrorMessage,

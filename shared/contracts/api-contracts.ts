@@ -991,6 +991,144 @@ export interface UpdateModerationAppealStatusData extends ModerationCaseData {
 }
 export type UpdateModerationAppealStatusResponse =
   ApiResponse<UpdateModerationAppealStatusData>;
+
+export type TrustSubjectType = "user" | "ngo" | "volunteer" | "provider";
+export type AdminTrustActionType =
+  | "MANUAL_RESTRICTION"
+  | "MANUAL_COOLDOWN"
+  | "MANUAL_RECOVERY_CREDIT"
+  | "VERIFIED_GOOD_BEHAVIOR"
+  | "TRUST_REVIEW_FLAG";
+
+export interface TrustSubjectRef {
+  subjectType: TrustSubjectType | string;
+  subjectId: DbId;
+}
+
+export interface TrustExplanationSourceEvent {
+  eventType: string;
+  title: string;
+  timestamp?: ISODateString | null;
+  impact: string[];
+}
+
+export interface TrustExplanationSection {
+  active?: boolean;
+  current?: string | number | null;
+  reason: string;
+  triggerSources?: string[];
+  previousScore?: number | string | null;
+  projectedScore?: number | string | null;
+  recoveryCredit?: number | string;
+  decayCredit?: number | string;
+  sourceEvents?: TrustExplanationSourceEvent[];
+}
+
+export interface TrustRecoveryExplanation {
+  progress: number | string;
+  successStreak: number | string;
+  failureStreak: number | string;
+  requirements?: DbRow;
+}
+
+export interface TrustCurrentState {
+  trustScore: number | string;
+  penaltyLevel: number | string;
+  restrictionLevel: number | string;
+  cooldownUntil?: ISODateString | null;
+  depositMultiplier: number | string;
+  riskCategory: string;
+  recoveryProgress: number | string;
+  successStreak: number | string;
+  failureStreak: number | string;
+  lastEventAt?: ISODateString | null;
+  updatedAt?: ISODateString | null;
+}
+
+export interface TrustTimelineEvent {
+  id?: DbId;
+  eventKey?: string;
+  eventType: string;
+  title: string;
+  timestamp?: ISODateString | null;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  processingStatus?: string | null;
+  impact: string[];
+  polarity: "positive" | "negative" | "neutral" | string;
+}
+
+export interface TrustProjectionDiagnostics {
+  currentTrustState: TrustCurrentState;
+  generatedFromEventCount: number | string;
+  firstEventAt?: ISODateString | null;
+  lastEventAt?: ISODateString | null;
+  replayConsistent: boolean;
+  mismatchCount: number | string;
+  checksumMatch: boolean;
+}
+
+export interface AdminTrustActionRow extends DbRow {
+  id: DbId;
+  admin_user_id?: DbId | null;
+  admin_name?: string | null;
+  subject_type: string;
+  subject_id: DbId;
+  action_type: AdminTrustActionType | string;
+  action_label?: string;
+  reason: string;
+  idempotency_key?: string | null;
+  trust_event_key: string;
+  details?: DbRow;
+  created_at?: ISODateString;
+  trust_event_id?: DbId | null;
+  event_type?: string | null;
+  processing_status?: string | null;
+  processed_at?: ISODateString | null;
+}
+
+export interface TrustExplainability {
+  subject: TrustSubjectRef;
+  currentState: TrustCurrentState;
+  explanations: {
+    restriction: TrustExplanationSection;
+    cooldown: TrustExplanationSection;
+    deposit: TrustExplanationSection;
+    scoreChange: TrustExplanationSection;
+    recovery: TrustRecoveryExplanation;
+  };
+  timeline: TrustTimelineEvent[];
+  eventBreakdown: Array<{
+    eventType: string;
+    title: string;
+    timestamp?: ISODateString | null;
+    impact: string[];
+    processingStatus?: string | null;
+  }>;
+  projectionDiagnostics: TrustProjectionDiagnostics;
+  auditHistory: AdminTrustActionRow[];
+}
+
+export interface GetTrustExplainabilityData {
+  subject: TrustSubjectRef;
+  explanation: TrustExplainability;
+}
+export type GetTrustExplainabilityResponse = ApiResponse<GetTrustExplainabilityData>;
+
+export interface RecordAdminTrustActionRequest {
+  actionType: AdminTrustActionType;
+  reason: string;
+  details?: DbRow;
+  idempotencyKey?: string;
+}
+export interface RecordAdminTrustActionData {
+  subject: TrustSubjectRef;
+  action: AdminTrustActionRow;
+  trustEvent?: DbRow | null;
+  inserted: boolean;
+  duplicate?: boolean;
+}
+export type RecordAdminTrustActionResponse = ApiResponse<RecordAdminTrustActionData>;
 export interface ProviderModerationCaseSummary extends DbRow {
   id: DbId;
   case_type?: string;
@@ -1815,6 +1953,24 @@ export const apiContracts = {
       request: { params: "IdParams", query: "NoRequestQuery", body: "RejectRestaurantRequest" },
       response: "RejectRestaurantResponse",
       statusCodes: [200, 400, 401, 404, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/trust/:subjectType/:subjectId/explain",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "TrustSubjectRef", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "GetTrustExplainabilityResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/trust/:subjectType/:subjectId/actions",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "TrustSubjectRef", query: "NoRequestQuery", body: "RecordAdminTrustActionRequest" },
+      response: "RecordAdminTrustActionResponse",
+      statusCodes: [200, 201, 400, 401, 403, 409, 500],
     },
     {
       method: "GET",

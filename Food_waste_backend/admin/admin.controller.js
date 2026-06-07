@@ -37,6 +37,7 @@ const {
 } = require("../shared/services/operationalNotification.service");
 const {
   SUBJECT_TYPES,
+  enqueueTrustProcessing,
   getTrustEvents,
   getTrustSubject,
   isUuid,
@@ -49,8 +50,9 @@ const {
   getTrustProjectionBreakdown,
 } = require("../shared/services/trustObservability.service");
 const {
-  recordVerifiedGoodBehavior,
-} = require("../shared/services/trustEnforcement.service");
+  getTrustExplainability,
+  recordAdminTrustAction: recordAdminTrustActionService,
+} = require("../shared/services/trustExplainability.service");
 const {
   getAbuseAnalytics,
 } = require("../shared/services/abuseGuard.service");
@@ -681,19 +683,36 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
     return res.status(400).json({ error: "Recovery source id is required" });
   }
 
+  const client = await pool.connect();
+
   try {
-    const result = await recordVerifiedGoodBehavior({
+    await client.query("BEGIN");
+    const result = await recordAdminTrustActionService({
+      client,
+      adminId: req.user?.id,
       subjectType: subject.subjectType,
       subjectId: subject.subjectId,
-      sourceType,
-      sourceId,
-      metadata: {
+      actionType: "MANUAL_RECOVERY_CREDIT",
+      reason: reason || "Admin recovery credit",
+      details: {
+        source_type: sourceType,
+        source_id: sourceId,
         recovery_route: "blocked_actor_recovery",
-        admin_id: req.user?.id || null,
-        reason,
       },
-      enqueue: true,
+      idempotencyKey: `legacy_recovery:${subject.subjectType}:${subject.subjectId}:${sourceType}:${sourceId}`,
     });
+    await client.query("COMMIT");
+
+    if (!result.duplicate && result.trustEvent?.event_key) {
+      void enqueueTrustProcessing(result.trustEvent.event_key).catch((err) => {
+        logger.warn("Admin recovery credit enqueue failed", {
+          err,
+          adminId: req.user?.id,
+          subject,
+          actionId: result.action?.id,
+        });
+      });
+    }
 
     logger.security("Admin recorded trust recovery credit", {
       adminId: req.user?.id,
@@ -719,10 +738,12 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
       subject,
       recoveryEvent: {
         inserted: result.inserted,
-        event: result.event,
+        event: result.trustEvent,
+        action: result.action,
       },
     });
   } catch (err) {
+    await client.query("ROLLBACK");
     logger.error("Failed to record trust recovery credit", {
       err,
       adminId: req.user?.id,
@@ -731,6 +752,8 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
       sourceId,
     });
     res.status(err.statusCode || 500).json({ error: "Failed to record trust recovery credit" });
+  } finally {
+    client.release();
   }
 };
 
@@ -781,6 +804,94 @@ exports.getTrustProjectionBreakdown = async (req, res) => {
       subject,
     });
     res.status(err.statusCode || 500).json({ error: "Failed to fetch trust projection" });
+  }
+};
+
+exports.getTrustExplainability = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  try {
+    const explanation = await getTrustExplainability({
+      ...subject,
+      limit: req.query.limit,
+    });
+    res.json({ subject, explanation });
+  } catch (err) {
+    logger.error("Failed to fetch trust explanation", {
+      err,
+      adminId: req.user?.id,
+      subject,
+    });
+    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust explanation" });
+  }
+};
+
+exports.recordAdminTrustAction = async (req, res) => {
+  const subject = validateTrustSubjectParams(req, res);
+  if (!subject) return;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const result = await recordAdminTrustActionService({
+      client,
+      adminId: req.user?.id,
+      subjectType: subject.subjectType,
+      subjectId: subject.subjectId,
+      actionType: req.body?.actionType || req.body?.action_type,
+      reason: req.body?.reason,
+      details: req.body?.details || req.body?.actionDetails || req.body?.action_details || {},
+      idempotencyKey: req.body?.idempotencyKey || req.body?.idempotency_key,
+    });
+    await client.query("COMMIT");
+
+    if (!result.duplicate && result.trustEvent?.event_key) {
+      void enqueueTrustProcessing(result.trustEvent.event_key).catch((err) => {
+        logger.warn("Admin trust action enqueue failed", {
+          err,
+          adminId: req.user?.id,
+          actionId: result.action?.id,
+          eventKey: result.trustEvent.event_key,
+        });
+      });
+    }
+
+    logger.security("Admin trust action recorded", {
+      adminId: req.user?.id,
+      subject,
+      actionId: result.action?.id,
+      actionType: result.action?.action_type,
+      trustEventKey: result.trustEvent?.event_key,
+    });
+    void recordOperationalEvent({
+      category: "trust",
+      severity: "info",
+      eventName: "admin_trust_action_recorded",
+      metadata: {
+        adminId: req.user?.id,
+        subject,
+        actionId: result.action?.id,
+        actionType: result.action?.action_type,
+        trustEventKey: result.trustEvent?.event_key,
+      },
+    });
+
+    res.status(result.duplicate ? 200 : 201).json(result);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Admin trust action failed", {
+      err,
+      adminId: req.user?.id,
+      subject,
+      actionType: req.body?.actionType || req.body?.action_type,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to record admin trust action",
+    });
+  } finally {
+    client.release();
   }
 };
 

@@ -14,6 +14,9 @@ const WINDOW_OPTIONS = {
 const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
 const QUEUE_BACKLOG_WARNING = Number(process.env.MONITOR_QUEUE_BACKLOG_WARNING || 50);
 const QUEUE_BACKLOG_CRITICAL = Number(process.env.MONITOR_QUEUE_BACKLOG_CRITICAL || 250);
+const workerRequirementByQueue = new Map(
+  monitoredQueueConfigs.map(({ queue, workerRequired }) => [queue.name, Boolean(workerRequired)])
+);
 
 function toInt(value) {
   const number = Number(value || 0);
@@ -75,6 +78,22 @@ async function checkRedis() {
   };
 }
 
+function heartbeatAgeMs(heartbeat) {
+  const secondsSinceSeen = Number(heartbeat?.seconds_since_seen);
+  if (Number.isFinite(secondsSinceSeen)) {
+    return Math.max(0, secondsSinceSeen * 1000);
+  }
+
+  const lastSeen = new Date(heartbeat?.last_seen_at).getTime();
+  if (!Number.isFinite(lastSeen)) return null;
+  return Math.max(0, Date.now() - lastSeen);
+}
+
+function requiresWorkerHeartbeat(heartbeat) {
+  const queueName = heartbeat?.queue_name || heartbeat?.worker_name;
+  return workerRequirementByQueue.get(queueName) !== false;
+}
+
 async function getWorkerSnapshot() {
   const rows = await safeQuery(
     `
@@ -88,16 +107,23 @@ async function getWorkerSnapshot() {
   );
 
   const workers = rows.map((worker) => {
-    const lastSeen = new Date(worker.last_seen_at).getTime();
-    const stale =
-      !Number.isFinite(lastSeen) || Date.now() - lastSeen > STALE_HEARTBEAT_MS;
+    const workerRequired = requiresWorkerHeartbeat(worker);
+    const ageMs = heartbeatAgeMs(worker);
+    const stale = workerRequired && (ageMs === null || ageMs > STALE_HEARTBEAT_MS);
     const status = stale ? "stale" : worker.status || "running";
+    const failed = ["failed", "error", "stalled"].includes(String(status));
 
     return {
       ...worker,
+      worker_required: workerRequired,
       status,
+      heartbeat_age_ms: ageMs,
       health_status:
-        status === "running" || status === "processing" ? "healthy" : "critical",
+        !workerRequired && !failed
+          ? "healthy"
+          : status === "running" || status === "processing"
+            ? "healthy"
+            : "critical",
     };
   });
 
@@ -116,9 +142,9 @@ async function getWorkerSnapshot() {
 
 function heartbeatStatus(heartbeat) {
   if (!heartbeat) return "missing";
-  const lastSeen = new Date(heartbeat.last_seen_at).getTime();
-  if (!Number.isFinite(lastSeen)) return "invalid";
-  return Date.now() - lastSeen > STALE_HEARTBEAT_MS ? "stale" : "ok";
+  const ageMs = heartbeatAgeMs(heartbeat);
+  if (ageMs === null) return "invalid";
+  return ageMs > STALE_HEARTBEAT_MS ? "stale" : "ok";
 }
 
 function queueHealthFromCounts({ counts, isPaused, heartbeat, workerRequired }) {
@@ -142,7 +168,8 @@ function queueHealthFromCounts({ counts, isPaused, heartbeat, workerRequired }) 
 async function getQueueSnapshot() {
   const heartbeats = await safeQuery(
     `
-    SELECT worker_name, queue_name, status, last_job_id, last_seen_at, metadata
+    SELECT worker_name, queue_name, status, last_job_id, last_seen_at, metadata,
+           EXTRACT(EPOCH FROM (NOW() - last_seen_at))::int AS seconds_since_seen
     FROM worker_heartbeats
     ORDER BY worker_name
     `,

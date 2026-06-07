@@ -96,3 +96,30 @@ T7.2 does not create or resolve alerts. It displays:
 8. Confirm there are no retry, cleanup, reconcile, review, or trust action controls on the monitoring page.
 9. Verify the backend endpoint with `window=1h`, `window=24h`, `window=7d`, and `window=30d`.
 10. Run lint, typecheck, backend architecture validation, and targeted backend syntax checks.
+
+## T7.2.1 Worker Heartbeat Alignment
+
+### Root Cause
+
+The first T7.2 monitoring snapshot re-parsed `worker_heartbeats.last_seen_at` in Node.js and compared it with `Date.now()`. Because `last_seen_at` is a database timestamp and can be returned without explicit timezone context, that introduced a UTC/local parsing risk. The database query was already selecting `seconds_since_seen`, but the monitoring service was not using it.
+
+### Fix
+
+- Worker health now uses database-computed `EXTRACT(EPOCH FROM (NOW() - last_seen_at))` as the primary heartbeat age.
+- JavaScript timestamp parsing remains only as a fallback when `seconds_since_seen` is unavailable.
+- Negative age values are clamped to zero to avoid clock-skew false stale states.
+- Dead-letter queues continue to use `workerRequired: false`; stale timestamps for non-required queue heartbeats do not make worker health critical.
+- Queue heartbeat status now uses the same age calculation as the worker overview.
+
+### Dead-Letter Queue Review
+
+The dead-letter queue remains monitored for visible jobs but does not require an active worker heartbeat. Operational Monitoring may still surface dead-letter jobs as queue work requiring inspection, but it no longer treats the absence or age of a dead-letter worker heartbeat as worker failure.
+
+### Manual Validation
+
+1. Query `worker_heartbeats` and confirm `status`, `last_seen_at`, and `seconds_since_seen` are recent for running workers.
+2. Open Bull Board and confirm the same queues show healthy/running with failed jobs and retry-exhausted counts at zero.
+3. Open `/admin/monitoring` and confirm Worker Health is `Healthy`.
+4. Confirm queue rows show `worker_heartbeat_status=ok` for active worker-backed queues.
+5. Confirm `dead-letter-queue` shows `worker_heartbeat_status=not_required`.
+6. Refresh the page after one heartbeat interval and confirm the status remains aligned.

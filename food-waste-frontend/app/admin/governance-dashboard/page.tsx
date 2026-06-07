@@ -680,11 +680,7 @@ export default function GovernanceDashboardPage() {
                 </div>
               </div>
               <TrustActorRows
-                actors={[
-                  ...(dashboard.trust.restricted_actors || []),
-                  ...(dashboard.trust.cooldown_actors || []),
-                  ...(dashboard.trust.high_deposit_multiplier_actors || []),
-                ]}
+                actors={dashboard.trust.visibility_actors || []}
                 empty="No restricted, cooldown, or high-deposit actors."
               />
             </SectionPanel>

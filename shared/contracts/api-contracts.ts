@@ -1363,6 +1363,7 @@ export interface GovernanceDashboardData {
     restricted_actors: GovernanceDashboardTrustActor[];
     cooldown_actors: GovernanceDashboardTrustActor[];
     high_deposit_multiplier_actors: GovernanceDashboardTrustActor[];
+    visibility_actors: GovernanceDashboardTrustActor[];
     recent_admin_actions: GovernanceDashboardAdminTrustAction[];
     hrefs?: DbRow;
     informational_only: boolean;

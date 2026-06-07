@@ -39,6 +39,21 @@ The dashboard reuses:
 - Double counting: current counts are separated from windowed outcomes and high-risk actor totals are labeled by source.
 - Explainability: metrics and rows include source table/predicate metadata and drill down to existing detail pages.
 
+## T6.6.1 Consistency Fix
+
+Root cause:
+
+- Trust Visibility rendered a client-side merge of `restricted_actors`, `cooldown_actors`, and `high_deposit_multiplier_actors`. A subject can legitimately appear in more than one bucket, which produced duplicate React keys for `subject_type + subject_id`.
+- High Risk Actors consumed provider/reporter intelligence arrays directly. Defensive de-duplication was missing at the dashboard boundary, so duplicate upstream actor rows could render duplicate keys.
+- Appeal dashboard rows had one `provider_reports` join with an `OR` predicate that could amplify rows if historical data linked multiple reports to one moderation case.
+
+Fix:
+
+- The dashboard service now returns `trust.visibility_actors`, a unique subject collection keyed by `subject_type + subject_id`.
+- Intelligence providers, reporters, signals, notifications, and recent moderation activity are de-duplicated before dashboard response assembly.
+- Appeal row report context now uses a single-row lateral lookup to avoid join amplification.
+- React keys remain stable domain identifiers; no index-based keys were introduced.
+
 ## Backend API
 
 `GET /api/v1/admin/governance-dashboard`
@@ -80,3 +95,5 @@ Dashboard cards link to existing admin detail pages:
 6. Open a restricted/cooldown/deposit actor and confirm Trust Explainability preloads that actor.
 7. Open submitted, accepted, and rejected appeal drilldowns and confirm terminal appeals are read-only.
 8. Confirm no dashboard action creates penalties, restrictions, trust events, case transitions, or appeal transitions.
+9. Confirm Trust Visibility does not repeat the same actor when an actor is both restricted and on cooldown or deposit escalation.
+10. Confirm High Risk Actors does not repeat the same provider/reporter, and the browser console shows no duplicate React key warnings.

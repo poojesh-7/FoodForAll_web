@@ -381,8 +381,15 @@ async function listAppealsByStatus({ client = pool, status, filters, limit = 8 }
       ORDER BY is_verified DESC, id DESC
       LIMIT 1
     ) restaurant ON true
-    LEFT JOIN provider_reports pr ON pr.id = mc.source_report_id
-      OR pr.moderation_case_id = mc.id
+    LEFT JOIN LATERAL (
+      SELECT pr_inner.*
+      FROM provider_reports pr_inner
+      WHERE pr_inner.id = mc.source_report_id
+         OR pr_inner.moderation_case_id = mc.id
+      ORDER BY CASE WHEN pr_inner.id = mc.source_report_id THEN 0 ELSE 1 END,
+               pr_inner.created_at DESC
+      LIMIT 1
+    ) pr ON true
     LEFT JOIN reservations r ON r.id = pr.reservation_id
     LEFT JOIN food_listings f ON f.id = r.listing_id
     WHERE ma.status = $1
@@ -519,6 +526,54 @@ function notificationHref(type) {
   return "/admin/provider-reports";
 }
 
+function uniqueBy(items = [], keyFn) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const item of items || []) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
+function trustActorKey(actor = {}) {
+  if (!actor.subject_type || !actor.subject_id) return null;
+  return `${String(actor.subject_type).toLowerCase()}:${String(actor.subject_id)}`;
+}
+
+function providerKey(provider = {}) {
+  if (!provider.provider_id) return null;
+  return `provider:${String(provider.provider_id)}`;
+}
+
+function reporterKey(reporter = {}) {
+  if (!reporter.reporter_id) return null;
+  return `reporter:${String(reporter.reporter_id)}`;
+}
+
+function signalKey(signal = {}) {
+  return signal.id ||
+    [
+      signal.actor_type,
+      signal.actor_id,
+      signal.signal_type,
+    ].filter(Boolean).join(":") ||
+    null;
+}
+
+function activityKey(activity = {}) {
+  if (!activity.source_type || !activity.id) return null;
+  return `${String(activity.source_type)}:${String(activity.id)}`;
+}
+
+function notificationKey(notification = {}) {
+  return notification.id ? String(notification.id) : null;
+}
+
 async function listRecentGovernanceNotifications({ client = pool, filters }) {
   const result = await client.query(
     `
@@ -549,21 +604,27 @@ async function listRecentGovernanceNotifications({ client = pool, filters }) {
 }
 
 function signalTypeFilter(signals = [], signalType) {
-  return signals.filter((signal) => signal.signal_type === signalType);
+  return uniqueBy(
+    signals.filter((signal) => signal.signal_type === signalType),
+    signalKey
+  );
 }
 
 function topProvidersBy(providers = [], field) {
-  return [...providers]
+  return uniqueBy(providers, providerKey)
     .filter((provider) => toInt(provider[field]) > 0)
     .sort((left, right) => toInt(right[field]) - toInt(left[field]))
     .slice(0, 8);
 }
 
 function buildDashboardCards({ caseCounts, appealCounts, intelligence, trustSummary }) {
-  const signalCount = Array.isArray(intelligence?.signals) ? intelligence.signals.length : 0;
+  const signals = uniqueBy(intelligence?.signals || [], signalKey);
+  const providers = uniqueBy(intelligence?.providers || [], providerKey);
+  const reporters = uniqueBy(intelligence?.reporters || [], reporterKey);
+  const signalCount = signals.length;
   const highRiskActors =
-    (intelligence?.providers || []).filter((provider) => provider.risk_level === "HIGH").length +
-    (intelligence?.reporters || []).filter((reporter) => reporter.risk_level === "HIGH").length +
+    providers.filter((provider) => provider.risk_level === "HIGH").length +
+    reporters.filter((reporter) => reporter.risk_level === "HIGH").length +
     toInt(trustSummary.high_risk_trust_actors);
 
   return [
@@ -685,25 +746,36 @@ async function getGovernanceDashboard(options = {}) {
     listRecentGovernanceNotifications({ client, filters }),
     intelligencePromise,
   ]);
+  const uniqueSignals = uniqueBy(intelligence.signals || [], signalKey);
+  const uniqueProviders = uniqueBy(intelligence.providers || [], providerKey);
+  const uniqueReporters = uniqueBy(intelligence.reporters || [], reporterKey);
+  const uniqueTrustVisibilityActors = uniqueBy(
+    [
+      ...restrictedActors,
+      ...cooldownActors,
+      ...highDepositMultiplierActors,
+    ],
+    trustActorKey
+  );
 
   const highEscalationProviders = signalTypeFilter(
-    intelligence.signals,
+    uniqueSignals,
     "HIGH_ESCALATION_PROVIDER"
   );
   const repeatedGovernanceDisputes = signalTypeFilter(
-    intelligence.signals,
+    uniqueSignals,
     "REPEATED_GOVERNANCE_DISPUTES"
   );
   const highDismissalReporters = signalTypeFilter(
-    intelligence.signals,
+    uniqueSignals,
     "HIGH_DISMISSAL_REPORTER"
   );
   const appealReversalPatterns = signalTypeFilter(
-    intelligence.signals,
+    uniqueSignals,
     "APPEAL_REVERSAL_PATTERN"
   );
   const repeatedTargetingSignals = signalTypeFilter(
-    intelligence.signals,
+    uniqueSignals,
     "REPEATED_TARGETING"
   );
 
@@ -717,12 +789,10 @@ async function getGovernanceDashboard(options = {}) {
       counts: {
         ...caseCounts,
         ...appealCounts,
-        governance_signals: Array.isArray(intelligence.signals)
-          ? intelligence.signals.length
-          : 0,
+        governance_signals: uniqueSignals.length,
         high_risk_actors:
-          (intelligence.providers || []).filter((provider) => provider.risk_level === "HIGH").length +
-          (intelligence.reporters || []).filter((reporter) => reporter.risk_level === "HIGH").length +
+          uniqueProviders.filter((provider) => provider.risk_level === "HIGH").length +
+          uniqueReporters.filter((reporter) => reporter.risk_level === "HIGH").length +
           toInt(trustSummary.high_risk_trust_actors),
       },
       cards: buildDashboardCards({
@@ -738,7 +808,7 @@ async function getGovernanceDashboard(options = {}) {
       oldest_open_case: oldestOpenCases[0] || null,
       awaiting_response_cases: awaitingResponseCases,
       escalated_cases: escalatedCases,
-      recent_activity: recentModerationActivity,
+      recent_activity: uniqueBy(recentModerationActivity, activityKey),
       hrefs: {
         queue: "/admin/provider-reports?status=all",
         awaiting_response: "/admin/provider-reports?status=all&caseStatus=AWAITING_RESPONSE",
@@ -768,6 +838,7 @@ async function getGovernanceDashboard(options = {}) {
       restricted_actors: restrictedActors,
       cooldown_actors: cooldownActors,
       high_deposit_multiplier_actors: highDepositMultiplierActors,
+      visibility_actors: uniqueTrustVisibilityActors,
       recent_admin_actions: recentAdminTrustActions,
       hrefs: {
         trust: "/admin/trust",
@@ -777,7 +848,7 @@ async function getGovernanceDashboard(options = {}) {
     },
     intelligence: {
       summary: intelligence,
-      top_signals: (intelligence.signals || []).slice(0, 10),
+      top_signals: uniqueSignals.slice(0, 10),
       high_escalation_providers: highEscalationProviders,
       repeated_governance_disputes: repeatedGovernanceDisputes,
       high_dismissal_reporters: highDismissalReporters,
@@ -788,22 +859,22 @@ async function getGovernanceDashboard(options = {}) {
       enforcement_action: null,
     },
     notifications: {
-      recent_activity: recentNotifications,
+      recent_activity: uniqueBy(recentNotifications, notificationKey),
       source: source("notifications", "governance notification types within selected window", true),
     },
     high_risk_actors: {
-      providers: (intelligence.providers || [])
+      providers: uniqueProviders
         .filter((provider) => provider.risk_level === "HIGH")
         .slice(0, 8),
-      reporters: (intelligence.reporters || [])
+      reporters: uniqueReporters
         .filter((reporter) => reporter.risk_level === "HIGH")
         .slice(0, 8),
       frequently_escalated_entities: topProvidersBy(
-        intelligence.providers || [],
+        uniqueProviders,
         "cases_escalated"
       ),
       frequently_appealed_entities: topProvidersBy(
-        intelligence.providers || [],
+        uniqueProviders,
         "appeals_submitted"
       ),
       source: source("governanceIntelligence.service", "risk and frequency rankings for selected window", true),
@@ -818,4 +889,5 @@ module.exports = {
   buildDashboardCards,
   getGovernanceDashboard,
   normalizeDashboardFilters,
+  uniqueBy,
 };

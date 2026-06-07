@@ -227,9 +227,29 @@ function intelligence() {
         appeals_submitted: 4,
         informational_only: true,
       },
+      {
+        provider_id: PROVIDER_ID,
+        provider_name: "Green Kitchen",
+        risk_level: "HIGH",
+        cases_escalated: 3,
+        appeals_submitted: 4,
+        informational_only: true,
+      },
     ],
     escalation: {},
     signals: [
+      {
+        id: "provider:high-escalation",
+        actor_type: "provider",
+        actor_id: PROVIDER_ID,
+        actor_name: "Green Kitchen",
+        signal_type: "HIGH_ESCALATION_PROVIDER",
+        title: "High Escalation Provider",
+        risk_level: "HIGH",
+        reason: "3 cases escalated.",
+        informational_only: true,
+        enforcement_action: null,
+      },
       {
         id: "provider:high-escalation",
         actor_type: "provider",
@@ -258,6 +278,10 @@ function intelligence() {
   };
 }
 
+function uniqueCount(items, keyFn) {
+  return new Set(items.map(keyFn)).size;
+}
+
 test("governance dashboard aggregates read-only governance operations data", async () => {
   const client = createClient();
 
@@ -273,9 +297,27 @@ test("governance dashboard aggregates read-only governance operations data", asy
   assert.equal(dashboard.overview.counts.open_cases, 3);
   assert.equal(dashboard.overview.counts.appeals_pending_review, 4);
   assert.equal(dashboard.overview.counts.governance_signals, 2);
+  assert.equal(dashboard.overview.counts.high_risk_actors, 3);
   assert.ok(dashboard.overview.cards.every((card) => card.href && card.source));
   assert.equal(dashboard.moderation.current_queue[0].href, "/admin/moderation-cases/open-case");
   assert.equal(dashboard.trust.restricted_actors[0].href.includes("/admin/trust"), true);
+  assert.equal(dashboard.trust.visibility_actors.length, 1);
+  assert.equal(
+    dashboard.trust.visibility_actors.length,
+    uniqueCount(
+      dashboard.trust.visibility_actors,
+      (actor) => `${actor.subject_type}:${actor.subject_id}`
+    )
+  );
+  assert.equal(dashboard.high_risk_actors.providers.length, 1);
+  assert.equal(
+    dashboard.high_risk_actors.providers.length,
+    uniqueCount(
+      dashboard.high_risk_actors.providers,
+      (provider) => `provider:${provider.provider_id}`
+    )
+  );
+  assert.equal(dashboard.intelligence.top_signals.length, 2);
   assert.equal(dashboard.intelligence.high_escalation_providers.length, 1);
   assert.equal(dashboard.notifications.recent_activity.length, 1);
   assert.equal(hasMutation(client.calls), false);

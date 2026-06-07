@@ -64,6 +64,9 @@ const {
   listProviderGovernanceMetrics,
   listReporterReputations,
 } = require("../shared/services/governanceIntelligence.service");
+const {
+  getGovernanceDashboard: getGovernanceDashboardService,
+} = require("../shared/services/governanceDashboard.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -1009,6 +1012,22 @@ exports.getGovernanceIntelligence = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch governance intelligence",
+    });
+  }
+};
+
+exports.getGovernanceDashboard = async (req, res) => {
+  try {
+    const dashboard = await getGovernanceDashboardService(req.query);
+    res.json({ dashboard });
+  } catch (err) {
+    logger.error("Failed to fetch governance dashboard", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch governance dashboard",
     });
   }
 };

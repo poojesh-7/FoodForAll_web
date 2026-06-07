@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -141,8 +142,14 @@ function ExplanationBlock({
 }
 
 export default function AdminTrustPage() {
-  const [subjectType, setSubjectType] = useState<TrustSubjectType>("provider");
-  const [subjectId, setSubjectId] = useState("");
+  const searchParams = useSearchParams();
+  const querySubjectType = searchParams.get("subjectType") || searchParams.get("subject_type");
+  const querySubjectId = searchParams.get("subjectId") || searchParams.get("subject_id") || "";
+  const initialSubjectType = SUBJECT_TYPES.includes(querySubjectType as TrustSubjectType)
+    ? (querySubjectType as TrustSubjectType)
+    : "provider";
+  const [subjectType, setSubjectType] = useState<TrustSubjectType>(initialSubjectType);
+  const [subjectId, setSubjectId] = useState(querySubjectId);
   const [explanation, setExplanation] = useState<TrustExplainability | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -160,8 +167,11 @@ export default function AdminTrustPage() {
     [actionType]
   );
 
-  const loadExplanation = useCallback(async () => {
-    const trimmedId = subjectId.trim();
+  const loadSubjectExplanation = useCallback(async (
+    nextSubjectType: TrustSubjectType,
+    nextSubjectId: string
+  ) => {
+    const trimmedId = nextSubjectId.trim();
     if (!trimmedId) {
       setError("Subject id is required.");
       return;
@@ -172,7 +182,7 @@ export default function AdminTrustPage() {
       setError("");
       setSuccess("");
       const result = await adminService.getTrustExplainability(
-        subjectType,
+        nextSubjectType,
         trimmedId
       );
       setExplanation(result);
@@ -181,7 +191,32 @@ export default function AdminTrustPage() {
     } finally {
       setLoading(false);
     }
-  }, [subjectId, subjectType]);
+  }, []);
+
+  const loadExplanation = useCallback(async () => {
+    await loadSubjectExplanation(subjectType, subjectId);
+  }, [loadSubjectExplanation, subjectId, subjectType]);
+
+  useEffect(() => {
+    const nextSubjectType = SUBJECT_TYPES.includes(querySubjectType as TrustSubjectType)
+      ? (querySubjectType as TrustSubjectType)
+      : "provider";
+    const nextSubjectId = querySubjectId.trim();
+
+    if (!nextSubjectId) return;
+
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setSubjectType(nextSubjectType);
+      setSubjectId(nextSubjectId);
+      void loadSubjectExplanation(nextSubjectType, nextSubjectId);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [loadSubjectExplanation, querySubjectId, querySubjectType]);
 
   const submitAction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

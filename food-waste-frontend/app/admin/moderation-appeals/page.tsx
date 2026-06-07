@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2, ExternalLink, Eye, X, XCircle } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
@@ -29,6 +30,8 @@ function formatFileSize(value: unknown) {
 }
 
 export default function ModerationAppealsPage() {
+  const searchParams = useSearchParams();
+  const statusFilter = searchParams.get("status") || "open";
   const [appeals, setAppeals] = useState<AdminModerationAppeal[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -45,7 +48,7 @@ export default function ModerationAppealsPage() {
       try {
         setLoading(true);
         setError("");
-        const result = await adminService.getModerationAppeals("open");
+        const result = await adminService.getModerationAppeals(statusFilter);
         if (active) setAppeals(result);
       } catch (err) {
         if (active) setError(adminService.getErrorMessage(err));
@@ -57,7 +60,7 @@ export default function ModerationAppealsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [statusFilter]);
 
   const review = async (
     appeal: AdminModerationAppeal,
@@ -102,7 +105,13 @@ export default function ModerationAppealsPage() {
       {loading ? (
         <AdminStateBlock title="Loading moderation appeals..." />
       ) : appeals.length === 0 ? (
-        <AdminStateBlock title="No open moderation appeals." />
+        <AdminStateBlock
+          title={
+            statusFilter === "open"
+              ? "No open moderation appeals."
+              : `No ${formatGovernanceStatus(statusFilter)} moderation appeals.`
+          }
+        />
       ) : (
         <section className="grid gap-4 xl:grid-cols-2">
           {appeals.map((appeal) => {
@@ -196,17 +205,21 @@ export default function ModerationAppealsPage() {
                 )}
 
                 <div className="mt-4 space-y-3 border-t border-zinc-200 pt-4">
-                  <textarea
-                    value={notes[String(appeal.id)] || ""}
-                    onChange={(event) =>
-                      setNotes((current) => ({
-                        ...current,
-                        [String(appeal.id)]: event.target.value,
-                      }))
-                    }
-                    placeholder="Decision note"
-                    className="min-h-24 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500"
-                  />
+                  {!["ACCEPTED", "REJECTED", "WITHDRAWN"].includes(
+                    String(appeal.status).toUpperCase()
+                  ) && (
+                    <textarea
+                      value={notes[String(appeal.id)] || ""}
+                      onChange={(event) =>
+                        setNotes((current) => ({
+                          ...current,
+                          [String(appeal.id)]: event.target.value,
+                        }))
+                      }
+                      placeholder="Decision note"
+                      className="min-h-24 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500"
+                    />
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Link
                       href={`/admin/moderation-cases/${String(appeal.case_id)}`}
@@ -215,33 +228,39 @@ export default function ModerationAppealsPage() {
                       <ExternalLink className="h-4 w-4" aria-hidden="true" />
                       Open case
                     </Link>
-                    <button
-                      type="button"
-                      onClick={() => review(appeal, "review")}
-                      disabled={processing}
-                      className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-                    >
-                      <Eye className="h-4 w-4" aria-hidden="true" />
-                      Review
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => review(appeal, "accept")}
-                      disabled={processing}
-                      className="inline-flex items-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                    >
-                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => review(appeal, "reject")}
-                      disabled={processing}
-                      className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
-                    >
-                      <XCircle className="h-4 w-4" aria-hidden="true" />
-                      Reject
-                    </button>
+                    {!["ACCEPTED", "REJECTED", "WITHDRAWN"].includes(
+                      String(appeal.status).toUpperCase()
+                    ) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => review(appeal, "review")}
+                          disabled={processing}
+                          className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+                        >
+                          <Eye className="h-4 w-4" aria-hidden="true" />
+                          Review
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => review(appeal, "accept")}
+                          disabled={processing}
+                          className="inline-flex items-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => review(appeal, "reject")}
+                          disabled={processing}
+                          className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                        >
+                          <XCircle className="h-4 w-4" aria-hidden="true" />
+                          Reject
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </article>

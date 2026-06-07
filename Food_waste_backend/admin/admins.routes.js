@@ -42,6 +42,7 @@ router.post(
 router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
 router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
 router.get("/provider-reports", adminCtrl.getProviderReports);
+router.get("/governance-dashboard", adminCtrl.getGovernanceDashboard);
 router.get("/governance-intelligence", adminCtrl.getGovernanceIntelligence);
 router.get(
   "/governance-intelligence/reporters",

@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ExternalLink, X } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
@@ -29,6 +30,9 @@ function formatFileSize(value: unknown) {
 }
 
 export default function ProviderReportsPage() {
+  const searchParams = useSearchParams();
+  const reportStatus = searchParams.get("status") === "all" ? "all" : "pending";
+  const caseStatusFilter = searchParams.get("caseStatus") || searchParams.get("case_status");
   const [reports, setReports] = useState<AdminProviderReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -43,7 +47,7 @@ export default function ProviderReportsPage() {
       try {
         setLoading(true);
         setError("");
-        const result = await adminService.getProviderReports("pending");
+        const result = await adminService.getProviderReports(reportStatus);
         if (active) setReports(result);
       } catch (err) {
         if (active) setError(adminService.getErrorMessage(err));
@@ -55,7 +59,7 @@ export default function ProviderReportsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reportStatus]);
 
   const review = async (report: AdminProviderReport, action: "validate" | "dismiss") => {
     try {
@@ -88,11 +92,31 @@ export default function ProviderReportsPage() {
 
       {loading ? (
         <AdminStateBlock title="Loading provider reports..." />
-      ) : reports.length === 0 ? (
-        <AdminStateBlock title="No pending provider reports." />
+      ) : reports.filter((report) =>
+          caseStatusFilter
+            ? String(report.moderation_case_status || "").toUpperCase() ===
+              caseStatusFilter.toUpperCase()
+            : true
+        ).length === 0 ? (
+        <AdminStateBlock
+          title={
+            caseStatusFilter
+              ? `No ${formatGovernanceStatus(caseStatusFilter)} provider reports.`
+              : reportStatus === "all"
+                ? "No provider reports."
+                : "No pending provider reports."
+          }
+        />
       ) : (
         <section className="grid gap-4 xl:grid-cols-2">
-          {reports.map((report) => (
+          {reports
+            .filter((report) =>
+              caseStatusFilter
+                ? String(report.moderation_case_status || "").toUpperCase() ===
+                  caseStatusFilter.toUpperCase()
+                : true
+            )
+            .map((report) => (
             <article
               key={String(report.id)}
               className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
@@ -195,22 +219,26 @@ export default function ProviderReportsPage() {
                     Open case
                   </Link>
                 )}
-                <button
-                  type="button"
-                  onClick={() => review(report, "validate")}
-                  disabled={processingId === String(report.id)}
-                  className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  Validate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => review(report, "dismiss")}
-                  disabled={processingId === String(report.id)}
-                  className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
-                >
-                  Dismiss
-                </button>
+                {String(report.status).toLowerCase() === "pending" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => review(report, "validate")}
+                      disabled={processingId === String(report.id)}
+                      className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      Validate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => review(report, "dismiss")}
+                      disabled={processingId === String(report.id)}
+                      className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                    >
+                      Dismiss
+                    </button>
+                  </>
+                )}
               </div>
             </article>
           ))}

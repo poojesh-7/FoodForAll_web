@@ -964,6 +964,8 @@ export interface ProviderReportsAdminData {
 }
 export interface ProviderReportsAdminQuery {
   status?: "pending" | "all" | string;
+  caseStatus?: ModerationCaseStatus | string;
+  case_status?: ModerationCaseStatus | string;
 }
 export type ProviderReportsAdminResponse = ApiResponse<ProviderReportsAdminData>;
 export interface ModerationAppealsAdminData {
@@ -1177,6 +1179,228 @@ export type GovernanceSignalsResponse = ApiResponse<GovernanceSignalsData>;
 export type GovernanceModerationMetricsResponse =
   ApiResponse<GovernanceModerationMetricsData>;
 export type GovernanceEscalationResponse = ApiResponse<GovernanceEscalationData>;
+
+export interface GovernanceDashboardSource {
+  table: string;
+  predicate: string;
+  windowed?: boolean;
+}
+
+export interface GovernanceDashboardMetricCard {
+  id: string;
+  label: string;
+  value: number | string;
+  detail?: string | null;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardCaseRow extends DbRow {
+  id: DbId;
+  case_type?: string;
+  subject_type?: string;
+  subject_id?: DbId;
+  subject_name?: string | null;
+  status: ModerationCaseStatus | string;
+  reason?: string | null;
+  summary?: string | null;
+  source_report_id?: DbId | null;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+  closed_at?: ISODateString | null;
+  report_id?: DbId | null;
+  report_reason?: string | null;
+  report_status?: string | null;
+  report_created_at?: ISODateString | null;
+  reporter_name?: string | null;
+  reporter_role?: string | null;
+  listing_title?: string | null;
+  provider_response_count?: number | string;
+  appeal_count?: number | string;
+  latest_event_type?: string | null;
+  latest_event_at?: ISODateString | null;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardActivityRow extends DbRow {
+  source_type: string;
+  id: DbId;
+  case_id?: DbId | null;
+  appeal_id?: DbId | null;
+  actor_user_id?: DbId | null;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  event_type: string;
+  from_status?: string | null;
+  to_status?: string | null;
+  note?: string | null;
+  metadata?: DbRow;
+  created_at?: ISODateString;
+  case_status?: ModerationCaseStatus | string | null;
+  subject_id?: DbId | null;
+  subject_name?: string | null;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardTrustActor extends DbRow {
+  subject_type: TrustSubjectType | string;
+  subject_id: DbId;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  trust_score?: number | string;
+  penalty_level?: number | string;
+  restriction_level?: number | string;
+  cooldown_until?: ISODateString | null;
+  deposit_multiplier?: number | string;
+  risk_category?: string | null;
+  recovery_progress?: number | string;
+  updated_at?: ISODateString;
+  last_event_at?: ISODateString | null;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardAdminTrustAction extends DbRow {
+  id: DbId;
+  admin_user_id?: DbId | null;
+  admin_name?: string | null;
+  subject_type: TrustSubjectType | string;
+  subject_id: DbId;
+  subject_name?: string | null;
+  subject_role?: string | null;
+  action_type: AdminTrustActionType | string;
+  reason?: string | null;
+  trust_event_key?: string | null;
+  details?: DbRow;
+  created_at?: ISODateString;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardNotification extends DbRow {
+  id: DbId;
+  user_id?: DbId | null;
+  recipient_name?: string | null;
+  recipient_role?: string | null;
+  type?: string | null;
+  title?: string | null;
+  message?: string | null;
+  is_read?: boolean | null;
+  created_at?: ISODateString;
+  href: string;
+  source: GovernanceDashboardSource;
+}
+
+export interface GovernanceDashboardCounts {
+  open_cases: number | string;
+  under_review_cases: number | string;
+  awaiting_response_cases: number | string;
+  escalated_cases: number | string;
+  active_cases: number | string;
+  appeals_pending_review: number | string;
+  appeals_under_review: number | string;
+  appeals_accepted: number | string;
+  appeals_rejected: number | string;
+  governance_signals: number | string;
+  high_risk_actors: number | string;
+}
+
+export interface GovernanceDashboardAppealCounts {
+  pending_review: number | string;
+  under_review: number | string;
+  recently_accepted: number | string;
+  recently_rejected: number | string;
+}
+
+export interface GovernanceDashboardTrustSummary {
+  restricted_actors: number | string;
+  cooldown_actors: number | string;
+  high_deposit_multiplier_actors: number | string;
+  high_risk_trust_actors: number | string;
+}
+
+export interface GovernanceDashboardData {
+  generated_at: ISODateString;
+  filters: GovernanceIntelligenceFilters & {
+    queue_limit?: number | string;
+    activity_limit?: number | string;
+  };
+  window: {
+    days: number | string;
+    start_at: ISODateString;
+    end_at: ISODateString;
+  };
+  informational_only: boolean;
+  enforcement_action?: null;
+  overview: {
+    counts: GovernanceDashboardCounts;
+    cards: GovernanceDashboardMetricCard[];
+  };
+  moderation: {
+    counts: Pick<
+      GovernanceDashboardCounts,
+      "open_cases" | "under_review_cases" | "awaiting_response_cases" | "escalated_cases" | "active_cases"
+    >;
+    current_queue: GovernanceDashboardCaseRow[];
+    oldest_open_case?: GovernanceDashboardCaseRow | null;
+    awaiting_response_cases: GovernanceDashboardCaseRow[];
+    escalated_cases: GovernanceDashboardCaseRow[];
+    recent_activity: GovernanceDashboardActivityRow[];
+    hrefs?: DbRow;
+  };
+  appeals: {
+    counts: GovernanceDashboardAppealCounts;
+    pending: ModerationAppealRow[];
+    under_review: ModerationAppealRow[];
+    recently_accepted: ModerationAppealRow[];
+    recently_rejected: ModerationAppealRow[];
+    hrefs?: DbRow;
+  };
+  trust: {
+    summary: GovernanceDashboardTrustSummary;
+    restricted_actors: GovernanceDashboardTrustActor[];
+    cooldown_actors: GovernanceDashboardTrustActor[];
+    high_deposit_multiplier_actors: GovernanceDashboardTrustActor[];
+    recent_admin_actions: GovernanceDashboardAdminTrustAction[];
+    hrefs?: DbRow;
+    informational_only: boolean;
+    enforcement_action?: null;
+  };
+  intelligence: {
+    summary: GovernanceIntelligenceData;
+    top_signals: GovernanceSignal[];
+    high_escalation_providers: GovernanceSignal[];
+    repeated_governance_disputes: GovernanceSignal[];
+    high_dismissal_reporters: GovernanceSignal[];
+    appeal_reversal_patterns: GovernanceSignal[];
+    repeated_targeting_signals: GovernanceSignal[];
+    href: string;
+    informational_only: boolean;
+    enforcement_action?: null;
+  };
+  notifications: {
+    recent_activity: GovernanceDashboardNotification[];
+    source: GovernanceDashboardSource;
+  };
+  high_risk_actors: {
+    providers: GovernanceProviderMetrics[];
+    reporters: GovernanceReporterReputation[];
+    frequently_escalated_entities: GovernanceProviderMetrics[];
+    frequently_appealed_entities: GovernanceProviderMetrics[];
+    source: GovernanceDashboardSource;
+    informational_only: boolean;
+    enforcement_action?: null;
+  };
+}
+
+export interface GovernanceDashboardDataEnvelope {
+  dashboard: GovernanceDashboardData;
+}
+
+export type GovernanceDashboardResponse =
+  ApiResponse<GovernanceDashboardDataEnvelope>;
 
 export type TrustSubjectType = "user" | "ngo" | "volunteer" | "provider";
 export type AdminTrustActionType =
@@ -2166,6 +2390,15 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
       response: "ProviderReportsAdminResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/governance-dashboard",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
+      response: "GovernanceDashboardResponse",
+      statusCodes: [200, 400, 401, 403, 500],
     },
     {
       method: "GET",

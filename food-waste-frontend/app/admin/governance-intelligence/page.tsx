@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
@@ -181,7 +182,19 @@ function ProviderRows({
 }
 
 export default function GovernanceIntelligencePage() {
-  const [windowDays, setWindowDays] = useState(90);
+  const searchParams = useSearchParams();
+  const queryWindowDays = Number(
+    searchParams.get("windowDays") || searchParams.get("window_days") || 90
+  );
+  const initialWindowDays = WINDOW_OPTIONS.includes(queryWindowDays)
+    ? queryWindowDays
+    : 90;
+  const queryRisk = searchParams.get("risk") || undefined;
+  const queryReporterId =
+    searchParams.get("reporterId") || searchParams.get("reporter_id") || undefined;
+  const queryProviderId =
+    searchParams.get("providerId") || searchParams.get("provider_id") || undefined;
+  const [windowDays, setWindowDays] = useState(initialWindowDays);
   const [intelligence, setIntelligence] =
     useState<AdminGovernanceIntelligence | null>(null);
   const [loading, setLoading] = useState(true);
@@ -197,6 +210,9 @@ export default function GovernanceIntelligencePage() {
         const result = await adminService.getGovernanceIntelligence({
           windowDays,
           limit: 25,
+          risk: queryRisk,
+          reporterId: queryReporterId,
+          providerId: queryProviderId,
         });
         if (isActive()) setIntelligence(result);
       } catch (err) {
@@ -205,7 +221,7 @@ export default function GovernanceIntelligencePage() {
         if (isActive()) setLoading(false);
       }
     },
-    [windowDays]
+    [queryProviderId, queryReporterId, queryRisk, windowDays]
   );
 
   useEffect(() => {

@@ -14,6 +14,8 @@ import type {
   DbId,
   GovernanceEscalationAnalytics,
   GovernanceEscalationResponse,
+  GovernanceDashboardData,
+  GovernanceDashboardResponse,
   GovernanceIntelligenceData,
   GovernanceIntelligenceResponse,
   GovernanceModerationMetrics,
@@ -96,6 +98,7 @@ export type AdminProviderReport = {
 export type AdminModerationCase = ModerationCaseDetail;
 export type AdminModerationAppeal = ModerationAppealRow;
 export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
+export type AdminGovernanceDashboard = GovernanceDashboardData;
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -274,6 +277,16 @@ export async function getGovernanceIntelligence(
     .intelligence;
 }
 
+export async function getGovernanceDashboard(
+  params: GovernanceIntelligenceParams = {}
+): Promise<GovernanceDashboardData> {
+  const { data } = await api.get<
+    GovernanceDashboardResponse | { dashboard: GovernanceDashboardData }
+  >("/admin/governance-dashboard", { params });
+
+  return getEnvelopeData<{ dashboard: GovernanceDashboardData }>(data).dashboard;
+}
+
 export async function getGovernanceReporterReputation(
   params: GovernanceIntelligenceParams = {}
 ): Promise<GovernanceReporterReputation[]> {
@@ -420,6 +433,7 @@ export const adminService = {
   dismissProviderReport,
   getModerationCase,
   getModerationAppeals,
+  getGovernanceDashboard,
   getGovernanceIntelligence,
   getGovernanceReporterReputation,
   getGovernanceProviderMetrics,

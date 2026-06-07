@@ -8,6 +8,7 @@ import {
   Bell,
   Clock3,
   ExternalLink,
+  History,
   RefreshCw,
   ShieldAlert,
   SignalHigh,
@@ -532,16 +533,25 @@ export default function GovernanceDashboardPage() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => void loadDashboard()}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 disabled:opacity-50"
-          disabled={loading}
-          title="Refresh"
-          aria-label="Refresh governance dashboard"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-        </button>
+        <div className="flex gap-2">
+          <Link
+            href="/admin/audit-center?domains=governance,moderation,appeals,trust&limit=50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100"
+          >
+            <History className="h-4 w-4" aria-hidden="true" />
+            Audit Center
+          </Link>
+          <button
+            type="button"
+            onClick={() => void loadDashboard()}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 disabled:opacity-50"
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh governance dashboard"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {error && <AdminStateBlock title={error} tone="error" />}

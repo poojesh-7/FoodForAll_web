@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, History, X } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
@@ -219,6 +219,13 @@ export default function ProviderReportsPage() {
                     Open case
                   </Link>
                 )}
+                <Link
+                  href={`/admin/audit-center?domains=moderation&q=${encodeURIComponent(String(report.id))}`}
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-100"
+                >
+                  <History className="h-4 w-4" aria-hidden="true" />
+                  Audit
+                </Link>
                 {String(report.status).toLowerCase() === "pending" && (
                   <>
                     <button

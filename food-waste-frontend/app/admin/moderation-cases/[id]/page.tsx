@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock3,
   Eye,
+  History,
   MessageSquare,
   Scale,
   ShieldAlert,
@@ -193,13 +194,22 @@ export default function ModerationCaseDetailPage() {
       title="Moderation Case"
       description="Review provider report context, evidence, and case history."
     >
-      <Link
-        href="/admin/provider-reports"
-        className="inline-flex items-center gap-2 text-sm font-medium text-zinc-700 transition hover:text-zinc-950"
-      >
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Provider reports
-      </Link>
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href="/admin/provider-reports"
+          className="inline-flex items-center gap-2 text-sm font-medium text-zinc-700 transition hover:text-zinc-950"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Provider reports
+        </Link>
+        <Link
+          href={`/admin/audit-center?domains=moderation,appeals&q=${encodeURIComponent(String(caseId))}`}
+          className="inline-flex items-center gap-2 text-sm font-medium text-zinc-700 transition hover:text-zinc-950"
+        >
+          <History className="h-4 w-4" aria-hidden="true" />
+          Audit trail
+        </Link>
+      </div>
 
       {error && <AdminStateBlock title={error} tone="error" />}
       {success && <AdminStateBlock title={success} />}

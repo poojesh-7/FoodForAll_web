@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, ExternalLink, Eye, X, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Eye, History, X, XCircle } from "lucide-react";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
@@ -227,6 +227,13 @@ export default function ModerationAppealsPage() {
                     >
                       <ExternalLink className="h-4 w-4" aria-hidden="true" />
                       Open case
+                    </Link>
+                    <Link
+                      href={`/admin/audit-center?domains=appeals,moderation&q=${encodeURIComponent(String(appeal.id))}`}
+                      className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-100"
+                    >
+                      <History className="h-4 w-4" aria-hidden="true" />
+                      Audit
                     </Link>
                     {!["ACCEPTED", "REJECTED", "WITHDRAWN"].includes(
                       String(appeal.status).toUpperCase()

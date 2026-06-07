@@ -58,6 +58,9 @@ router.get(
   "/governance-intelligence/escalations",
   adminCtrl.getGovernanceEscalations,
 );
+router.get("/audit-center", adminCtrl.getAuditCenter);
+router.get("/audit-center/export.json", adminCtrl.exportAuditCenterJson);
+router.get("/audit-center/export.csv", adminCtrl.exportAuditCenterCsv);
 router.get("/moderation-cases/:id", adminCtrl.getModerationCase);
 router.get("/moderation-appeals", adminCtrl.getModerationAppeals);
 router.patch(

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -271,6 +272,9 @@ export default function AdminTrustPage() {
 
   const state = explanation?.currentState;
   const diagnostics = explanation?.projectionDiagnostics;
+  const auditHref = subjectId.trim()
+    ? `/admin/audit-center?domains=trust&actorType=${encodeURIComponent(subjectType)}&actorId=${encodeURIComponent(subjectId.trim())}`
+    : "/admin/audit-center?domains=trust";
 
   return (
     <AdminShell
@@ -322,6 +326,15 @@ export default function AdminTrustPage() {
             {loading ? "Loading..." : "Load"}
           </button>
         </form>
+        <div className="mt-3 flex justify-end">
+          <Link
+            href={auditHref}
+            className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+          >
+            <History className="h-4 w-4" aria-hidden="true" />
+            Audit Trail
+          </Link>
+        </div>
       </section>
 
       {explanation && state && (

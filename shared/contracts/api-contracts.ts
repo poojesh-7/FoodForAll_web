@@ -1180,6 +1180,132 @@ export type GovernanceModerationMetricsResponse =
   ApiResponse<GovernanceModerationMetricsData>;
 export type GovernanceEscalationResponse = ApiResponse<GovernanceEscalationData>;
 
+export type AuditDomain =
+  | "trust"
+  | "moderation"
+  | "appeals"
+  | "verification"
+  | "governance"
+  | "financial"
+  | "notifications";
+
+export type AuditActorType =
+  | "user"
+  | "provider"
+  | "ngo"
+  | "volunteer"
+  | "admin"
+  | "system"
+  | "gateway";
+
+export interface AuditCenterQuery {
+  domain?: string;
+  domains?: string;
+  actorType?: AuditActorType | string;
+  actor_type?: AuditActorType | string;
+  actorId?: DbId;
+  actor_id?: DbId;
+  q?: string;
+  search?: string;
+  startAt?: ISODateString;
+  start_at?: ISODateString;
+  endAt?: ISODateString;
+  end_at?: ISODateString;
+  cursor?: string;
+  limit?: number | string;
+}
+
+export interface AuditCenterActorRef {
+  type: AuditActorType | string;
+  id?: DbId | null;
+  label?: string | null;
+}
+
+export interface AuditCenterTargetRef {
+  type?: string | null;
+  id?: DbId | null;
+  label?: string | null;
+}
+
+export interface AuditCenterSourceRef {
+  domain: AuditDomain | string;
+  table: string;
+  event_identifier?: string | null;
+  record_identifier?: string | null;
+  source_event_id?: string | null;
+  source_record_id?: string | null;
+  immutable: boolean;
+}
+
+export interface AuditCenterEvent extends DbRow {
+  domain: AuditDomain | string;
+  timestamp: ISODateString;
+  actor: AuditCenterActorRef;
+  action: string;
+  target: AuditCenterTargetRef;
+  event_type: string;
+  details: string;
+  source: AuditCenterSourceRef;
+  metadata: DbRow;
+  href: string;
+}
+
+export interface AuditCenterSourceInventory {
+  domain: AuditDomain | string;
+  source: string;
+  reuse: string;
+  status: "reused" | "supporting" | "derived" | "partial" | string;
+}
+
+export interface AuditCenterAnalysis {
+  architecture: string[];
+  gaps: string[];
+  reuse: string[];
+  risks: string[];
+  schemaChanges: string[];
+}
+
+export interface AuditCenterPagination {
+  limit: number | string;
+  has_more: boolean;
+  next_cursor?: string | null;
+}
+
+export interface AuditCenterData {
+  generated_at: ISODateString;
+  informational_only: boolean;
+  enforcement_action?: null;
+  filters: {
+    domains: Array<AuditDomain | string>;
+    actor_type?: string | null;
+    actor_id?: DbId | null;
+    q?: string | null;
+    start_at?: ISODateString | null;
+    end_at?: ISODateString | null;
+    limit: number | string;
+    cursor?: string | null;
+  };
+  pagination: AuditCenterPagination;
+  events: AuditCenterEvent[];
+  recent_admin_actions: AuditCenterEvent[];
+  source_inventory: AuditCenterSourceInventory[];
+  analysis: AuditCenterAnalysis;
+}
+
+export interface AuditCenterDataEnvelope {
+  audit: AuditCenterData;
+}
+
+export interface AuditCenterExportData {
+  generated_at: ISODateString;
+  filters: AuditCenterData["filters"];
+  count: number | string;
+  events: AuditCenterEvent[];
+}
+
+export type AuditCenterResponse = ApiResponse<AuditCenterDataEnvelope>;
+export type AuditCenterExportResponse = ApiResponse<AuditCenterExportData>;
+
 export interface GovernanceDashboardSource {
   table: string;
   predicate: string;
@@ -2454,6 +2580,35 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "GovernanceIntelligenceQuery", body: "NoRequestBody" },
       response: "GovernanceEscalationResponse",
       statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/audit-center",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "AuditCenterQuery", body: "NoRequestBody" },
+      response: "AuditCenterResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/audit-center/export.json",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "AuditCenterQuery", body: "NoRequestBody" },
+      response: "AuditCenterExportResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Returns a downloadable JSON payload generated from the read-only Audit Center filters.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/audit-center/export.csv",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "AuditCenterQuery", body: "NoRequestBody" },
+      response: "CsvDownloadResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Returns text/csv with sanitized metadata and no raw gateway payloads, signatures, tokens, or secrets.",
     },
     {
       method: "GET",

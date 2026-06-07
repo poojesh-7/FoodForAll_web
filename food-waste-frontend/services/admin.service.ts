@@ -11,6 +11,9 @@ import type {
   AdminQueueHealthResponse,
   AdminSecurityEvent,
   AdminSecurityEventsResponse,
+  AuditCenterData,
+  AuditCenterQuery,
+  AuditCenterResponse,
   DbId,
   GovernanceEscalationAnalytics,
   GovernanceEscalationResponse,
@@ -99,6 +102,7 @@ export type AdminModerationCase = ModerationCaseDetail;
 export type AdminModerationAppeal = ModerationAppealRow;
 export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
 export type AdminGovernanceDashboard = GovernanceDashboardData;
+export type AdminAuditCenter = AuditCenterData;
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -106,6 +110,11 @@ export type GovernanceIntelligenceParams = {
   risk?: string;
   reporterId?: DbId;
   providerId?: DbId;
+};
+
+export type AuditCenterParams = AuditCenterQuery & {
+  domain?: string;
+  domains?: string;
 };
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
@@ -340,6 +349,40 @@ export async function getGovernanceEscalations(
     .escalation;
 }
 
+export async function getAuditCenter(
+  params: AuditCenterParams = {}
+): Promise<AdminAuditCenter> {
+  const { data } = await api.get<
+    AuditCenterResponse | { audit: AdminAuditCenter }
+  >("/admin/audit-center", { params });
+
+  return getEnvelopeData<{ audit: AdminAuditCenter }>(data).audit;
+}
+
+function filenameFromDisposition(disposition: unknown, fallback: string) {
+  if (typeof disposition !== "string") return fallback;
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+export async function exportAuditCenter(
+  format: "csv" | "json",
+  params: AuditCenterParams = {}
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await api.get<Blob>(`/admin/audit-center/export.${format}`, {
+    params,
+    responseType: "blob",
+  });
+
+  return {
+    blob: response.data,
+    filename: filenameFromDisposition(
+      response.headers["content-disposition"],
+      `audit-center-export.${format}`
+    ),
+  };
+}
+
 async function patchModerationAppeal(
   id: DbId,
   action: "review" | "accept" | "reject",
@@ -440,6 +483,8 @@ export const adminService = {
   getGovernanceSignals,
   getGovernanceMetrics,
   getGovernanceEscalations,
+  getAuditCenter,
+  exportAuditCenter,
   reviewModerationAppeal,
   acceptModerationAppeal,
   rejectModerationAppeal,

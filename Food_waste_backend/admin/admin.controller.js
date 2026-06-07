@@ -67,6 +67,11 @@ const {
 const {
   getGovernanceDashboard: getGovernanceDashboardService,
 } = require("../shared/services/governanceDashboard.service");
+const {
+  eventsToCsv,
+  exportAuditEvents,
+  getAuditCenter: getAuditCenterService,
+} = require("../shared/services/auditCenter.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -1108,6 +1113,56 @@ exports.getGovernanceEscalations = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch governance escalations",
+    });
+  }
+};
+
+exports.getAuditCenter = async (req, res) => {
+  try {
+    const audit = await getAuditCenterService(req.query);
+    res.json({ audit });
+  } catch (err) {
+    logger.error("Failed to fetch audit center", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch audit center",
+    });
+  }
+};
+
+exports.exportAuditCenterJson = async (req, res) => {
+  try {
+    const auditExport = await exportAuditEvents(req.query);
+    res.setHeader("Content-Disposition", "attachment; filename=\"audit-center-export.json\"");
+    res.json(auditExport);
+  } catch (err) {
+    logger.error("Failed to export audit center JSON", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to export audit center JSON",
+    });
+  }
+};
+
+exports.exportAuditCenterCsv = async (req, res) => {
+  try {
+    const auditExport = await exportAuditEvents(req.query);
+    res.setHeader("Content-Disposition", "attachment; filename=\"audit-center-export.csv\"");
+    res.type("text/csv").send(eventsToCsv(auditExport.events));
+  } catch (err) {
+    logger.error("Failed to export audit center CSV", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to export audit center CSV",
     });
   }
 };

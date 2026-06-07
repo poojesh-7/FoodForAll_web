@@ -34,6 +34,9 @@ import type {
   ModerationAppealsAdminResponse,
   ModerationAppealRow,
   ModerationCaseStatus,
+  OperationalMonitoringData,
+  OperationalMonitoringQuery,
+  OperationalMonitoringResponse,
   PendingNGORow,
   PendingNGOsResponse,
   PendingRestaurantRow,
@@ -116,6 +119,7 @@ export type AuditCenterParams = AuditCenterQuery & {
   domain?: string;
   domains?: string;
 };
+export type OperationalMonitoringParams = OperationalMonitoringQuery;
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -237,6 +241,17 @@ export async function getSecurityEvents(): Promise<AdminSecurityEvent[]> {
   >("/admin/operations/security-events");
 
   return getEnvelopeData<{ events: AdminSecurityEvent[] }>(data).events;
+}
+
+export async function getOperationalMonitoring(
+  params: OperationalMonitoringParams = {}
+): Promise<OperationalMonitoringData> {
+  const { data } = await api.get<
+    OperationalMonitoringResponse | { monitoring: OperationalMonitoringData }
+  >("/admin/operations/monitoring", { params });
+
+  return getEnvelopeData<{ monitoring: OperationalMonitoringData }>(data)
+    .monitoring;
 }
 
 export async function getProviderReports(
@@ -471,6 +486,7 @@ export const adminService = {
   getPaymentHealth,
   getOperationalAlerts,
   getSecurityEvents,
+  getOperationalMonitoring,
   getProviderReports,
   validateProviderReport,
   dismissProviderReport,

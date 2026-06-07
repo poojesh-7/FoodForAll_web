@@ -967,6 +967,9 @@ export interface ProviderReportsAdminQuery {
   caseStatus?: ModerationCaseStatus | string;
   case_status?: ModerationCaseStatus | string;
 }
+export interface OperationalMonitoringQuery {
+  window?: "1h" | "24h" | "7d" | "30d" | string;
+}
 export type ProviderReportsAdminResponse = ApiResponse<ProviderReportsAdminData>;
 export interface ModerationAppealsAdminData {
   appeals: ModerationAppealRow[];
@@ -1764,10 +1767,13 @@ export interface AdminQueueHealth {
   name: string;
   status?: "healthy" | "degraded" | string;
   is_paused: boolean;
+  category?: string;
   counts: AdminQueueCounts;
   retry_exhausted_count?: number;
   stuck_active_count?: number;
+  worker_heartbeat_status?: string;
   worker?: AdminWorkerHeartbeat | null;
+  drilldown_href?: string;
   failed_jobs?: AdminQueueJob[];
   active_jobs?: AdminQueueJob[];
   delayed_jobs?: AdminQueueJob[];
@@ -1792,6 +1798,95 @@ export interface AdminOperationalAlert {
   last_seen_at?: ISODateString;
   occurrences?: number;
 }
+export interface OperationalMonitoringHealthCard {
+  id: string;
+  label: string;
+  status: "healthy" | "warning" | "critical" | string;
+  detail?: string;
+  metric?: DbRow | null;
+}
+export interface OperationalMonitoringQueueSnapshot {
+  status: "healthy" | "warning" | "critical" | string;
+  totals: {
+    waiting?: number;
+    active?: number;
+    completed?: number;
+    failed?: number;
+  };
+  queues: AdminQueueHealth[];
+}
+export interface OperationalMonitoringPaymentSnapshot extends DbRow {
+  status: "healthy" | "warning" | "critical" | string;
+  pending_settlements: number;
+  failed_settlements: number;
+  recent_reconciliation_runs: number;
+  payment_errors: number;
+  webhook_failures: number;
+}
+export interface OperationalMonitoringNotificationSnapshot extends DbRow {
+  status: "healthy" | "warning" | "critical" | string;
+  notifications_sent: number;
+  notifications_failed: number;
+  notification_backlog: number;
+  realtime_delivery_status: string;
+}
+export interface OperationalMonitoringSocketSnapshot extends DbRow {
+  status: "healthy" | "warning" | "critical" | string;
+  connected_clients: number;
+  recent_disconnects?: number | null;
+  realtime_sync_health: string;
+  socket_errors?: number | null;
+}
+export interface OperationalMonitoringTrustSnapshot extends DbRow {
+  status: "healthy" | "warning" | "critical" | string;
+  trust_events_waiting: number;
+  trust_events_processed: number;
+  projection_failures: number;
+  recent_replay_activity: number;
+  queue?: AdminQueueHealth | null;
+}
+export interface OperationalMonitoringGovernanceSnapshot extends DbRow {
+  status: "healthy" | "warning" | "critical" | string;
+  open_moderation_cases: number;
+  appeals_pending_review: number;
+  escalations_pending: number;
+}
+export interface OperationalMonitoringDerivedAlert extends DbRow {
+  alert_key: string;
+  category: string;
+  severity: string;
+  message: string;
+  source?: string;
+  drilldown_href?: string;
+}
+export interface OperationalMonitoringData {
+  generated_at: ISODateString;
+  window: {
+    key: "1h" | "24h" | "7d" | "30d" | string;
+    label: string;
+    hours: number;
+  };
+  status: "healthy" | "warning" | "critical" | string;
+  read_only: boolean;
+  health: OperationalMonitoringHealthCard[];
+  queues: OperationalMonitoringQueueSnapshot;
+  payments: OperationalMonitoringPaymentSnapshot;
+  notifications: OperationalMonitoringNotificationSnapshot;
+  sockets: OperationalMonitoringSocketSnapshot;
+  trust: OperationalMonitoringTrustSnapshot;
+  governance: OperationalMonitoringGovernanceSnapshot;
+  alerts: {
+    open: AdminOperationalAlert[];
+    derived: OperationalMonitoringDerivedAlert[];
+  };
+  drilldowns: Array<{ label: string; href: string }>;
+  analysis: {
+    architecture: string[];
+    gaps: string[];
+    risks: string[];
+    reuse: string[];
+  };
+}
 export interface AdminSecurityEvent {
   id: DbId;
   severity: string;
@@ -1807,6 +1902,7 @@ export type AdminOperationalSummaryResponse = ApiResponse<AdminOperationalSummar
 export type AdminQueueHealthResponse = ApiResponse<AdminQueueHealthData>;
 export type AdminPaymentHealthResponse = ApiResponse<{ payments: AdminPaymentHealth }>;
 export type AdminOperationalAlertsResponse = ApiResponse<{ alerts: AdminOperationalAlert[] }>;
+export type OperationalMonitoringResponse = ApiResponse<{ monitoring: OperationalMonitoringData }>;
 export type AdminSecurityEventsResponse = ApiResponse<{ events: AdminSecurityEvent[] }>;
 
 // Payment webhook response is documented as strict target contract.
@@ -2672,6 +2768,16 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
       response: "AdminOperationalSummaryResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/operations/monitoring",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "OperationalMonitoringQuery", body: "NoRequestBody" },
+      response: "OperationalMonitoringResponse",
+      statusCodes: [200, 401, 403, 500],
+      notes: "Read-only T7.2 aggregate monitoring snapshot. It does not retry jobs, mutate business state, or write operational alerts.",
     },
     {
       method: "GET",

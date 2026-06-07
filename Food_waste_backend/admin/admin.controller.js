@@ -72,6 +72,9 @@ const {
   exportAuditEvents,
   getAuditCenter: getAuditCenterService,
 } = require("../shared/services/auditCenter.service");
+const {
+  getOperationalMonitoring: getOperationalMonitoringService,
+} = require("../shared/services/operationalMonitoring.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -522,6 +525,23 @@ exports.getOperationalMetrics = async (req, res) => {
   } catch (err) {
     logger.error("Failed to fetch operational metrics", { err, adminId: req.user?.id });
     res.status(500).json({ error: "Failed to fetch operational metrics" });
+  }
+};
+
+exports.getOperationalMonitoring = async (req, res) => {
+  try {
+    const monitoring = await getOperationalMonitoringService({
+      window: req.query.window,
+      io: req.app.get("io"),
+    });
+    res.json({ monitoring });
+  } catch (err) {
+    logger.error("Failed to fetch operational monitoring", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(500).json({ error: "Failed to fetch operational monitoring" });
   }
 };
 

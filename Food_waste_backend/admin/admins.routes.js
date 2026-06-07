@@ -15,6 +15,7 @@ router.get("/restaurants/pending", adminCtrl.getPendingRestaurants);
 router.patch("/restaurants/:id/approve", adminActionLimiter, adminCtrl.approveRestaurant);
 router.patch("/restaurants/:id/reject", adminActionLimiter, adminCtrl.rejectRestaurant);
 router.get("/operations/diagnostics", adminCtrl.getOperationalDiagnostics);
+router.get("/operations/monitoring", adminCtrl.getOperationalMonitoring);
 router.get("/operations/metrics", adminCtrl.getOperationalMetrics);
 router.get("/operations/summary", adminCtrl.getOperationalSummary);
 router.get("/operations/alerts", adminCtrl.getOperationalAlerts);

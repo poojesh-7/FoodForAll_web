@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
@@ -11,6 +13,27 @@ import type { AdminQueueJob } from "@shared/contracts/api-contracts";
 function queueTotal(value: unknown) {
   const count = Number(value ?? 0);
   return Number.isFinite(count) ? count : 0;
+}
+
+function queueIncidentHref(queueName: string, context: Record<string, unknown> = {}) {
+  const params = new URLSearchParams({
+    source_type: "queue_diagnostic",
+    source_ref_id: String(context.jobId || queueName),
+    title: context.jobId
+      ? `${queueName} failed job ${String(context.jobId)}`
+      : `${queueName} queue degradation`,
+    severity: "SEV2",
+    category: "INFRASTRUCTURE",
+    source_queue: queueName,
+  });
+
+  for (const [key, value] of Object.entries(context)) {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(`source_${key}`, String(value));
+    }
+  }
+
+  return `/admin/incidents?${params.toString()}`;
 }
 
 export default function AdminQueuesPage() {
@@ -115,6 +138,7 @@ export default function AdminQueuesPage() {
                   <th className="px-4 py-3">Retry Exhausted</th>
                   <th className="px-4 py-3">Stuck</th>
                   <th className="px-4 py-3">Completed</th>
+                  <th className="px-4 py-3">Incident</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -148,6 +172,22 @@ export default function AdminQueuesPage() {
                     <td className="px-4 py-3">{queueTotal(queue.retry_exhausted_count)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.stuck_active_count)}</td>
                     <td className="px-4 py-3">{queueTotal(queue.counts.completed)}</td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={queueIncidentHref(queue.name, {
+                          status: queue.status,
+                          failed: queue.counts.failed,
+                          waiting: queue.counts.waiting,
+                          delayed: queue.counts.delayed,
+                          worker: queue.worker_heartbeat_status,
+                        })}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 transition hover:bg-zinc-100"
+                        title="Create incident"
+                        aria-label={`Create incident for ${queue.name}`}
+                      >
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -190,6 +230,20 @@ export default function AdminQueuesPage() {
                             ? "Retrying"
                             : "Retry"}
                         </button>
+                        <Link
+                          href={queueIncidentHref(queue.name, {
+                            jobId: job.id,
+                            jobName: job.name,
+                            attemptsMade: job.attemptsMade,
+                            attempts: job.attempts,
+                            failedReason: job.failedReason,
+                          })}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 transition hover:bg-zinc-100"
+                          title="Create incident"
+                          aria-label={`Create incident for failed job ${String(job.id)}`}
+                        >
+                          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
                       </div>
                     </div>
                     {job.failedReason && (

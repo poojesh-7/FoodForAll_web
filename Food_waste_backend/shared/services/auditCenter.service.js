@@ -6,6 +6,7 @@ const AUDIT_DOMAINS = [
   "appeals",
   "verification",
   "governance",
+  "incidents",
   "financial",
   "notifications",
 ];
@@ -65,6 +66,12 @@ const SOURCE_INVENTORY = [
     status: "derived",
   },
   {
+    domain: "incidents",
+    source: "incident_records, incident_events, incident_notes, incident_postmortems",
+    reuse: "Incident response lifecycle records and append-only event history.",
+    status: "reused",
+  },
+  {
     domain: "financial",
     source: "financial_ledger_entries, provider_settlements, settlement_batches, financial_state_transitions",
     reuse: "Ledger, settlement, refund, webhook audit, and reconciliation event sources.",
@@ -84,15 +91,18 @@ const ANALYSIS = {
     "No trust formulas, moderation transitions, appeal transitions, or financial flows are changed.",
     "Timeline pagination uses a stable keyset cursor over timestamp, source rank, and source record id.",
     "Exports reuse the same read model and sanitize metadata fields that can contain secrets or raw gateway payloads.",
+    "Incident response lifecycle events are included as operational audit records and do not mutate monitored systems.",
   ],
   gaps: [
     "Governance intelligence signals are derived read-model outputs, not persisted immutable audit records.",
     "Notification delivery attempts do not have a dedicated delivery-record table in the current schema.",
     "Verification actions are traceable through operational_events rather than dedicated verification action tables.",
+    "Incident source context stores referenced monitoring/diagnostic snapshots rather than owning those source systems.",
   ],
   reuse: [
     "Trust: trust_events plus admin_trust_actions; trust_event_effects is summarized as supporting lineage.",
     "Moderation and appeals: existing event tables remain the authoritative source of lifecycle changes.",
+    "Incidents: incident_events is the authoritative response timeline, with incident_records, notes, and postmortems as supporting records.",
     "Financial: immutable ledger, settlement snapshots, terminal refund records, webhook audit log, and state transitions are reused directly.",
     "Governance: dashboard/intelligence services remain informational-only and are referenced as derived sources.",
   ],
@@ -101,9 +111,11 @@ const ANALYSIS = {
     "Large exports can stress the database if unbounded; export limits are capped and use the same filters as the timeline.",
     "Free-text search across a union read model is useful for investigations but should not replace source-specific indexed lookups for very large forensic jobs.",
     "Operational_events currently has no immutability trigger, so verification lineage is visible but not as strongly protected as trust/financial ledgers.",
+    "Incident duplication is possible by design; source references and search make duplicates explainable without blocking legitimate response tracks.",
   ],
   schemaChanges: [
     "Migration 022 adds audit timeline indexes only; it creates no new mutable audit record table.",
+    "Migration 023 adds immutable incident management tables for T7.3.",
   ],
 };
 
@@ -589,6 +601,49 @@ function governanceOperationalEventsSource() {
   `;
 }
 
+function incidentEventsSource() {
+  return `
+    SELECT
+      'incidents'::text AS domain,
+      ie.created_at::timestamptz AS event_time,
+      'admin'::text AS actor_type,
+      ie.actor_user_id::text AS actor_id,
+      actor.name::text AS actor_label,
+      ie.event_type::text AS action,
+      'incident'::text AS target_type,
+      ir.id::text AS target_id,
+      ir.title::text AS target_label,
+      ie.event_type::text AS event_type,
+      COALESCE(ie.details, CONCAT('Incident ', LOWER(REPLACE(ie.event_type, '_', ' '))))::text AS details,
+      'incident_events'::text AS source_table,
+      ie.id::text AS source_event_id,
+      ie.id::text AS source_record_id,
+      ie.id::text AS event_identifier,
+      CONCAT('incident_events:', ie.id::text)::text AS record_identifier,
+      65::int AS source_rank,
+      true::boolean AS immutable,
+      jsonb_build_object(
+        'incident_id', ie.incident_id,
+        'title', ir.title,
+        'severity', ir.severity,
+        'category', ir.category,
+        'source_type', ir.source_type,
+        'source_ref_id', ir.source_ref_id,
+        'from_status', ie.from_status,
+        'to_status', ie.to_status,
+        'from_assigned_admin_id', ie.from_assigned_admin_id,
+        'to_assigned_admin_id', ie.to_assigned_admin_id,
+        'note_id', ie.note_id,
+        'postmortem_id', ie.postmortem_id,
+        'metadata', ie.metadata
+      ) AS metadata,
+      CONCAT_WS(' ', ie.id, ie.incident_id, ir.title, ir.severity, ir.category, ir.source_type, ir.source_ref_id, ie.event_type, ie.from_status, ie.to_status, ie.details)::text AS search_text
+    FROM incident_events ie
+    JOIN incident_records ir ON ir.id = ie.incident_id
+    LEFT JOIN users actor ON actor.id = ie.actor_user_id
+  `;
+}
+
 function notificationsSource() {
   return `
     SELECT
@@ -1000,6 +1055,7 @@ const SOURCE_BRANCHES = {
   appeals: [moderationAppealsSource, moderationAppealEventsSource],
   verification: [verificationOperationalEventsSource],
   governance: [governanceOperationalEventsSource],
+  incidents: [incidentEventsSource],
   financial: [
     financialLedgerSource,
     settlementAllocationsSource,
@@ -1146,6 +1202,9 @@ function eventHref(row) {
     return row.target_type === "ngo" ? "/admin/ngos" : "/admin/restaurants";
   }
   if (row.domain === "governance") return "/admin/governance-intelligence";
+  if (row.domain === "incidents" && row.target_id) {
+    return `/admin/incidents?q=${encodeURIComponent(String(row.target_id))}`;
+  }
   if (row.domain === "notifications") return "/notifications";
   return "/admin";
 }
@@ -1210,7 +1269,7 @@ async function getAuditCenter(options = {}) {
   const filters = normalizeAuditFilters(options);
   const adminFilters = {
     ...filters,
-    domains: ["trust", "moderation", "appeals", "verification"],
+    domains: ["trust", "moderation", "appeals", "verification", "incidents"],
     actorType: "admin",
     actorId: null,
     cursor: null,

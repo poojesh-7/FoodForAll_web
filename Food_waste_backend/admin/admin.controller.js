@@ -75,6 +75,15 @@ const {
 const {
   getOperationalMonitoring: getOperationalMonitoringService,
 } = require("../shared/services/operationalMonitoring.service");
+const {
+  addIncidentNote,
+  addIncidentPostmortem,
+  assignIncident,
+  createIncident,
+  getIncidentDetail,
+  listIncidents,
+  transitionIncidentStatus,
+} = require("../shared/services/incidentManagement.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -542,6 +551,318 @@ exports.getOperationalMonitoring = async (req, res) => {
       query: req.query,
     });
     res.status(500).json({ error: "Failed to fetch operational monitoring" });
+  }
+};
+
+function incidentEventMetadata(req, detail, extra = {}) {
+  return {
+    adminId: req.user?.id,
+    incidentId: detail?.incident?.id || req.params?.id,
+    status: detail?.incident?.status,
+    severity: detail?.incident?.severity,
+    category: detail?.incident?.category,
+    ...extra,
+  };
+}
+
+exports.getIncidents = async (req, res) => {
+  try {
+    const incidentCenter = await listIncidents({
+      adminId: req.user?.id,
+      filters: req.query,
+    });
+    res.json({ incidentCenter });
+  } catch (err) {
+    logger.error("Failed to fetch incident center", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch incident center",
+    });
+  }
+};
+
+exports.getIncident = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Incident id is required" });
+  }
+
+  try {
+    const incident = await getIncidentDetail({ incidentId: id });
+    if (!incident) {
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    res.json({ incident });
+  } catch (err) {
+    logger.error("Failed to fetch incident", {
+      err,
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch incident",
+    });
+  }
+};
+
+exports.createIncident = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const incident = await createIncident({
+      client,
+      adminId: req.user.id,
+      title: req.body?.title,
+      description: req.body?.description,
+      severity: req.body?.severity,
+      category: req.body?.category,
+      assignedAdminId: req.body?.assignedAdminId || req.body?.assigned_admin_id,
+      sourceType: req.body?.sourceType || req.body?.source_type,
+      sourceRefId: req.body?.sourceRefId || req.body?.source_ref_id,
+      sourceContext: req.body?.sourceContext || req.body?.source_context || {},
+    });
+    await client.query("COMMIT");
+
+    logger.security("Incident created", {
+      adminId: req.user?.id,
+      incidentId: incident?.incident?.id,
+      severity: incident?.incident?.severity,
+      category: incident?.incident?.category,
+    });
+    void recordOperationalEvent({
+      category: "incident",
+      severity: "info",
+      eventName: "incident_created",
+      metadata: incidentEventMetadata(req, incident, {
+        sourceType: incident?.incident?.source_type,
+        sourceRefId: incident?.incident?.source_ref_id,
+      }),
+    });
+
+    res.status(201).json({ incident });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Incident creation failed", {
+      err,
+      adminId: req.user?.id,
+      title: req.body?.title,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create incident",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.updateIncidentStatus = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Incident id is required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const incident = await transitionIncidentStatus({
+      client,
+      incidentId: id,
+      adminId: req.user.id,
+      status: req.body?.status,
+      note: req.body?.note,
+    });
+    if (!incident) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    await client.query("COMMIT");
+
+    logger.security("Incident status changed", {
+      adminId: req.user?.id,
+      incidentId: id,
+      status: incident?.incident?.status,
+    });
+    void recordOperationalEvent({
+      category: "incident",
+      severity: "info",
+      eventName: "incident_status_changed",
+      metadata: incidentEventMetadata(req, incident, {
+        requestedStatus: req.body?.status,
+      }),
+    });
+
+    res.json({ incident });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Incident status update failed", {
+      err,
+      adminId: req.user?.id,
+      incidentId: id,
+      status: req.body?.status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update incident status",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.assignIncident = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Incident id is required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const incident = await assignIncident({
+      client,
+      incidentId: id,
+      adminId: req.user.id,
+      assignedAdminId: req.body?.assignedAdminId || req.body?.assigned_admin_id,
+      note: req.body?.note,
+    });
+    if (!incident) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    await client.query("COMMIT");
+
+    logger.security("Incident assignment changed", {
+      adminId: req.user?.id,
+      incidentId: id,
+      assignedAdminId: incident?.incident?.assigned_admin_id,
+    });
+    void recordOperationalEvent({
+      category: "incident",
+      severity: "info",
+      eventName: "incident_assignment_changed",
+      metadata: incidentEventMetadata(req, incident, {
+        assignedAdminId: incident?.incident?.assigned_admin_id,
+      }),
+    });
+
+    res.json({ incident });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Incident assignment failed", {
+      err,
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to assign incident",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.addIncidentNote = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Incident id is required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const incident = await addIncidentNote({
+      client,
+      incidentId: id,
+      adminId: req.user.id,
+      note: req.body?.note,
+      metadata: req.body?.metadata || {},
+    });
+    if (!incident) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    await client.query("COMMIT");
+
+    logger.security("Incident note added", {
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    void recordOperationalEvent({
+      category: "incident",
+      severity: "info",
+      eventName: "incident_note_added",
+      metadata: incidentEventMetadata(req, incident),
+    });
+
+    res.status(201).json({ incident });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Incident note failed", {
+      err,
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to add incident note",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.addIncidentPostmortem = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Incident id is required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const incident = await addIncidentPostmortem({
+      client,
+      incidentId: id,
+      adminId: req.user.id,
+      rootCause: req.body?.rootCause || req.body?.root_cause,
+      impactSummary: req.body?.impactSummary || req.body?.impact_summary,
+      detectionMethod: req.body?.detectionMethod || req.body?.detection_method,
+      resolutionSummary: req.body?.resolutionSummary || req.body?.resolution_summary,
+      followUpActions: req.body?.followUpActions || req.body?.follow_up_actions,
+      metadata: req.body?.metadata || {},
+    });
+    if (!incident) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    await client.query("COMMIT");
+
+    logger.security("Incident postmortem added", {
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    void recordOperationalEvent({
+      category: "incident",
+      severity: "info",
+      eventName: "incident_postmortem_added",
+      metadata: incidentEventMetadata(req, incident),
+    });
+
+    res.status(201).json({ incident });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Incident postmortem failed", {
+      err,
+      adminId: req.user?.id,
+      incidentId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to add incident postmortem",
+    });
+  } finally {
+    client.release();
   }
 };
 

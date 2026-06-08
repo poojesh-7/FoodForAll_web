@@ -11,9 +11,13 @@ import type {
   AdminQueueHealthResponse,
   AdminSecurityEvent,
   AdminSecurityEventsResponse,
+  AddIncidentNoteRequest,
+  AddIncidentPostmortemRequest,
+  AssignIncidentRequest,
   AuditCenterData,
   AuditCenterQuery,
   AuditCenterResponse,
+  CreateIncidentRequest,
   DbId,
   GovernanceEscalationAnalytics,
   GovernanceEscalationResponse,
@@ -30,6 +34,11 @@ import type {
   GovernanceSignal,
   GovernanceSignalsResponse,
   GetModerationCaseResponse,
+  IncidentCenterData,
+  IncidentCenterResponse,
+  IncidentDetailData,
+  IncidentDetailResponse,
+  IncidentQuery,
   ModerationCaseDetail,
   ModerationAppealsAdminResponse,
   ModerationAppealRow,
@@ -49,6 +58,7 @@ import type {
   RecordAdminTrustActionResponse,
   TrustExplainability,
   TrustSubjectType,
+  UpdateIncidentStatusRequest,
   UpdateModerationAppealStatusResponse,
 } from "@shared/contracts/api-contracts";
 
@@ -106,6 +116,8 @@ export type AdminModerationAppeal = ModerationAppealRow;
 export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
 export type AdminGovernanceDashboard = GovernanceDashboardData;
 export type AdminAuditCenter = AuditCenterData;
+export type AdminIncidentCenter = IncidentCenterData;
+export type AdminIncidentDetail = IncidentDetailData;
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -120,6 +132,7 @@ export type AuditCenterParams = AuditCenterQuery & {
   domains?: string;
 };
 export type OperationalMonitoringParams = OperationalMonitoringQuery;
+export type IncidentParams = IncidentQuery;
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -398,6 +411,79 @@ export async function exportAuditCenter(
   };
 }
 
+export async function getIncidents(
+  params: IncidentParams = {}
+): Promise<AdminIncidentCenter> {
+  const { data } = await api.get<
+    IncidentCenterResponse | { incidentCenter: AdminIncidentCenter }
+  >("/admin/incidents", { params });
+
+  return getEnvelopeData<{ incidentCenter: AdminIncidentCenter }>(data)
+    .incidentCenter;
+}
+
+export async function getIncident(id: DbId): Promise<AdminIncidentDetail> {
+  const { data } = await api.get<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >(`/admin/incidents/${String(id)}`);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
+export async function createIncident(
+  payload: CreateIncidentRequest
+): Promise<AdminIncidentDetail> {
+  const { data } = await api.post<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >("/admin/incidents", payload);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
+export async function updateIncidentStatus(
+  id: DbId,
+  payload: UpdateIncidentStatusRequest
+): Promise<AdminIncidentDetail> {
+  const { data } = await api.patch<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >(`/admin/incidents/${String(id)}/status`, payload);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
+export async function assignIncident(
+  id: DbId,
+  payload: AssignIncidentRequest
+): Promise<AdminIncidentDetail> {
+  const { data } = await api.patch<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >(`/admin/incidents/${String(id)}/assignment`, payload);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
+export async function addIncidentNote(
+  id: DbId,
+  payload: AddIncidentNoteRequest
+): Promise<AdminIncidentDetail> {
+  const { data } = await api.post<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >(`/admin/incidents/${String(id)}/notes`, payload);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
+export async function addIncidentPostmortem(
+  id: DbId,
+  payload: AddIncidentPostmortemRequest
+): Promise<AdminIncidentDetail> {
+  const { data } = await api.post<
+    IncidentDetailResponse | { incident: AdminIncidentDetail }
+  >(`/admin/incidents/${String(id)}/postmortem`, payload);
+
+  return getEnvelopeData<{ incident: AdminIncidentDetail }>(data).incident;
+}
+
 async function patchModerationAppeal(
   id: DbId,
   action: "review" | "accept" | "reject",
@@ -501,6 +587,13 @@ export const adminService = {
   getGovernanceEscalations,
   getAuditCenter,
   exportAuditCenter,
+  getIncidents,
+  getIncident,
+  createIncident,
+  updateIncidentStatus,
+  assignIncident,
+  addIncidentNote,
+  addIncidentPostmortem,
   reviewModerationAppeal,
   acceptModerationAppeal,
   rejectModerationAppeal,

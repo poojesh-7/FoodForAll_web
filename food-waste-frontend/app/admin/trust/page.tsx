@@ -10,6 +10,7 @@ import {
   FileSearch,
   Flag,
   History,
+  Plus,
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
@@ -91,6 +92,24 @@ function actionTone(type: unknown) {
 function idempotencyKey() {
   return globalThis.crypto?.randomUUID?.() ||
     `admin-trust-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function trustIncidentHref(explanation: TrustExplainability) {
+  const params = new URLSearchParams({
+    source_type: "trust_diagnostic",
+    source_ref_id: String(explanation.subject.subjectId),
+    title: `Trust diagnostic for ${explanation.subject.subjectType} ${String(
+      explanation.subject.subjectId
+    )}`,
+    severity: explanation.projectionDiagnostics?.replayConsistent ? "SEV4" : "SEV3",
+    category: "TRUST",
+    source_subject_type: String(explanation.subject.subjectType),
+    source_subject_id: String(explanation.subject.subjectId),
+    source_replay_consistent: String(
+      Boolean(explanation.projectionDiagnostics?.replayConsistent)
+    ),
+  });
+  return `/admin/incidents?${params.toString()}`;
 }
 
 function ExplanationBlock({
@@ -534,10 +553,17 @@ export default function AdminTrustPage() {
 
           <section className="grid gap-4 xl:grid-cols-2">
             <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <div className="border-b border-zinc-200 px-4 py-3">
+              <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-base font-semibold text-zinc-950">
                   Projection Diagnostics
                 </h2>
+                <Link
+                  href={trustIncidentHref(explanation)}
+                  className="inline-flex w-fit items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Incident
+                </Link>
               </div>
               <dl className="grid gap-3 p-4 text-sm sm:grid-cols-2">
                 <div>

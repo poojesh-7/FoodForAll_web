@@ -10,6 +10,7 @@ import {
   ExternalLink,
   GitBranch,
   HeartPulse,
+  Plus,
   RefreshCw,
   Scale,
   Server,
@@ -68,6 +69,64 @@ function statusClass(status: unknown) {
 function statusLabel(status: unknown) {
   const normalized = String(status || "").toLowerCase();
   return STATUS_LABELS[normalized] || display(status);
+}
+
+function incidentCategoryForAlert(category: unknown) {
+  const normalized = String(category || "").toLowerCase();
+  if (normalized.includes("payment") || normalized.includes("financial")) return "PAYMENTS";
+  if (normalized.includes("trust")) return "TRUST";
+  if (normalized.includes("notification")) return "NOTIFICATIONS";
+  if (normalized.includes("queue") || normalized.includes("worker")) return "INFRASTRUCTURE";
+  if (normalized.includes("governance")) return "GOVERNANCE";
+  return "OTHER";
+}
+
+function incidentSeverityForAlert(severity: unknown) {
+  const normalized = String(severity || "").toLowerCase();
+  if (normalized === "critical" || normalized === "error") return "SEV1";
+  if (normalized === "warning") return "SEV2";
+  return "SEV4";
+}
+
+function incidentHrefForAlert(alert: {
+  id?: unknown;
+  alert_key?: unknown;
+  category?: unknown;
+  severity?: unknown;
+  message?: unknown;
+  sourceLabel?: string;
+}) {
+  const sourceType =
+    alert.sourceLabel === "Open Alert" ? "operational_alert" : "operational_monitoring";
+  const sourceRefId = display(alert.alert_key || alert.id);
+  const params = new URLSearchParams({
+    source_type: sourceType,
+    source_ref_id: sourceRefId,
+    title: display(alert.message),
+    severity: incidentSeverityForAlert(alert.severity),
+    category: incidentCategoryForAlert(alert.category),
+    source_category: display(alert.category),
+    source_severity: display(alert.severity),
+  });
+  return `/admin/incidents?${params.toString()}`;
+}
+
+function incidentHrefForPaymentSnapshot(
+  payment: OperationalMonitoringData["payments"],
+  windowLabel: string
+) {
+  const params = new URLSearchParams({
+    source_type: "financial_diagnostic",
+    source_ref_id: `payment-monitoring-${windowLabel.toLowerCase().replace(/\s+/g, "-")}`,
+    title: "Payment monitoring issue",
+    severity: payment.status === "critical" ? "SEV1" : "SEV2",
+    category: "PAYMENTS",
+    source_payment_status: String(payment.status),
+    source_webhook_failures: String(payment.webhook_failures),
+    source_failed_settlements: String(payment.failed_settlements),
+    source_payment_errors: String(payment.payment_errors),
+  });
+  return `/admin/incidents?${params.toString()}`;
 }
 
 function StatusBadge({ status }: { status: unknown }) {
@@ -239,6 +298,14 @@ function AlertList({
                   <ExternalLink className="h-4 w-4" aria-hidden="true" />
                 </Link>
               )}
+              <Link
+                href={incidentHrefForAlert(alert)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 transition hover:bg-zinc-100"
+                title="Create incident"
+                aria-label="Create incident from alert"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              </Link>
             </div>
           </div>
         </li>
@@ -399,6 +466,18 @@ export default function OperationalMonitoringPage() {
                   value={monitoring.payments.payment_errors}
                   detail="Failed, expired, or abandoned"
                 />
+                {monitoring.payments.status !== "healthy" && (
+                  <Link
+                    href={incidentHrefForPaymentSnapshot(
+                      monitoring.payments,
+                      monitoring.window.label
+                    )}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100 sm:col-span-2"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Incident
+                  </Link>
+                )}
               </div>
             </div>
 

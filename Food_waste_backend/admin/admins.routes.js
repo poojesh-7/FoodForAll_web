@@ -62,6 +62,29 @@ router.get(
 router.get("/audit-center", adminCtrl.getAuditCenter);
 router.get("/audit-center/export.json", adminCtrl.exportAuditCenterJson);
 router.get("/audit-center/export.csv", adminCtrl.exportAuditCenterCsv);
+router.get("/incidents", adminCtrl.getIncidents);
+router.post("/incidents", adminActionLimiter, adminCtrl.createIncident);
+router.get("/incidents/:id", adminCtrl.getIncident);
+router.patch(
+  "/incidents/:id/status",
+  adminActionLimiter,
+  adminCtrl.updateIncidentStatus,
+);
+router.patch(
+  "/incidents/:id/assignment",
+  adminActionLimiter,
+  adminCtrl.assignIncident,
+);
+router.post(
+  "/incidents/:id/notes",
+  adminActionLimiter,
+  adminCtrl.addIncidentNote,
+);
+router.post(
+  "/incidents/:id/postmortem",
+  adminActionLimiter,
+  adminCtrl.addIncidentPostmortem,
+);
 router.get("/moderation-cases/:id", adminCtrl.getModerationCase);
 router.get("/moderation-appeals", adminCtrl.getModerationAppeals);
 router.patch(

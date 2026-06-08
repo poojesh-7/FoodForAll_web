@@ -1189,6 +1189,7 @@ export type AuditDomain =
   | "appeals"
   | "verification"
   | "governance"
+  | "incidents"
   | "financial"
   | "notifications";
 
@@ -1308,6 +1309,200 @@ export interface AuditCenterExportData {
 
 export type AuditCenterResponse = ApiResponse<AuditCenterDataEnvelope>;
 export type AuditCenterExportResponse = ApiResponse<AuditCenterExportData>;
+
+export type IncidentStatus =
+  | "OPEN"
+  | "INVESTIGATING"
+  | "IDENTIFIED"
+  | "MITIGATING"
+  | "RESOLVED"
+  | "CLOSED";
+
+export type IncidentSeverity = "SEV1" | "SEV2" | "SEV3" | "SEV4";
+
+export type IncidentCategory =
+  | "INFRASTRUCTURE"
+  | "PAYMENTS"
+  | "TRUST"
+  | "GOVERNANCE"
+  | "NOTIFICATIONS"
+  | "REALTIME"
+  | "DATABASE"
+  | "SECURITY"
+  | "COMPLIANCE"
+  | "OTHER";
+
+export type IncidentSourceType =
+  | "manual"
+  | "operational_monitoring"
+  | "operational_alert"
+  | "queue_diagnostic"
+  | "trust_diagnostic"
+  | "financial_diagnostic";
+
+export interface IncidentRow extends DbRow {
+  id: DbId;
+  title: string;
+  description?: string | null;
+  severity: IncidentSeverity | string;
+  category: IncidentCategory | string;
+  status: IncidentStatus | string;
+  created_by_admin_id: DbId;
+  created_by_admin_name?: string | null;
+  assigned_admin_id?: DbId | null;
+  assigned_admin_name?: string | null;
+  resolved_by_admin_id?: DbId | null;
+  resolved_by_admin_name?: string | null;
+  closed_by_admin_id?: DbId | null;
+  closed_by_admin_name?: string | null;
+  source_type: IncidentSourceType | string;
+  source_ref_id?: string | null;
+  source_context?: DbRow;
+  created_at: ISODateString;
+  resolved_at?: ISODateString | null;
+  closed_at?: ISODateString | null;
+  note_count: number | string;
+  postmortem_id?: DbId | null;
+  postmortem_created_at?: ISODateString | null;
+}
+
+export interface IncidentTimelineEvent extends DbRow {
+  id: DbId;
+  incident_id: DbId;
+  actor_user_id: DbId;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  event_type: string;
+  from_status?: IncidentStatus | string | null;
+  to_status?: IncidentStatus | string | null;
+  from_assigned_admin_id?: DbId | null;
+  from_assigned_admin_name?: string | null;
+  to_assigned_admin_id?: DbId | null;
+  to_assigned_admin_name?: string | null;
+  note_id?: DbId | null;
+  postmortem_id?: DbId | null;
+  details?: string | null;
+  metadata?: DbRow;
+  created_at: ISODateString;
+}
+
+export interface IncidentNote extends DbRow {
+  id: DbId;
+  incident_id: DbId;
+  admin_user_id: DbId;
+  admin_name?: string | null;
+  note: string;
+  metadata?: DbRow;
+  created_at: ISODateString;
+}
+
+export interface IncidentPostmortem extends DbRow {
+  id: DbId;
+  incident_id: DbId;
+  admin_user_id: DbId;
+  admin_name?: string | null;
+  root_cause: string;
+  impact_summary: string;
+  detection_method: string;
+  resolution_summary: string;
+  follow_up_actions: string;
+  metadata?: DbRow;
+  created_at: ISODateString;
+}
+
+export interface IncidentDetailData {
+  incident: IncidentRow;
+  timeline: IncidentTimelineEvent[];
+  events: IncidentTimelineEvent[];
+  notes: IncidentNote[];
+  postmortem?: IncidentPostmortem | null;
+  analysis: AuditCenterAnalysis;
+}
+
+export interface IncidentCenterData {
+  generated_at: ISODateString;
+  filters: {
+    status?: IncidentStatus | string | null;
+    severity?: IncidentSeverity | string | null;
+    category?: IncidentCategory | string | null;
+    assigned_admin_id?: DbId | "unassigned" | null;
+    q?: string | null;
+    limit: number | string;
+  };
+  incidents: IncidentRow[];
+  summary: {
+    open_incidents: number | string;
+    critical_incidents: number | string;
+    recently_resolved_incidents: number | string;
+    assigned_to_me: number | string;
+  };
+  reporting: {
+    mttr_seconds: number | string;
+    resolved_count: number | string;
+    by_severity: Array<{ severity: IncidentSeverity | string; count: number | string }>;
+    by_category: Array<{ category: IncidentCategory | string; count: number | string }>;
+  };
+  analysis: AuditCenterAnalysis;
+}
+
+export interface IncidentQuery {
+  status?: string;
+  severity?: string;
+  category?: string;
+  assignedAdminId?: string;
+  assigned_admin_id?: string;
+  q?: string;
+  search?: string;
+  limit?: string;
+}
+
+export interface CreateIncidentRequest {
+  title: string;
+  description?: string | null;
+  severity: IncidentSeverity | string;
+  category: IncidentCategory | string;
+  assignedAdminId?: DbId | null;
+  assigned_admin_id?: DbId | null;
+  sourceType?: IncidentSourceType | string;
+  source_type?: IncidentSourceType | string;
+  sourceRefId?: string | null;
+  source_ref_id?: string | null;
+  sourceContext?: DbRow;
+  source_context?: DbRow;
+}
+
+export interface UpdateIncidentStatusRequest {
+  status: IncidentStatus | string;
+  note?: string | null;
+}
+
+export interface AssignIncidentRequest {
+  assignedAdminId?: DbId | null;
+  assigned_admin_id?: DbId | null;
+  note?: string | null;
+}
+
+export interface AddIncidentNoteRequest {
+  note: string;
+  metadata?: DbRow;
+}
+
+export interface AddIncidentPostmortemRequest {
+  rootCause?: string;
+  root_cause?: string;
+  impactSummary?: string;
+  impact_summary?: string;
+  detectionMethod?: string;
+  detection_method?: string;
+  resolutionSummary?: string;
+  resolution_summary?: string;
+  followUpActions?: string;
+  follow_up_actions?: string;
+  metadata?: DbRow;
+}
+
+export type IncidentCenterResponse = ApiResponse<{ incidentCenter: IncidentCenterData }>;
+export type IncidentDetailResponse = ApiResponse<{ incident: IncidentDetailData }>;
 
 export interface GovernanceDashboardSource {
   table: string;
@@ -2705,6 +2900,73 @@ export const apiContracts = {
       response: "CsvDownloadResponse",
       statusCodes: [200, 400, 401, 403, 500],
       notes: "Returns text/csv with sanitized metadata and no raw gateway payloads, signatures, tokens, or secrets.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/incidents",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "IncidentQuery", body: "NoRequestBody" },
+      response: "IncidentCenterResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Read-only incident center list, summary, and reporting metrics derived from immutable incident events.",
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/incidents",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateIncidentRequest" },
+      response: "IncidentDetailResponse",
+      statusCodes: [201, 400, 401, 403, 409, 500],
+      notes: "Creates an operational response record only; it does not mutate queues, payments, trust, moderation, or notification systems.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/incidents/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "IncidentDetailResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/incidents/:id/status",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateIncidentStatusRequest" },
+      response: "IncidentDetailResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/incidents/:id/assignment",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "AssignIncidentRequest" },
+      response: "IncidentDetailResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/incidents/:id/notes",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "AddIncidentNoteRequest" },
+      response: "IncidentDetailResponse",
+      statusCodes: [201, 400, 401, 403, 404, 500],
+      notes: "Adds an immutable attributed investigation note.",
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/incidents/:id/postmortem",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "AddIncidentPostmortemRequest" },
+      response: "IncidentDetailResponse",
+      statusCodes: [201, 400, 401, 403, 404, 409, 500],
+      notes: "Creates one immutable postmortem after RESOLVED or CLOSED status.",
     },
     {
       method: "GET",

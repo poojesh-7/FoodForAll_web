@@ -1471,6 +1471,18 @@ export interface CreateIncidentRequest {
   source_context?: DbRow;
 }
 
+export interface ActiveIncidentConflict {
+  id: DbId;
+  status: IncidentStatus | string;
+  title: string;
+}
+
+export interface ActiveIncidentConflictResponse {
+  error: "Active incident already exists" | string;
+  code: "ACTIVE_INCIDENT_EXISTS";
+  activeIncident: ActiveIncidentConflict;
+}
+
 export interface UpdateIncidentStatusRequest {
   status: IncidentStatus | string;
   note?: string | null;

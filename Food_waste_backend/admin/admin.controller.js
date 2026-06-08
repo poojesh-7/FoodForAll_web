@@ -651,6 +651,13 @@ exports.createIncident = async (req, res) => {
       adminId: req.user?.id,
       title: req.body?.title,
     });
+    if (err.code === "ACTIVE_INCIDENT_EXISTS") {
+      return res.status(409).json({
+        error: "Active incident already exists",
+        code: "ACTIVE_INCIDENT_EXISTS",
+        activeIncident: err.activeIncident,
+      });
+    }
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to create incident",
     });

@@ -9,9 +9,10 @@ const {
 const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
 const INCIDENT_ID = "22222222-2222-4222-8222-222222222222";
 
-function createFakeClient({ status = "OPEN" } = {}) {
+function createFakeClient({ status = "OPEN", existingSourceStatus = null } = {}) {
   const calls = [];
   const eventInserts = [];
+  const recordInserts = [];
   const incident = {
     id: INCIDENT_ID,
     title: "Notification outage",
@@ -38,10 +39,19 @@ function createFakeClient({ status = "OPEN" } = {}) {
     postmortem_created_at: null,
     status,
   };
+  const existingSourceIncident = existingSourceStatus
+    ? {
+        ...incident,
+        id: "33333333-3333-4333-8333-333333333333",
+        title: "Existing payment diagnostic",
+        status: existingSourceStatus,
+      }
+    : null;
 
   return {
     calls,
     eventInserts,
+    recordInserts,
     async query(sql, params = []) {
       calls.push({ sql, params });
 
@@ -62,7 +72,28 @@ function createFakeClient({ status = "OPEN" } = {}) {
         };
       }
 
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [{}] };
+      }
+
+      if (
+        sql.includes("WHERE ir.source_type=$1 AND ir.source_ref_id=$2") &&
+        sql.includes("FROM incident_state")
+      ) {
+        if (
+          existingSourceIncident &&
+          ["OPEN", "INVESTIGATING", "IDENTIFIED", "MITIGATING"].includes(
+            existingSourceIncident.status
+          )
+        ) {
+          return { rows: [existingSourceIncident] };
+        }
+
+        return { rows: [] };
+      }
+
       if (sql.includes("INSERT INTO incident_records")) {
+        recordInserts.push({ sql, params });
         return { rows: [{ ...incident, title: params[0], status: "OPEN" }] };
       }
 
@@ -134,6 +165,105 @@ test("incident creation records response context without operational remediation
     client.calls.some(({ sql }) => /\bUPDATE\b|\bDELETE\b/.test(sql)),
     false
   );
+});
+
+test("incident creation rejects duplicate active source identity", async () => {
+  const client = createFakeClient({ existingSourceStatus: "INVESTIGATING" });
+
+  await assert.rejects(
+    () =>
+      createIncident({
+        client,
+        adminId: ADMIN_ID,
+        title: "Payment monitoring issue",
+        severity: "SEV2",
+        category: "PAYMENTS",
+        sourceType: "financial_diagnostic",
+        sourceRefId: "payment-monitoring-24-hours",
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 409);
+      assert.equal(err.code, "ACTIVE_INCIDENT_EXISTS");
+      assert.equal(
+        err.activeIncident.id,
+        "33333333-3333-4333-8333-333333333333"
+      );
+      assert.equal(err.activeIncident.status, "INVESTIGATING");
+      assert.equal(err.activeIncident.title, "Existing payment diagnostic");
+      return true;
+    }
+  );
+
+  assert.equal(client.recordInserts.length, 0);
+  assert.equal(client.eventInserts.length, 0);
+});
+
+test("incident creation allows recurrence after resolved source identity", async () => {
+  const client = createFakeClient({ existingSourceStatus: "RESOLVED" });
+
+  const detail = await createIncident({
+    client,
+    adminId: ADMIN_ID,
+    title: "Payment monitoring issue",
+    severity: "SEV2",
+    category: "PAYMENTS",
+    sourceType: "financial_diagnostic",
+    sourceRefId: "payment-monitoring-24-hours",
+  });
+
+  assert.equal(detail.incident.id, INCIDENT_ID);
+  assert.equal(client.recordInserts.length, 1);
+  assert.equal(client.eventInserts.length, 1);
+});
+
+test("incident creation locks source identity before active duplicate check", async () => {
+  const client = createFakeClient();
+
+  await createIncident({
+    client,
+    adminId: ADMIN_ID,
+    title: "Payment monitoring issue",
+    severity: "SEV2",
+    category: "PAYMENTS",
+    sourceType: "financial_diagnostic",
+    sourceRefId: "payment-monitoring-24-hours",
+  });
+
+  const lockIndex = client.calls.findIndex(({ sql }) =>
+    sql.includes("pg_advisory_xact_lock")
+  );
+  const duplicateCheckIndex = client.calls.findIndex(({ sql }) =>
+    sql.includes("WHERE ir.source_type=$1 AND ir.source_ref_id=$2")
+  );
+  const insertIndex = client.calls.findIndex(({ sql }) =>
+    sql.includes("INSERT INTO incident_records")
+  );
+
+  assert.notEqual(lockIndex, -1);
+  assert.notEqual(duplicateCheckIndex, -1);
+  assert.notEqual(insertIndex, -1);
+  assert.ok(lockIndex < duplicateCheckIndex);
+  assert.ok(duplicateCheckIndex < insertIndex);
+});
+
+test("incident creation skips source lock for manual incidents without reference", async () => {
+  const client = createFakeClient();
+
+  await createIncident({
+    client,
+    adminId: ADMIN_ID,
+    title: "Manual incident",
+    severity: "SEV4",
+    category: "OTHER",
+    sourceType: "manual",
+    sourceRefId: null,
+  });
+
+  assert.equal(
+    client.calls.some(({ sql }) => sql.includes("pg_advisory_xact_lock")),
+    false
+  );
+  assert.equal(client.recordInserts.length, 1);
 });
 
 test("incident status transitions reject invalid lifecycle jumps", async () => {

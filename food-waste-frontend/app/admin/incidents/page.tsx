@@ -21,6 +21,7 @@ import { formatGovernanceDate } from "@/lib/governanceFormatting";
 import { adminService } from "@/services/admin.service";
 import type {
   DbId,
+  ActiveIncidentConflict,
   IncidentCategory,
   IncidentCenterData,
   IncidentDetailData,
@@ -259,6 +260,8 @@ export default function AdminIncidentsPage() {
   const [submitting, setSubmitting] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [duplicateConflict, setDuplicateConflict] =
+    useState<ActiveIncidentConflict | null>(null);
 
   const [filters, setFilters] = useState({
     q: searchParams.get("q") || "",
@@ -385,6 +388,7 @@ export default function AdminIncidentsPage() {
       setSubmitting("create");
       setError("");
       setSuccess("");
+      setDuplicateConflict(null);
       const created = await adminService.createIncident({
         title: createForm.title,
         description: createForm.description,
@@ -400,6 +404,16 @@ export default function AdminIncidentsPage() {
       setSelectedId(created.incident.id);
       await loadIncidents();
     } catch (err) {
+      const activeIncident = adminService.getActiveIncidentConflict(err);
+      if (activeIncident) {
+        setError("");
+        setSuccess("");
+        setDuplicateConflict(activeIncident);
+        setSelectedId(activeIncident.id);
+        await loadDetail(activeIncident.id);
+        await loadIncidents();
+        return;
+      }
       setError(adminService.getErrorMessage(err));
     } finally {
       setSubmitting("");
@@ -412,6 +426,7 @@ export default function AdminIncidentsPage() {
     try {
       setSubmitting("status");
       setError("");
+      setDuplicateConflict(null);
       const updated = await adminService.updateIncidentStatus(detail.incident.id, {
         status: statusForm.status,
         note: statusForm.note,
@@ -434,6 +449,7 @@ export default function AdminIncidentsPage() {
     try {
       setSubmitting("assignment");
       setError("");
+      setDuplicateConflict(null);
       const updated = await adminService.assignIncident(detail.incident.id, {
         assignedAdminId: assignmentForm.assignedAdminId || null,
         note: assignmentForm.note,
@@ -454,6 +470,7 @@ export default function AdminIncidentsPage() {
     try {
       setSubmitting("note");
       setError("");
+      setDuplicateConflict(null);
       const updated = await adminService.addIncidentNote(detail.incident.id, {
         note: noteText,
       });
@@ -474,6 +491,7 @@ export default function AdminIncidentsPage() {
     try {
       setSubmitting("postmortem");
       setError("");
+      setDuplicateConflict(null);
       const updated = await adminService.addIncidentPostmortem(
         detail.incident.id,
         postmortem
@@ -511,6 +529,28 @@ export default function AdminIncidentsPage() {
     >
       {error && <AdminStateBlock title={error} tone="error" />}
       {success && <AdminStateBlock title={success} />}
+      {duplicateConflict && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold">Active incident already exists.</p>
+              <p className="mt-1">
+                {String(duplicateConflict.id)} | {label(duplicateConflict.status)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedId(duplicateConflict.id);
+                void loadDetail(duplicateConflict.id);
+              }}
+              className="inline-flex min-h-10 items-center justify-center rounded-md border border-amber-300 bg-white px-3 font-medium text-amber-950 transition hover:bg-amber-100"
+            >
+              Open Existing Incident
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <AdminMetricCard

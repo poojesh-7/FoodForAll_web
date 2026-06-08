@@ -1,6 +1,8 @@
 import api from "@/lib/axios";
 import { getErrorMessage } from "@/services/auth";
 import type {
+  ActiveIncidentConflict,
+  ActiveIncidentConflictResponse,
   AdminOperationalSummary,
   AdminOperationalSummaryResponse,
   AdminOperationalAlert,
@@ -118,6 +120,7 @@ export type AdminGovernanceDashboard = GovernanceDashboardData;
 export type AdminAuditCenter = AuditCenterData;
 export type AdminIncidentCenter = IncidentCenterData;
 export type AdminIncidentDetail = IncidentDetailData;
+export type AdminActiveIncidentConflict = ActiveIncidentConflict;
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -254,6 +257,34 @@ export async function getSecurityEvents(): Promise<AdminSecurityEvent[]> {
   >("/admin/operations/security-events");
 
   return getEnvelopeData<{ events: AdminSecurityEvent[] }>(data).events;
+}
+
+export function getActiveIncidentConflict(
+  error: unknown
+): AdminActiveIncidentConflict | null {
+  const responseData = (
+    error as {
+      response?: {
+        data?: ActiveIncidentConflictResponse | unknown;
+      };
+    }
+  )?.response?.data;
+
+  if (
+    responseData &&
+    typeof responseData === "object" &&
+    "code" in responseData &&
+    (responseData as { code?: unknown }).code === "ACTIVE_INCIDENT_EXISTS" &&
+    "activeIncident" in responseData
+  ) {
+    const activeIncident = (responseData as ActiveIncidentConflictResponse)
+      .activeIncident;
+    if (activeIncident?.id && activeIncident.status && activeIncident.title) {
+      return activeIncident;
+    }
+  }
+
+  return null;
 }
 
 export async function getOperationalMonitoring(
@@ -602,5 +633,6 @@ export const adminService = {
   recordAdminTrustAction,
   getBullBoardUrl,
   getAssetUrl,
+  getActiveIncidentConflict,
   getErrorMessage,
 };

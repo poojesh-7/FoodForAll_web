@@ -15,6 +15,13 @@ const INCIDENT_STATUSES = new Set([
   "CLOSED",
 ]);
 
+const ACTIVE_INCIDENT_STATUSES = new Set([
+  "OPEN",
+  "INVESTIGATING",
+  "IDENTIFIED",
+  "MITIGATING",
+]);
+
 const INCIDENT_SEVERITIES = new Set(["SEV1", "SEV2", "SEV3", "SEV4"]);
 const INCIDENT_CATEGORIES = new Set([
   "INFRASTRUCTURE",
@@ -82,9 +89,10 @@ const ANALYSIS = {
   ],
 };
 
-function withStatus(message, statusCode) {
+function withStatus(message, statusCode, extra = {}) {
   const error = new Error(message);
   error.statusCode = statusCode;
+  Object.assign(error, extra);
   return error;
 }
 
@@ -367,6 +375,37 @@ async function getIncidentState({ client = pool, incidentId, forUpdate = false }
   return normalizeIncidentRow(result.rows[0]);
 }
 
+async function lockIncidentSourceIdentity({ client, sourceType, sourceRefId }) {
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+    [sourceType, sourceRefId]
+  );
+}
+
+async function getActiveIncidentBySource({
+  client = pool,
+  sourceType,
+  sourceRefId,
+} = {}) {
+  if (!sourceRefId) return null;
+
+  const result = await client.query(
+    `
+    ${incidentStateCte({
+      whereSql: "WHERE ir.source_type=$1 AND ir.source_ref_id=$2",
+    })}
+    SELECT *
+    FROM incident_state
+    WHERE status IN ('OPEN','INVESTIGATING','IDENTIFIED','MITIGATING')
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+    `,
+    [sourceType, sourceRefId]
+  );
+
+  return normalizeIncidentRow(result.rows[0]);
+}
+
 async function getIncidentEvents({ client = pool, incidentId }) {
   const result = await client.query(
     `
@@ -605,11 +644,41 @@ async function createIncident({
     throw withStatus("Incident title is required", 400);
   }
 
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  const normalizedSourceRefId = normalizeOptionalText(sourceRefId, {
+    maxLength: 160,
+  });
+
   const normalizedAssignedAdminId = normalizeOptionalId(
     assignedAdminId,
     "assigned admin id"
   );
   await assertAssignableAdmin({ client, adminId: normalizedAssignedAdminId });
+
+  if (normalizedSourceRefId) {
+    await lockIncidentSourceIdentity({
+      client,
+      sourceType: normalizedSourceType,
+      sourceRefId: normalizedSourceRefId,
+    });
+
+    const activeIncident = await getActiveIncidentBySource({
+      client,
+      sourceType: normalizedSourceType,
+      sourceRefId: normalizedSourceRefId,
+    });
+
+    if (activeIncident) {
+      throw withStatus("Active incident already exists", 409, {
+        code: "ACTIVE_INCIDENT_EXISTS",
+        activeIncident: {
+          id: activeIncident.id,
+          status: activeIncident.status,
+          title: activeIncident.title,
+        },
+      });
+    }
+  }
 
   const incidentResult = await client.query(
     `
@@ -635,8 +704,8 @@ async function createIncident({
       normalizeSeverity(severity),
       normalizeCategory(category),
       adminId,
-      normalizeSourceType(sourceType),
-      normalizeOptionalText(sourceRefId, { maxLength: 160 }),
+      normalizedSourceType,
+      normalizedSourceRefId,
       JSON.stringify(normalizeMetadata(sourceContext, "source context")),
     ]
   );
@@ -971,6 +1040,7 @@ async function addIncidentPostmortem({
 
 module.exports = {
   ANALYSIS,
+  ACTIVE_INCIDENT_STATUSES,
   INCIDENT_CATEGORIES,
   INCIDENT_SEVERITIES,
   INCIDENT_SOURCE_TYPES,

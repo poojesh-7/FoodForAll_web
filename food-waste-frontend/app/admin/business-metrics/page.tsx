@@ -187,7 +187,7 @@ function PeriodSummaryTable({
         <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
           <tr>
             <th className="px-4 py-3 font-semibold">Window</th>
-            <th className="px-4 py-3 font-semibold">Listings</th>
+            <th className="px-4 py-3 font-semibold">Food Listings Created</th>
             <th className="px-4 py-3 font-semibold">Reservations</th>
             <th className="px-4 py-3 font-semibold">Pickups</th>
             <th className="px-4 py-3 font-semibold">Deliveries</th>
@@ -219,7 +219,7 @@ function TrendTable({ series }: { series: BusinessTrendPoint[] }) {
         <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
           <tr>
             <th className="px-4 py-3 font-semibold">Date</th>
-            <th className="px-4 py-3 font-semibold">Listings</th>
+            <th className="px-4 py-3 font-semibold">Listings Created</th>
             <th className="px-4 py-3 font-semibold">Reservations</th>
             <th className="px-4 py-3 font-semibold">Deliveries</th>
             <th className="px-4 py-3 font-semibold">Reports</th>
@@ -395,6 +395,38 @@ export default function BusinessMetricsPage() {
             <PeriodSummaryTable summaries={metrics.platform.period_summaries || []} />
           </SectionPanel>
 
+          <SectionPanel
+            title="Current Listing Inventory"
+            icon={<Database className="h-4 w-4 text-zinc-600" aria-hidden="true" />}
+            source={metrics.listing_inventory.source}
+          >
+            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricTile
+                label="Active Listings"
+                value={metrics.listing_inventory.active_listings}
+                detail="Available now"
+                tone="emerald"
+              />
+              <MetricTile
+                label="Archived Listings"
+                value={metrics.listing_inventory.archived_listings}
+                detail="Deleted or archived"
+              />
+              <MetricTile
+                label="Expired Listings"
+                value={metrics.listing_inventory.expired_listings}
+                detail="Past pickup window"
+                tone="amber"
+              />
+              <MetricTile
+                label="Fulfilled Listings"
+                value={metrics.listing_inventory.fulfilled_listings}
+                detail="Completed or zero remaining"
+                tone="blue"
+              />
+            </div>
+          </SectionPanel>
+
           <section className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
             <SectionPanel
               title="Food Rescue Metrics"
@@ -533,7 +565,7 @@ export default function BusinessMetricsPage() {
             source={metrics.trend_analytics.source}
           >
             <div className="grid gap-3 border-b border-zinc-100 p-4 sm:grid-cols-5">
-              <MetricTile label="Listings" value={trendTotals.listings} />
+              <MetricTile label="Listings Created" value={trendTotals.listings} />
               <MetricTile label="Reservations" value={trendTotals.reservations} />
               <MetricTile label="Deliveries" value={trendTotals.deliveries} />
               <MetricTile label="Reports" value={trendTotals.reports} />

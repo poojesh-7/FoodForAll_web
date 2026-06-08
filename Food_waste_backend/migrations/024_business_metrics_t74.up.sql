@@ -1,11 +1,9 @@
 CREATE INDEX IF NOT EXISTS idx_business_metrics_food_listings_created
-  ON food_listings (created_at DESC, id DESC)
-  WHERE COALESCE(is_deleted, false) = false;
+  ON food_listings (created_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_business_metrics_food_listings_provider_created
   ON food_listings (provider_id, created_at DESC)
-  WHERE provider_id IS NOT NULL
-  AND COALESCE(is_deleted, false) = false;
+  WHERE provider_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_business_metrics_reservations_reserved
   ON reservations (reserved_at DESC, id DESC);

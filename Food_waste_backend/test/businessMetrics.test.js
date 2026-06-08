@@ -41,6 +41,19 @@ function createClient() {
         };
       }
 
+      if (sql.includes("active_listings")) {
+        return {
+          rows: [
+            {
+              active_listings: 7,
+              archived_listings: 2,
+              expired_listings: 3,
+              fulfilled_listings: 4,
+            },
+          ],
+        };
+      }
+
       if (sql.includes("active_providers")) {
         return {
           rows: [
@@ -246,6 +259,8 @@ test("business metrics aggregate dashboard data without mutating business state"
   assert.equal(metrics.filters.period, "90d");
   assert.equal(metrics.platform.selected.total_food_listings, 12);
   assert.equal(metrics.platform.period_summaries.length, 5);
+  assert.equal(metrics.listing_inventory.active_listings, 7);
+  assert.equal(metrics.listing_inventory.archived_listings, 2);
   assert.equal(metrics.food_rescue.total_food_rescued, 42);
   assert.equal(metrics.food_rescue.unit, "platform_quantity_units");
   assert.equal(metrics.provider_participation.counts.active_providers, 5);
@@ -257,6 +272,12 @@ test("business metrics aggregate dashboard data without mutating business state"
   assert.equal(metrics.governance_insights.reports_validated, 2);
   assert.equal(metrics.financial_insights.recalculates_ledgers, false);
   assert.equal(metrics.trend_analytics.series.length, 1);
+  assert.equal(
+    client.calls
+      .filter((call) => call.sql.includes("total_food_listings"))
+      .every((call) => !/is_deleted|deleted_at|status\s*=\s*'deleted'/i.test(call.sql)),
+    true
+  );
   assert.equal(hasMutation(client.calls), false);
 });
 
@@ -277,6 +298,8 @@ test("business metrics CSV export carries dashboard values and source lineage", 
   const csv = businessMetricsToCsv(metrics);
 
   assert.match(csv, /platform_overview/);
+  assert.match(csv, /listing_inventory/);
+  assert.match(csv, /active_listings/);
   assert.match(csv, /total_food_rescued/);
   assert.match(csv, /platform_quantity_units/);
   assert.match(csv, /provider_settlements/);

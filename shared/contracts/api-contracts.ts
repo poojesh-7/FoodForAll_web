@@ -1267,6 +1267,13 @@ export interface AuditCenterAnalysis {
   reuse: string[];
   risks: string[];
   schemaChanges: string[];
+  metricDefinitions?: Array<{
+    metric: string;
+    classification: string;
+    current_definition: string;
+    intended_definition: string;
+    aligned: boolean;
+  }>;
 }
 
 export interface AuditCenterPagination {
@@ -1354,6 +1361,15 @@ export interface BusinessPlatformOverview {
   selected: BusinessPlatformPeriodSummary;
   period_summaries: BusinessPlatformPeriodSummary[];
   cards: BusinessMetricCard[];
+}
+
+export interface BusinessListingInventory {
+  active_listings: number | string;
+  archived_listings: number | string;
+  expired_listings: number | string;
+  fulfilled_listings: number | string;
+  source: BusinessMetricSource;
+  classification: string;
 }
 
 export interface BusinessFoodRescueMetrics {
@@ -1482,6 +1498,7 @@ export interface BusinessMetricsData {
   informational_only: boolean;
   enforcement_action?: null;
   platform: BusinessPlatformOverview;
+  listing_inventory: BusinessListingInventory;
   food_rescue: BusinessFoodRescueMetrics;
   provider_participation: BusinessProviderParticipation;
   ngo_participation: BusinessNgoParticipation;

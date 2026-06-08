@@ -18,6 +18,8 @@ const ANALYSIS = {
     "Business Metrics is a read-only analytics layer over existing reservation, listing, trust, governance, and financial read models.",
     "The service owns no workflow state and does not call trust, reservation, settlement, moderation, queue, or payment mutation paths.",
     "All dashboard and export values use the same service queries so CSV/JSON exports match the displayed metrics.",
+    "Historical activity metrics are window-based and use creation/completion timestamps without inventory visibility filters.",
+    "Current inventory metrics are separate current-state counts using existing listing visibility and lifecycle fields.",
     "Food rescued uses reservation quantity_reserved, which is the existing listing quantity unit reserved from food_listings.quantity.",
     "Export actions are recorded through operational_events for auditability; metric values themselves remain derived.",
   ],
@@ -26,6 +28,7 @@ const ANALYSIS = {
     "Provider and NGO verification has current state but no verified_at timestamp, so period filters use profile creation time for verified entity counts.",
     "Volunteer delivery outcomes are stored on reservations, not a dedicated delivery table.",
     "Financial reporting uses settlement and refund terminal tables; Business Metrics does not recompute ledger balances.",
+    "T7.4 initially counted non-deleted listings under the Total Food Listings label; T7.4.1 separates historical listing creation from current inventory state.",
   ],
   reuse: [
     "Listings: food_listings.quantity, remaining_quantity, status, created_at, provider_id.",
@@ -47,6 +50,127 @@ const ANALYSIS = {
   schemaChanges: [
     "No Business Metrics tables are created.",
     "Migration 024 adds indexes only for dashboard timestamp/status lookups.",
+  ],
+  metricDefinitions: [
+    {
+      metric: "Total Food Listings",
+      classification: "Historical Activity Metrics",
+      current_definition: "T7.4 used non-deleted food_listings created within period.",
+      intended_definition: "COUNT(*) from food_listings where created_at is within the selected period; all time has no visibility filter.",
+      aligned: true,
+    },
+    {
+      metric: "Active Listings",
+      classification: "Current Inventory Metrics",
+      current_definition: "Not surfaced separately in T7.4.",
+      intended_definition: "COUNT(*) where listing is not deleted, status is active, pickup window is open, and remaining_quantity is positive.",
+      aligned: true,
+    },
+    {
+      metric: "Archived Listings",
+      classification: "Current Inventory Metrics",
+      current_definition: "Not surfaced separately in T7.4.",
+      intended_definition: "COUNT(*) where is_deleted is true, deleted_at is present, or status is deleted.",
+      aligned: true,
+    },
+    {
+      metric: "Expired Listings",
+      classification: "Current Inventory Metrics",
+      current_definition: "Not surfaced separately in T7.4.",
+      intended_definition: "COUNT(*) where listing is not archived and status is expired or active pickup_end_time is in the past.",
+      aligned: true,
+    },
+    {
+      metric: "Fulfilled Listings",
+      classification: "Current Inventory Metrics",
+      current_definition: "Not surfaced separately in T7.4.",
+      intended_definition: "COUNT(*) where listing is not archived and status is completed or remaining_quantity is zero.",
+      aligned: true,
+    },
+    {
+      metric: "Total Reservations",
+      classification: "Historical Activity Metrics",
+      current_definition: "COUNT(*) from reservations by reserved_at window.",
+      intended_definition: "COUNT(*) from reservations by reserved_at window.",
+      aligned: true,
+    },
+    {
+      metric: "Completed Pickups",
+      classification: "Historical Activity Metrics",
+      current_definition: "COUNT(*) from reservations by picked_up_at window.",
+      intended_definition: "COUNT(*) from reservations by picked_up_at window.",
+      aligned: true,
+    },
+    {
+      metric: "Completed Deliveries",
+      classification: "Historical Activity Metrics",
+      current_definition: "COUNT(*) from delivered/volunteer reservations by completed_at window.",
+      intended_definition: "COUNT(*) from delivered/volunteer reservations by completed_at window.",
+      aligned: true,
+    },
+    {
+      metric: "Food Rescued",
+      classification: "Historical Activity Metrics",
+      current_definition: "SUM(quantity_reserved) from completed/picked-up reservations by completion/pickup window.",
+      intended_definition: "SUM(quantity_reserved) from completed/picked-up reservations by completion/pickup window.",
+      aligned: true,
+    },
+    {
+      metric: "Provider Participation",
+      classification: "Historical Activity Metrics",
+      current_definition: "Provider activity and rankings from listings/reservations/fulfillments within period.",
+      intended_definition: "Provider activity and rankings from listings/reservations/fulfillments within period, without archive filters for historical listing counts.",
+      aligned: true,
+    },
+    {
+      metric: "NGO Participation",
+      classification: "Historical Activity Metrics",
+      current_definition: "NGO activity and rankings from reservations/deliveries within period.",
+      intended_definition: "NGO activity and rankings from reservations/deliveries within period.",
+      aligned: true,
+    },
+    {
+      metric: "Volunteer Participation",
+      classification: "Historical Activity Metrics",
+      current_definition: "Volunteer assignment/completion metrics from reservations within period.",
+      intended_definition: "Volunteer assignment/completion metrics from reservations within period.",
+      aligned: true,
+    },
+    {
+      metric: "Reservation Performance",
+      classification: "Historical Activity Metrics",
+      current_definition: "Created/completed/cancelled/expired reservation counts by selected period.",
+      intended_definition: "Created/completed/cancelled/expired reservation counts by selected period.",
+      aligned: true,
+    },
+    {
+      metric: "Trust Insights",
+      classification: "Current Inventory Metrics",
+      current_definition: "Aggregate current trust_scores state.",
+      intended_definition: "Aggregate current trust_scores state only; no trust mutations or sensitive internals.",
+      aligned: true,
+    },
+    {
+      metric: "Governance Insights",
+      classification: "Historical Activity Metrics",
+      current_definition: "Reports, cases, and appeals by submission/review timestamps within period.",
+      intended_definition: "Reports, cases, and appeals by submission/review timestamps within period.",
+      aligned: true,
+    },
+    {
+      metric: "Financial Insights",
+      classification: "Historical Activity Metrics",
+      current_definition: "Settlement and refund terminal record counts within period.",
+      intended_definition: "Settlement and refund terminal record counts within period, reusing settlement tables.",
+      aligned: true,
+    },
+    {
+      metric: "Trend Analytics",
+      classification: "Historical Activity Metrics",
+      current_definition: "Daily listings/reservations/deliveries/reports/settlements within trend window.",
+      intended_definition: "Daily listings/reservations/deliveries/reports/settlements within trend window; listing trends count all created listings.",
+      aligned: true,
+    },
   ],
 };
 
@@ -145,8 +269,7 @@ async function getPlatformSummaryForPeriod(client, periodKey, generatedAt) {
       (
         SELECT COUNT(*)::int
         FROM food_listings fl
-        WHERE COALESCE(fl.is_deleted, false) = false
-        AND ${windowPredicate("fl.created_at")}
+        WHERE ${windowPredicate("fl.created_at")}
       ) AS total_food_listings,
       (
         SELECT COUNT(*)::int
@@ -204,7 +327,7 @@ async function getPlatformSummary({ client, filters, generatedAt }) {
         "total_food_listings",
         "Total Food Listings",
         selected.total_food_listings,
-        source("food_listings", "non-deleted listings created within period")
+        source("food_listings", "created_at within period; includes archived/deleted historical listings")
       ),
       metricCard(
         "total_reservations",
@@ -228,6 +351,60 @@ async function getPlatformSummary({ client, filters, generatedAt }) {
         )
       ),
     ],
+  };
+}
+
+async function getListingInventory({ client }) {
+  const row = await queryOne(
+    client,
+    `
+    SELECT
+      COUNT(*) FILTER (
+        WHERE COALESCE(is_deleted, false) = false
+        AND deleted_at IS NULL
+        AND status = 'active'
+        AND pickup_end_time > NOW()
+        AND remaining_quantity > 0
+      )::int AS active_listings,
+      COUNT(*) FILTER (
+        WHERE COALESCE(is_deleted, false) = true
+        OR deleted_at IS NOT NULL
+        OR status = 'deleted'
+      )::int AS archived_listings,
+      COUNT(*) FILTER (
+        WHERE COALESCE(is_deleted, false) = false
+        AND deleted_at IS NULL
+        AND (
+          status = 'expired'
+          OR (
+            status = 'active'
+            AND pickup_end_time <= NOW()
+          )
+        )
+      )::int AS expired_listings,
+      COUNT(*) FILTER (
+        WHERE COALESCE(is_deleted, false) = false
+        AND deleted_at IS NULL
+        AND (
+          status = 'completed'
+          OR remaining_quantity <= 0
+        )
+      )::int AS fulfilled_listings
+    FROM food_listings
+    `
+  );
+
+  return {
+    active_listings: toInt(row.active_listings),
+    archived_listings: toInt(row.archived_listings),
+    expired_listings: toInt(row.expired_listings),
+    fulfilled_listings: toInt(row.fulfilled_listings),
+    source: source(
+      "food_listings",
+      "current listing state using status, is_deleted, deleted_at, pickup_end_time, and remaining_quantity",
+      false
+    ),
+    classification: "Current Inventory Metrics",
   };
 }
 
@@ -274,7 +451,6 @@ async function getProviderParticipation({ client, startAt }) {
         SELECT COUNT(DISTINCT fl.provider_id)::int
         FROM food_listings fl
         WHERE fl.provider_id IS NOT NULL
-        AND COALESCE(fl.is_deleted, false) = false
         AND ${windowPredicate("fl.created_at")}
       ) AS active_providers,
       (
@@ -308,7 +484,6 @@ async function getProviderParticipation({ client, startAt }) {
         LIMIT 1
       ) restaurant ON true
       WHERE fl.provider_id IS NOT NULL
-      AND COALESCE(fl.is_deleted, false) = false
       AND ${windowPredicate("fl.created_at")}
       GROUP BY fl.provider_id, provider.name, restaurant.restaurant_name, restaurant.business_name
       ORDER BY listings DESC, provider_name ASC
@@ -381,7 +556,10 @@ async function getProviderParticipation({ client, startAt }) {
       by_reservations: byReservations.rows || [],
       by_fulfillments: byFulfillments.rows || [],
     },
-    source: source("users, restaurants, food_listings, reservations", "provider participation within period"),
+    source: source(
+      "users, restaurants, food_listings, reservations",
+      "provider participation within period; listing counts use created_at without inventory visibility filters"
+    ),
   };
 }
 
@@ -722,8 +900,7 @@ async function getTrendAnalytics({ client, filters, generatedAt }) {
     listing_counts AS (
       SELECT fl.created_at::date AS bucket, COUNT(*)::int AS count
       FROM food_listings fl
-      WHERE COALESCE(fl.is_deleted, false) = false
-      AND fl.created_at >= $1::timestamptz
+      WHERE fl.created_at >= $1::timestamptz
       GROUP BY fl.created_at::date
     ),
     reservation_counts AS (
@@ -792,6 +969,7 @@ async function getBusinessMetrics(options = {}) {
 
   const [
     platform,
+    listingInventory,
     foodRescue,
     providerParticipation,
     ngoParticipation,
@@ -803,6 +981,7 @@ async function getBusinessMetrics(options = {}) {
     trends,
   ] = await Promise.all([
     getPlatformSummary({ client, filters, generatedAt }),
+    getListingInventory({ client }),
     getFoodRescueMetrics({ client, startAt }),
     getProviderParticipation({ client, startAt }),
     getNgoParticipation({ client, startAt }),
@@ -821,6 +1000,7 @@ async function getBusinessMetrics(options = {}) {
     informational_only: true,
     enforcement_action: null,
     platform,
+    listing_inventory: listingInventory,
     food_rescue: foodRescue,
     provider_participation: providerParticipation,
     ngo_participation: ngoParticipation,
@@ -855,6 +1035,7 @@ function addMetricRows(rows, section, metrics, sourceInfo = {}) {
 function businessMetricsToCsv(metrics) {
   const rows = [];
   addMetricRows(rows, "platform_overview", metrics.platform?.selected, metrics.platform?.selected?.source);
+  addMetricRows(rows, "listing_inventory", metrics.listing_inventory, metrics.listing_inventory?.source);
   addMetricRows(rows, "food_rescue", metrics.food_rescue, metrics.food_rescue?.source);
   addMetricRows(rows, "provider_participation", metrics.provider_participation?.counts, metrics.provider_participation?.source);
   addMetricRows(rows, "ngo_participation", metrics.ngo_participation?.counts, metrics.ngo_participation?.source);

@@ -73,6 +73,11 @@ const {
   getAuditCenter: getAuditCenterService,
 } = require("../shared/services/auditCenter.service");
 const {
+  businessMetricsToCsv,
+  exportBusinessMetrics,
+  getBusinessMetrics: getBusinessMetricsService,
+} = require("../shared/services/businessMetrics.service");
+const {
   getOperationalMonitoring: getOperationalMonitoringService,
 } = require("../shared/services/operationalMonitoring.service");
 const {
@@ -1511,6 +1516,80 @@ exports.exportAuditCenterCsv = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to export audit center CSV",
+    });
+  }
+};
+
+exports.getBusinessMetrics = async (req, res) => {
+  try {
+    const metrics = await getBusinessMetricsService(req.query);
+    res.json({ metrics });
+  } catch (err) {
+    logger.error("Failed to fetch business metrics", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch business metrics",
+    });
+  }
+};
+
+async function recordBusinessMetricsExport(req, format, exported) {
+  logger.security("Business metrics exported", {
+    adminId: req.user?.id,
+    format,
+    period: exported?.filters?.period,
+  });
+  await recordOperationalEvent({
+    category: "governance",
+    severity: "info",
+    eventName: "business_metrics_exported",
+    metadata: {
+      adminId: req.user?.id,
+      format,
+      period: exported?.filters?.period,
+      window: exported?.window,
+      source: "business_metrics",
+      informational_only: true,
+      export_auditable: true,
+    },
+  });
+}
+
+exports.exportBusinessMetricsJson = async (req, res) => {
+  try {
+    const metricsExport = await exportBusinessMetrics(req.query);
+    await recordBusinessMetricsExport(req, "json", metricsExport);
+    res.setHeader("Content-Disposition", "attachment; filename=\"business-metrics-export.json\"");
+    res.json(metricsExport);
+  } catch (err) {
+    logger.error("Failed to export business metrics JSON", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to export business metrics JSON",
+    });
+  }
+};
+
+exports.exportBusinessMetricsCsv = async (req, res) => {
+  try {
+    const metricsExport = await exportBusinessMetrics(req.query);
+    await recordBusinessMetricsExport(req, "csv", metricsExport);
+    res.setHeader("Content-Disposition", "attachment; filename=\"business-metrics-export.csv\"");
+    res.type("text/csv").send(businessMetricsToCsv(metricsExport.metrics));
+  } catch (err) {
+    logger.error("Failed to export business metrics CSV", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to export business metrics CSV",
     });
   }
 };

@@ -62,6 +62,9 @@ router.get(
 router.get("/audit-center", adminCtrl.getAuditCenter);
 router.get("/audit-center/export.json", adminCtrl.exportAuditCenterJson);
 router.get("/audit-center/export.csv", adminCtrl.exportAuditCenterCsv);
+router.get("/business-metrics", adminCtrl.getBusinessMetrics);
+router.get("/business-metrics/export.json", adminCtrl.exportBusinessMetricsJson);
+router.get("/business-metrics/export.csv", adminCtrl.exportBusinessMetricsCsv);
 router.get("/incidents", adminCtrl.getIncidents);
 router.post("/incidents", adminActionLimiter, adminCtrl.createIncident);
 router.get("/incidents/:id", adminCtrl.getIncident);

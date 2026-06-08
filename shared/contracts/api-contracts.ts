@@ -1310,6 +1310,204 @@ export interface AuditCenterExportData {
 export type AuditCenterResponse = ApiResponse<AuditCenterDataEnvelope>;
 export type AuditCenterExportResponse = ApiResponse<AuditCenterExportData>;
 
+export type BusinessMetricsPeriod = "30d" | "90d" | "180d" | "365d" | "all";
+
+export interface BusinessMetricsQuery {
+  period?: BusinessMetricsPeriod | string;
+  window?: BusinessMetricsPeriod | string;
+  windowDays?: number | string;
+  window_days?: number | string;
+  days?: number | string;
+}
+
+export interface BusinessMetricSource {
+  table: string;
+  predicate: string;
+  windowed?: boolean;
+}
+
+export interface BusinessMetricsWindow {
+  period: BusinessMetricsPeriod | string;
+  label: string;
+  days?: number | null;
+  start_at?: ISODateString | null;
+  end_at: ISODateString;
+}
+
+export interface BusinessMetricCard {
+  id: string;
+  label: string;
+  value: number | string;
+  detail?: string | null;
+  source: BusinessMetricSource;
+}
+
+export interface BusinessPlatformPeriodSummary extends BusinessMetricsWindow {
+  total_food_listings: number | string;
+  total_reservations: number | string;
+  completed_pickups: number | string;
+  completed_deliveries: number | string;
+  source: BusinessMetricSource;
+}
+
+export interface BusinessPlatformOverview {
+  selected: BusinessPlatformPeriodSummary;
+  period_summaries: BusinessPlatformPeriodSummary[];
+  cards: BusinessMetricCard[];
+}
+
+export interface BusinessFoodRescueMetrics {
+  total_food_rescued: number | string;
+  unit: string;
+  basis: string;
+  completed_reservations: number | string;
+  source_listing_quantity_total: number | string;
+  source: BusinessMetricSource;
+}
+
+export interface BusinessRankingRow extends DbRow {
+  provider_id?: DbId;
+  provider_name?: string | null;
+  ngo_user_id?: DbId;
+  ngo_name?: string | null;
+  volunteer_id?: DbId;
+  volunteer_name?: string | null;
+  listings?: number | string;
+  reservations?: number | string;
+  fulfillments?: number | string;
+  deliveries?: number | string;
+}
+
+export interface BusinessProviderParticipation {
+  counts: {
+    active_providers: number | string;
+    new_providers: number | string;
+    verified_providers: number | string;
+  };
+  top_providers: {
+    by_listings: BusinessRankingRow[];
+    by_reservations: BusinessRankingRow[];
+    by_fulfillments: BusinessRankingRow[];
+  };
+  source: BusinessMetricSource;
+}
+
+export interface BusinessNgoParticipation {
+  counts: {
+    active_ngos: number | string;
+    new_ngos: number | string;
+    verified_ngos: number | string;
+    successful_deliveries: number | string;
+  };
+  top_ngos: {
+    by_reservations: BusinessRankingRow[];
+    by_deliveries: BusinessRankingRow[];
+  };
+  source: BusinessMetricSource;
+}
+
+export interface BusinessVolunteerParticipation {
+  counts: {
+    active_volunteers: number | string;
+    completed_deliveries: number | string;
+    completion_rate: number | string;
+  };
+  top_volunteers: {
+    by_deliveries: BusinessRankingRow[];
+  };
+  source: BusinessMetricSource;
+}
+
+export interface BusinessReservationPerformance {
+  created: number | string;
+  completed: number | string;
+  cancelled: number | string;
+  expired: number | string;
+  completion_rate: number | string;
+  cancellation_rate: number | string;
+  source: BusinessMetricSource;
+}
+
+export interface BusinessTrustInsights {
+  average_trust_score: number | string;
+  restricted_entities: number | string;
+  cooldown_entities: number | string;
+  deposit_multiplier_distribution: Array<{ bucket: string; count: number | string }>;
+  source: BusinessMetricSource;
+  informational_only: boolean;
+  enforcement_action?: null;
+}
+
+export interface BusinessGovernanceInsights {
+  reports_submitted: number | string;
+  reports_validated: number | string;
+  reports_dismissed: number | string;
+  moderation_cases: number | string;
+  appeals_submitted: number | string;
+  appeals_accepted: number | string;
+  appeals_rejected: number | string;
+  source: BusinessMetricSource;
+  informational_only: boolean;
+  enforcement_action?: null;
+}
+
+export interface BusinessFinancialInsights {
+  settlements_generated: number | string;
+  settlements_completed: number | string;
+  refunds_processed: number | string;
+  source: BusinessMetricSource;
+  recalculates_ledgers: boolean;
+}
+
+export interface BusinessTrendPoint {
+  bucket: string;
+  listings: number | string;
+  reservations: number | string;
+  deliveries: number | string;
+  reports: number | string;
+  settlements: number | string;
+}
+
+export interface BusinessTrendAnalytics {
+  period: BusinessMetricsPeriod | string;
+  window: BusinessMetricsWindow;
+  series: BusinessTrendPoint[];
+  source: BusinessMetricSource;
+}
+
+export interface BusinessMetricsData {
+  generated_at: ISODateString;
+  filters: { period: BusinessMetricsPeriod | string };
+  window: BusinessMetricsWindow;
+  informational_only: boolean;
+  enforcement_action?: null;
+  platform: BusinessPlatformOverview;
+  food_rescue: BusinessFoodRescueMetrics;
+  provider_participation: BusinessProviderParticipation;
+  ngo_participation: BusinessNgoParticipation;
+  volunteer_participation: BusinessVolunteerParticipation;
+  reservation_performance: BusinessReservationPerformance;
+  trust_insights: BusinessTrustInsights;
+  governance_insights: BusinessGovernanceInsights;
+  financial_insights: BusinessFinancialInsights;
+  trend_analytics: BusinessTrendAnalytics;
+  analysis: AuditCenterAnalysis;
+}
+
+export interface BusinessMetricsDataEnvelope {
+  metrics: BusinessMetricsData;
+}
+
+export interface BusinessMetricsExportData {
+  generated_at: ISODateString;
+  filters: BusinessMetricsData["filters"];
+  window: BusinessMetricsWindow;
+  metrics: BusinessMetricsData;
+}
+
+export type BusinessMetricsResponse = ApiResponse<BusinessMetricsDataEnvelope>;
+export type BusinessMetricsExportResponse = ApiResponse<BusinessMetricsExportData>;
+
 export type IncidentStatus =
   | "OPEN"
   | "INVESTIGATING"
@@ -2912,6 +3110,36 @@ export const apiContracts = {
       response: "CsvDownloadResponse",
       statusCodes: [200, 400, 401, 403, 500],
       notes: "Returns text/csv with sanitized metadata and no raw gateway payloads, signatures, tokens, or secrets.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/business-metrics",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "BusinessMetricsQuery", body: "NoRequestBody" },
+      response: "BusinessMetricsResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Read-only T7.4 dashboard metrics derived from existing listings, reservations, trust, governance, and financial sources.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/business-metrics/export.json",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "BusinessMetricsQuery", body: "NoRequestBody" },
+      response: "BusinessMetricsExportResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Returns a downloadable JSON payload and records an auditable export action in operational_events.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/business-metrics/export.csv",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "BusinessMetricsQuery", body: "NoRequestBody" },
+      response: "CsvDownloadResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "Returns text/csv generated from the same read-only metrics model and records an auditable export action.",
     },
     {
       method: "GET",

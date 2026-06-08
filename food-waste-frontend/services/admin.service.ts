@@ -19,6 +19,9 @@ import type {
   AuditCenterData,
   AuditCenterQuery,
   AuditCenterResponse,
+  BusinessMetricsData,
+  BusinessMetricsQuery,
+  BusinessMetricsResponse,
   CreateIncidentRequest,
   DbId,
   GovernanceEscalationAnalytics,
@@ -118,6 +121,7 @@ export type AdminModerationAppeal = ModerationAppealRow;
 export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
 export type AdminGovernanceDashboard = GovernanceDashboardData;
 export type AdminAuditCenter = AuditCenterData;
+export type AdminBusinessMetrics = BusinessMetricsData;
 export type AdminIncidentCenter = IncidentCenterData;
 export type AdminIncidentDetail = IncidentDetailData;
 export type AdminActiveIncidentConflict = ActiveIncidentConflict;
@@ -134,6 +138,7 @@ export type AuditCenterParams = AuditCenterQuery & {
   domain?: string;
   domains?: string;
 };
+export type BusinessMetricsParams = BusinessMetricsQuery;
 export type OperationalMonitoringParams = OperationalMonitoringQuery;
 export type IncidentParams = IncidentQuery;
 
@@ -442,6 +447,34 @@ export async function exportAuditCenter(
   };
 }
 
+export async function getBusinessMetrics(
+  params: BusinessMetricsParams = {}
+): Promise<AdminBusinessMetrics> {
+  const { data } = await api.get<
+    BusinessMetricsResponse | { metrics: AdminBusinessMetrics }
+  >("/admin/business-metrics", { params });
+
+  return getEnvelopeData<{ metrics: AdminBusinessMetrics }>(data).metrics;
+}
+
+export async function exportBusinessMetrics(
+  format: "csv" | "json",
+  params: BusinessMetricsParams = {}
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await api.get<Blob>(`/admin/business-metrics/export.${format}`, {
+    params,
+    responseType: "blob",
+  });
+
+  return {
+    blob: response.data,
+    filename: filenameFromDisposition(
+      response.headers["content-disposition"],
+      `business-metrics-export.${format}`
+    ),
+  };
+}
+
 export async function getIncidents(
   params: IncidentParams = {}
 ): Promise<AdminIncidentCenter> {
@@ -618,6 +651,8 @@ export const adminService = {
   getGovernanceEscalations,
   getAuditCenter,
   exportAuditCenter,
+  getBusinessMetrics,
+  exportBusinessMetrics,
   getIncidents,
   getIncident,
   createIncident,

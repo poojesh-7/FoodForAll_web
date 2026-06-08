@@ -62,7 +62,7 @@ const SOURCE_INVENTORY = [
   {
     domain: "governance",
     source: "governanceIntelligence.service, governanceDashboard.service",
-    reuse: "Derived read models for intelligence signals and dashboard metrics.",
+    reuse: "Derived read models for intelligence, governance dashboard, and business metrics export audit events.",
     status: "derived",
   },
   {
@@ -104,7 +104,7 @@ const ANALYSIS = {
     "Moderation and appeals: existing event tables remain the authoritative source of lifecycle changes.",
     "Incidents: incident_events is the authoritative response timeline, with incident_records, notes, and postmortems as supporting records.",
     "Financial: immutable ledger, settlement snapshots, terminal refund records, webhook audit log, and state transitions are reused directly.",
-    "Governance: dashboard/intelligence services remain informational-only and are referenced as derived sources.",
+    "Governance: dashboard/intelligence/business metrics services remain informational-only and are referenced as derived sources.",
   ],
   risks: [
     "Cross-domain correlation can render the same underlying business activity more than once; source_table and event_identifier make duplicates explainable.",
@@ -591,13 +591,14 @@ function governanceOperationalEventsSource() {
         'event_name', oe.event_name,
         'request_id', oe.request_id,
         'metadata', oe.metadata,
-        'derived_sources', ARRAY['governanceIntelligence.service','governanceDashboard.service']
+        'derived_sources', ARRAY['governanceIntelligence.service','governanceDashboard.service','businessMetrics.service']
       ) AS metadata,
       CONCAT_WS(' ', oe.id, oe.category, oe.event_name, oe.user_id, oe.role, oe.request_id, oe.metadata)::text AS search_text
     FROM operational_events oe
     LEFT JOIN users actor ON actor.id = oe.user_id
     WHERE oe.category = 'governance'
        OR oe.event_name LIKE 'governance_%'
+       OR oe.event_name LIKE 'business_metrics_%'
   `;
 }
 

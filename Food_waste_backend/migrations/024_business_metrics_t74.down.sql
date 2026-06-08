@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS idx_business_metrics_refund_terminal_created;
+DROP INDEX IF EXISTS idx_business_metrics_provider_settlements_status_updated;
+DROP INDEX IF EXISTS idx_business_metrics_provider_settlements_created;
+DROP INDEX IF EXISTS idx_business_metrics_moderation_appeals_submitted;
+DROP INDEX IF EXISTS idx_business_metrics_provider_reports_status_resolved;
+DROP INDEX IF EXISTS idx_business_metrics_provider_reports_created;
+DROP INDEX IF EXISTS idx_business_metrics_reservations_volunteer;
+DROP INDEX IF EXISTS idx_business_metrics_reservations_picked_up;
+DROP INDEX IF EXISTS idx_business_metrics_reservations_completed;
+DROP INDEX IF EXISTS idx_business_metrics_reservations_reserved;
+DROP INDEX IF EXISTS idx_business_metrics_food_listings_provider_created;
+DROP INDEX IF EXISTS idx_business_metrics_food_listings_created;

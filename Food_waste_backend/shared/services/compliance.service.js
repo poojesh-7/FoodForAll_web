@@ -1427,6 +1427,15 @@ async function executeDeletionRequest({
   let executionResult;
   if (request.request_type === "account_deletion" || request.request_type === "anonymization") {
     executionResult = await executeAccountAnonymization({ client, request, adminId });
+    if (request.request_type === "account_deletion") {
+      executionResult = {
+        ...executionResult,
+        mode: "account_deletion",
+        identity_anonymized: true,
+        account_access_revoked: true,
+        user_contact_fields_anonymized: true,
+      };
+    }
   } else if (request.request_type === "data_access") {
     executionResult = await buildDataAccessSummary({ client, request });
   } else if (request.request_type === "evidence_deletion") {

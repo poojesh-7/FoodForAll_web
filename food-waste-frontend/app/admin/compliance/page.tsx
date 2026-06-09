@@ -77,6 +77,35 @@ function label(value: unknown) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function complianceExecutionLines(metadata: Record<string, unknown> | null | undefined) {
+  if (!metadata || typeof metadata !== "object") return [];
+  const mode = metadata.mode;
+  if (mode !== "account_deletion" && mode !== "anonymization") return [];
+
+  const preserved = Array.isArray(metadata.preserved) ? metadata.preserved : [];
+  const lines = [`Mode: ${label(mode)}`];
+  if (metadata.identity_anonymized === true || metadata.user_contact_fields_anonymized === true) {
+    lines.push("Identity anonymized");
+  }
+  if (metadata.account_access_revoked === true) {
+    lines.push("Account access revoked");
+  }
+  if (
+    preserved.some((item) =>
+      [
+        "financial_records",
+        "trust_replay_records",
+        "audit_records",
+        "moderation_history",
+        "incident_history",
+      ].includes(String(item))
+    )
+  ) {
+    lines.push("Legal retention records preserved");
+  }
+  return lines;
+}
+
 function formatBytes(value: unknown) {
   const bytes = Number(value ?? 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -711,19 +740,29 @@ export default function AdminCompliancePage() {
             >
               <ul className="divide-y divide-zinc-100">
                 {compliance.compliance_activity.recent.length ? (
-                  compliance.compliance_activity.recent.map((event) => (
-                    <li key={String(event.id)} className="px-4 py-3">
-                      <p className="text-sm font-semibold text-zinc-950">
-                        {label(event.event_type)}
-                      </p>
-                      <p className="mt-1 truncate text-xs text-zinc-500">
-                        {label(event.target_type)} | {String(event.target_id)}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        {formatGovernanceDate(event.created_at)}
-                      </p>
-                    </li>
-                  ))
+                  compliance.compliance_activity.recent.map((event) => {
+                    const executionLines = complianceExecutionLines(event.metadata);
+                    return (
+                      <li key={String(event.id)} className="px-4 py-3">
+                        <p className="text-sm font-semibold text-zinc-950">
+                          {label(event.event_type)}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-zinc-500">
+                          {label(event.target_type)} | {String(event.target_id)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {formatGovernanceDate(event.created_at)}
+                        </p>
+                        {executionLines.length ? (
+                          <ul className="mt-2 space-y-1 text-xs text-zinc-600">
+                            {executionLines.map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })
                 ) : (
                   <li className="p-4">
                     <AdminStateBlock title="No compliance events yet." />

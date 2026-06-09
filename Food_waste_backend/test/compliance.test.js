@@ -207,11 +207,11 @@ function createDashboardClient() {
   };
 }
 
-function createWorkflowClient() {
+function createWorkflowClient({ requestType = "account_deletion" } = {}) {
   const calls = [];
   const request = {
     id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    request_type: "account_deletion",
+    request_type: requestType,
     subject_type: "user",
     subject_id: USER_ID,
     target_user_id: USER_ID,
@@ -372,8 +372,15 @@ test("compliance workflow anonymizes account data without deleting protected rec
     note: "Anonymized contact data",
   });
   assert.equal(executed.request.status, "EXECUTED");
-  assert.equal(executed.request.execution_result.mode, "anonymization");
+  assert.equal(executed.request.execution_result.mode, "account_deletion");
+  assert.equal(executed.request.execution_result.identity_anonymized, true);
+  assert.equal(executed.request.execution_result.account_access_revoked, true);
+  assert.equal(executed.request.execution_result.user_contact_fields_anonymized, true);
   assert.equal(executed.request.execution_result.preserved.includes("financial_records"), true);
+  assert.equal(executed.request.execution_result.preserved.includes("trust_replay_records"), true);
+  assert.equal(executed.request.execution_result.preserved.includes("audit_records"), true);
+  assert.equal(executed.request.execution_result.preserved.includes("moderation_history"), true);
+  assert.equal(executed.request.execution_result.preserved.includes("incident_history"), true);
   assert.equal(
     client.calls.some((call) => /^\s*DELETE\b/i.test(call.sql)),
     false
@@ -382,4 +389,38 @@ test("compliance workflow anonymizes account data without deleting protected rec
     client.calls.some((call) => /UPDATE\s+users/i.test(call.sql)),
     true
   );
+});
+
+test("compliance anonymization execution keeps anonymization mode", async () => {
+  const client = createWorkflowClient({ requestType: "anonymization" });
+
+  await createDeletionRequest({
+    client,
+    adminId: ADMIN_ID,
+    requestType: "anonymization",
+    subjectType: "user",
+    subjectId: USER_ID,
+    reason: "User anonymization request",
+  });
+
+  await transitionDeletionRequest({
+    client,
+    requestId: client.request.id,
+    adminId: ADMIN_ID,
+    status: "APPROVED",
+    note: "Approved after review",
+  });
+
+  const executed = await executeDeletionRequest({
+    client,
+    requestId: client.request.id,
+    adminId: ADMIN_ID,
+    note: "Anonymized contact data",
+  });
+
+  assert.equal(executed.request.status, "EXECUTED");
+  assert.equal(executed.request.execution_result.mode, "anonymization");
+  assert.equal(executed.request.execution_result.user_contact_fields_anonymized, true);
+  assert.equal(executed.request.execution_result.identity_anonymized, undefined);
+  assert.equal(executed.request.execution_result.account_access_revoked, undefined);
 });

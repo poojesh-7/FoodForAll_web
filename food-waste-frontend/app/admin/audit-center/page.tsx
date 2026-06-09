@@ -74,6 +74,50 @@ function label(value: unknown) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function metadataObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function complianceExecutionMetadata(event: AuditCenterEvent) {
+  if (event.domain !== "compliance" || event.event_type !== "DELETION_REQUEST_EXECUTED") {
+    return null;
+  }
+  const root = metadataObject(event.metadata);
+  const nested = metadataObject(root?.metadata);
+  return nested;
+}
+
+function complianceExecutionLines(event: AuditCenterEvent) {
+  const metadata = complianceExecutionMetadata(event);
+  if (!metadata) return [];
+  const mode = metadata.mode;
+  if (mode !== "account_deletion" && mode !== "anonymization") return [];
+
+  const preserved = Array.isArray(metadata.preserved) ? metadata.preserved : [];
+  const lines = [`Mode: ${label(mode)}`];
+  if (metadata.identity_anonymized === true || metadata.user_contact_fields_anonymized === true) {
+    lines.push("Identity anonymized");
+  }
+  if (metadata.account_access_revoked === true) {
+    lines.push("Account access revoked");
+  }
+  if (
+    preserved.some((item) =>
+      [
+        "financial_records",
+        "trust_replay_records",
+        "audit_records",
+        "moderation_history",
+        "incident_history",
+      ].includes(String(item))
+    )
+  ) {
+    lines.push("Legal retention records preserved");
+  }
+  return lines;
+}
+
 function parseDomains(value: string | null) {
   const domains = String(value || "")
     .split(",")
@@ -244,6 +288,7 @@ function EventDetails({ event }: { event: AuditCenterEvent | null }) {
   if (!event) {
     return <AdminStateBlock title="Select an audit event." />;
   }
+  const executionLines = complianceExecutionLines(event);
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -324,6 +369,19 @@ function EventDetails({ event }: { event: AuditCenterEvent | null }) {
           {displayValue(event.details)}
         </p>
       </div>
+
+      {executionLines.length ? (
+        <div className="border-t border-zinc-100 p-4">
+          <p className="text-xs font-medium uppercase text-zinc-500">
+            Compliance Execution
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-zinc-700">
+            {executionLines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="border-t border-zinc-100 p-4">
         <p className="text-xs font-medium uppercase text-zinc-500">Supporting Metadata</p>

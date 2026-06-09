@@ -34,8 +34,10 @@ const DOMAIN_OPTIONS = [
   "appeals",
   "verification",
   "governance",
+  "incidents",
   "financial",
   "notifications",
+  "compliance",
 ];
 
 const ACTOR_OPTIONS = ["all", "user", "provider", "ngo", "volunteer", "admin"];
@@ -49,6 +51,7 @@ const DOMAIN_STYLES: Record<string, string> = {
   governance: "border-violet-200 bg-violet-50 text-violet-700",
   financial: "border-zinc-300 bg-zinc-100 text-zinc-800",
   notifications: "border-rose-200 bg-rose-50 text-rose-700",
+  compliance: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
 type AuditFilters = {
@@ -467,7 +470,7 @@ export default function AuditCenterPage() {
   return (
     <AdminShell
       title="Audit Center"
-      description="Centralized, read-only investigation timeline across trust, moderation, appeals, verification, governance, financial, and notification records."
+      description="Centralized, read-only investigation timeline across trust, moderation, appeals, verification, governance, incidents, financial, notification, and compliance records."
     >
       {error && <AdminStateBlock title={error} tone="error" />}
 

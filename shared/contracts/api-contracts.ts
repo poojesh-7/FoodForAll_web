@@ -1191,7 +1191,8 @@ export type AuditDomain =
   | "governance"
   | "incidents"
   | "financial"
-  | "notifications";
+  | "notifications"
+  | "compliance";
 
 export type AuditActorType =
   | "user"
@@ -1524,6 +1525,295 @@ export interface BusinessMetricsExportData {
 
 export type BusinessMetricsResponse = ApiResponse<BusinessMetricsDataEnvelope>;
 export type BusinessMetricsExportResponse = ApiResponse<BusinessMetricsExportData>;
+
+export type ComplianceRequestType =
+  | "account_deletion"
+  | "data_access"
+  | "anonymization"
+  | "evidence_deletion"
+  | "notification_cleanup";
+
+export type ComplianceSubjectType =
+  | "user"
+  | "provider"
+  | "ngo"
+  | "volunteer"
+  | "admin"
+  | "provider_report_attachment"
+  | "moderation_appeal_attachment"
+  | "notification"
+  | "other";
+
+export type ComplianceRequestStatus =
+  | "REQUESTED"
+  | "UNDER_REVIEW"
+  | "APPROVED"
+  | "REJECTED"
+  | "EXECUTED"
+  | "CANCELLED";
+
+export type ComplianceArchiveStatus =
+  | "active"
+  | "candidate"
+  | "archived"
+  | "restored"
+  | "blocked"
+  | "legal_hold"
+  | string;
+
+export interface RetentionPolicyRow extends DbRow {
+  policy_key: string;
+  category: string;
+  display_name: string;
+  description: string;
+  retention_duration_days?: number | string | null;
+  archive_after_days?: number | string | null;
+  delete_after_days?: number | string | null;
+  deletion_eligible: boolean;
+  deletion_mode: string;
+  archive_mode: string;
+  legal_basis: string;
+  immutable_source: boolean;
+  searchable_when_archived: boolean;
+  protects_financial_integrity: boolean;
+  protects_trust_replay: boolean;
+  protects_investigations: boolean;
+  default_policy: boolean;
+  metadata?: DbRow;
+  created_at?: ISODateString;
+  updated_at?: ISODateString;
+}
+
+export interface DataDeletionRequestRow extends DbRow {
+  id: DbId;
+  request_type: ComplianceRequestType | string;
+  subject_type: ComplianceSubjectType | string;
+  subject_id: DbId | string;
+  target_user_id?: DbId | null;
+  target_user_name?: string | null;
+  requested_by_user_id?: DbId | null;
+  requested_by_name?: string | null;
+  status: ComplianceRequestStatus | string;
+  reason: string;
+  review_note?: string | null;
+  decision_note?: string | null;
+  execution_summary?: string | null;
+  legal_hold: boolean;
+  policy_key: string;
+  approval_snapshot?: DbRow;
+  execution_result?: DbRow;
+  requested_at: ISODateString;
+  reviewed_by_admin_id?: DbId | null;
+  reviewed_by_admin_name?: string | null;
+  reviewed_at?: ISODateString | null;
+  approved_by_admin_id?: DbId | null;
+  approved_by_admin_name?: string | null;
+  approved_at?: ISODateString | null;
+  executed_by_admin_id?: DbId | null;
+  executed_by_admin_name?: string | null;
+  executed_at?: ISODateString | null;
+  updated_at?: ISODateString;
+}
+
+export interface ComplianceEventRow extends DbRow {
+  id: DbId;
+  event_type: string;
+  actor_user_id?: DbId | null;
+  actor_name?: string | null;
+  actor_type: "admin" | "system" | "user" | string;
+  target_type: string;
+  target_id: DbId | string;
+  deletion_request_id?: DbId | null;
+  policy_key?: string | null;
+  details?: string | null;
+  metadata?: DbRow;
+  created_at: ISODateString;
+}
+
+export interface ComplianceEvidenceRow extends DbRow {
+  evidence_type: "provider_report_attachment" | "moderation_appeal_attachment" | string;
+  id: DbId | string;
+  parent_id?: DbId | string | null;
+  uploader_user_id?: DbId | string | null;
+  file_url: string;
+  mime_type: string;
+  file_size_bytes: number | string;
+  retention_policy_key: string;
+  archive_status: ComplianceArchiveStatus;
+  archived_at?: ISODateString | null;
+  archive_reference?: string | null;
+  archive_metadata?: DbRow;
+  retained_until?: ISODateString | null;
+  created_at: ISODateString;
+}
+
+export interface ComplianceEvidenceInventory {
+  summary: {
+    total_assets: number | string;
+    archived_assets: number | string;
+    archive_candidates: number | string;
+    total_bytes: number | string;
+    newest_asset_at?: ISODateString | null;
+    oldest_asset_at?: ISODateString | null;
+    storage_provider: string;
+    deletion_default: string;
+  };
+  recent: ComplianceEvidenceRow[];
+}
+
+export interface ComplianceNotificationRetentionStatus {
+  total_notifications: number | string;
+  active_notifications: number | string;
+  archived_notifications: number | string;
+  archive_candidates: number | string;
+  deletion_review_candidates: number | string;
+  oldest_notification_at?: ISODateString | null;
+  newest_notification_at?: ISODateString | null;
+  default_action: string;
+}
+
+export interface ComplianceFinancialRetentionStatus {
+  ledger_entries: number | string;
+  settlement_allocations: number | string;
+  provider_settlements: number | string;
+  settlement_batches: number | string;
+  refund_terminal_records: number | string;
+  webhook_audit_records: number | string;
+  payment_order_attempts: number | string;
+  reconciliation_records: number | string;
+  deletion_allowed: boolean;
+  retention_policy_key: string;
+}
+
+export interface ComplianceTrustRetentionStatus {
+  trust_events: number | string;
+  trust_event_effects: number | string;
+  trust_scores: number | string;
+  trust_restrictions: number | string;
+  replay_pending_events: number | string;
+  deletion_allowed: boolean;
+  replay_required: boolean;
+  retention_policy_key: string;
+}
+
+export interface ComplianceAuditRetentionStatus {
+  operational_events: number | string;
+  compliance_events: number | string;
+  incident_events: number | string;
+  financial_events: number | string;
+  trust_events: number | string;
+  default_delete: boolean;
+  searchable: boolean;
+  retention_policy_key: string;
+}
+
+export interface ComplianceIncidentRetentionStatus {
+  incident_records: number | string;
+  incident_events: number | string;
+  incident_notes: number | string;
+  incident_postmortems: number | string;
+  archive_candidates: number | string;
+  deletion_allowed: boolean;
+  retention_policy_key: string;
+}
+
+export interface ComplianceAnalysis extends AuditCenterAnalysis {
+  retentionPolicyDesign: string[];
+  privacyWorkflow: string[];
+  archivalStrategy: string[];
+  manualTestPlan: string[];
+}
+
+export interface ComplianceDashboardData {
+  generated_at: ISODateString;
+  informational_only: boolean;
+  enforcement_action?: null;
+  summary: {
+    retention_policies: number | string;
+    pending_deletion_requests: number | string;
+    evidence_assets: number | string;
+    archived_evidence_assets: number | string;
+    notification_archive_candidates: number | string;
+    compliance_events_30d: number | string;
+    financial_records_delete_locked: boolean;
+    trust_replay_delete_locked: boolean;
+    audit_records_delete_locked: boolean;
+  };
+  retention_policies: RetentionPolicyRow[];
+  deletion_requests: {
+    counts_by_status: Array<{ status: ComplianceRequestStatus | string; count: number | string }>;
+    pending: DataDeletionRequestRow[];
+    recent: DataDeletionRequestRow[];
+  };
+  evidence_inventory: ComplianceEvidenceInventory;
+  notification_retention_status: ComplianceNotificationRetentionStatus;
+  financial_retention_status: ComplianceFinancialRetentionStatus;
+  trust_retention_status: ComplianceTrustRetentionStatus;
+  audit_retention_status: ComplianceAuditRetentionStatus;
+  incident_retention_status: ComplianceIncidentRetentionStatus;
+  archive_summary: Array<{
+    policy_key: string;
+    archive_status: ComplianceArchiveStatus;
+    count: number | string;
+    last_updated_at?: ISODateString | null;
+  }>;
+  compliance_activity: {
+    summary: Array<{ event_type: string; count: number | string; last_seen_at?: ISODateString | null }>;
+    recent: ComplianceEventRow[];
+  };
+  analysis: ComplianceAnalysis;
+}
+
+export interface ComplianceDeletionRequestDetail {
+  request: DataDeletionRequestRow;
+  events: ComplianceEventRow[];
+  analysis: ComplianceAnalysis;
+}
+
+export interface ComplianceQuery {
+  status?: ComplianceRequestStatus | string;
+  limit?: number | string;
+}
+
+export interface CreateComplianceDeletionRequest {
+  requestType?: ComplianceRequestType | string;
+  request_type?: ComplianceRequestType | string;
+  subjectType?: ComplianceSubjectType | string;
+  subject_type?: ComplianceSubjectType | string;
+  subjectId?: DbId | string;
+  subject_id?: DbId | string;
+  targetUserId?: DbId | null;
+  target_user_id?: DbId | null;
+  reason: string;
+  legalHold?: boolean;
+  legal_hold?: boolean;
+  policyKey?: string | null;
+  policy_key?: string | null;
+  metadata?: DbRow;
+}
+
+export interface UpdateComplianceRequestStatus {
+  note?: string | null;
+}
+
+export interface ArchiveComplianceEvidenceRequest {
+  reason?: string | null;
+}
+
+export interface ArchiveComplianceEvidenceData {
+  evidence: {
+    mode: string;
+    evidence_type: string;
+    evidence_id: DbId | string;
+    record?: DbRow;
+    cloudinary_reference_preserved: boolean;
+    physical_delete_performed: boolean;
+  };
+}
+
+export type ComplianceDashboardResponse = ApiResponse<{ compliance: ComplianceDashboardData }>;
+export type ComplianceDeletionRequestResponse = ApiResponse<{ request: ComplianceDeletionRequestDetail }>;
+export type ArchiveComplianceEvidenceResponse = ApiResponse<ArchiveComplianceEvidenceData>;
 
 export type IncidentStatus =
   | "OPEN"
@@ -3157,6 +3447,83 @@ export const apiContracts = {
       response: "CsvDownloadResponse",
       statusCodes: [200, 400, 401, 403, 500],
       notes: "Returns text/csv generated from the same read-only metrics model and records an auditable export action.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/compliance",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "ComplianceQuery", body: "NoRequestBody" },
+      response: "ComplianceDashboardResponse",
+      statusCodes: [200, 400, 401, 403, 500],
+      notes: "T7.5 read-only compliance dashboard for retention policies, deletion requests, evidence inventory, and protected record status.",
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/compliance/deletion-requests",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateComplianceDeletionRequest" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [201, 400, 401, 403, 409, 500],
+      notes: "Creates a controlled privacy/deletion request; it does not immediately delete or anonymize data.",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/compliance/deletion-requests/:id",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/compliance/deletion-requests/:id/review",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateComplianceRequestStatus" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/compliance/deletion-requests/:id/approve",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateComplianceRequestStatus" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+      notes: "Approves a request after capturing a protected-record snapshot.",
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/compliance/deletion-requests/:id/reject",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateComplianceRequestStatus" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/compliance/deletion-requests/:id/execute",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateComplianceRequestStatus" },
+      response: "ComplianceDeletionRequestResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+      notes: "Executes approved requests by anonymizing or archiving only; financial, trust, audit, and investigation records are preserved.",
+    },
+    {
+      method: "POST",
+      path: "/api/v1/admin/compliance/evidence/:evidenceType/:id/archive",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "ArchiveComplianceEvidenceRequest" },
+      response: "ArchiveComplianceEvidenceResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+      notes: "Marks provider report or appeal evidence archived while preserving the Cloudinary URL and audit discoverability.",
     },
     {
       method: "GET",

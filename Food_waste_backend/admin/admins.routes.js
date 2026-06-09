@@ -65,6 +65,41 @@ router.get("/audit-center/export.csv", adminCtrl.exportAuditCenterCsv);
 router.get("/business-metrics", adminCtrl.getBusinessMetrics);
 router.get("/business-metrics/export.json", adminCtrl.exportBusinessMetricsJson);
 router.get("/business-metrics/export.csv", adminCtrl.exportBusinessMetricsCsv);
+router.get("/compliance", adminCtrl.getComplianceDashboard);
+router.post(
+  "/compliance/deletion-requests",
+  adminActionLimiter,
+  adminCtrl.createComplianceDeletionRequest,
+);
+router.get(
+  "/compliance/deletion-requests/:id",
+  adminCtrl.getComplianceDeletionRequest,
+);
+router.patch(
+  "/compliance/deletion-requests/:id/review",
+  adminActionLimiter,
+  adminCtrl.reviewComplianceDeletionRequest,
+);
+router.patch(
+  "/compliance/deletion-requests/:id/approve",
+  adminActionLimiter,
+  adminCtrl.approveComplianceDeletionRequest,
+);
+router.patch(
+  "/compliance/deletion-requests/:id/reject",
+  adminActionLimiter,
+  adminCtrl.rejectComplianceDeletionRequest,
+);
+router.patch(
+  "/compliance/deletion-requests/:id/execute",
+  adminActionLimiter,
+  adminCtrl.executeComplianceDeletionRequest,
+);
+router.post(
+  "/compliance/evidence/:evidenceType/:id/archive",
+  adminActionLimiter,
+  adminCtrl.archiveComplianceEvidence,
+);
 router.get("/incidents", adminCtrl.getIncidents);
 router.post("/incidents", adminActionLimiter, adminCtrl.createIncident);
 router.get("/incidents/:id", adminCtrl.getIncident);

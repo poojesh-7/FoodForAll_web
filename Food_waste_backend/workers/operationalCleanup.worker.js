@@ -44,40 +44,60 @@ const cleanupWorker = new Worker(
     try {
       await client.query("BEGIN");
 
-      const queries = [
+      const mutationQueries = [
         [
-          "old_notifications",
-          `DELETE FROM notifications
+          "old_notifications_archived",
+          `UPDATE notifications
+           SET archive_status='archived',
+               archived_at=COALESCE(archived_at, NOW()),
+               archive_metadata=archive_metadata || jsonb_build_object(
+                 'archived_by', 'operational_cleanup_worker',
+                 'policy_key', retention_policy_key,
+                 'reason', 'read_notification_retention'
+               )
            WHERE is_read=true
-           AND created_at < NOW() - INTERVAL '90 days'`,
+           AND archive_status='active'
+           AND created_at < NOW() - INTERVAL '180 days'`,
         ],
+      ];
+
+      for (const [name, sql] of mutationQueries) {
+        const result = await client.query(sql);
+        counts[name] = result.rowCount;
+      }
+
+      const retainedQueries = [
         [
-          "old_operational_events",
-          `DELETE FROM operational_events
+          "old_operational_events_retained",
+          `SELECT COUNT(*)::int AS count
+           FROM operational_events
            WHERE created_at < NOW() - INTERVAL '90 days'`,
         ],
         [
-          "resolved_operational_alerts",
-          `DELETE FROM operational_alerts
+          "resolved_operational_alerts_retained",
+          `SELECT COUNT(*)::int AS count
+           FROM operational_alerts
            WHERE status <> 'open'
            AND last_seen_at < NOW() - INTERVAL '180 days'`,
         ],
         [
-          "processed_webhooks",
-          `DELETE FROM cashfree_webhook_events
+          "processed_webhooks_retained",
+          `SELECT COUNT(*)::int AS count
+           FROM cashfree_webhook_events
            WHERE status='processed'
            AND received_at < NOW() - INTERVAL '90 days'`,
         ],
         [
-          "stale_worker_heartbeats",
-          `DELETE FROM worker_heartbeats
+          "stale_worker_heartbeats_retained",
+          `SELECT COUNT(*)::int AS count
+           FROM worker_heartbeats
            WHERE last_seen_at < NOW() - INTERVAL '30 days'`,
         ],
       ];
 
-      for (const [name, sql] of queries) {
+      for (const [name, sql] of retainedQueries) {
         const result = await client.query(sql);
-        counts[name] = result.rowCount;
+        counts[name] = Number(result.rows[0]?.count || 0);
       }
 
       await client.query("COMMIT");

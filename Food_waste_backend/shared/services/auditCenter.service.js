@@ -9,6 +9,7 @@ const AUDIT_DOMAINS = [
   "incidents",
   "financial",
   "notifications",
+  "compliance",
 ];
 
 const ACTOR_TYPES = ["user", "provider", "ngo", "volunteer", "admin", "system", "gateway"];
@@ -83,6 +84,12 @@ const SOURCE_INVENTORY = [
     reuse: "Notification creation/read-state records. Delivery attempts are represented by queue/worker observability, not a dedicated delivery table.",
     status: "partial",
   },
+  {
+    domain: "compliance",
+    source: "compliance_events, data_deletion_requests",
+    reuse: "Immutable compliance event ledger and controlled privacy/deletion workflow records.",
+    status: "reused",
+  },
 ];
 
 const ANALYSIS = {
@@ -92,12 +99,14 @@ const ANALYSIS = {
     "Timeline pagination uses a stable keyset cursor over timestamp, source rank, and source record id.",
     "Exports reuse the same read model and sanitize metadata fields that can contain secrets or raw gateway payloads.",
     "Incident response lifecycle events are included as operational audit records and do not mutate monitored systems.",
+    "Compliance actions are included through immutable compliance_events and link back to data_deletion_requests.",
   ],
   gaps: [
     "Governance intelligence signals are derived read-model outputs, not persisted immutable audit records.",
     "Notification delivery attempts do not have a dedicated delivery-record table in the current schema.",
     "Verification actions are traceable through operational_events rather than dedicated verification action tables.",
     "Incident source context stores referenced monitoring/diagnostic snapshots rather than owning those source systems.",
+    "Compliance physical deletion is intentionally absent; current execution paths anonymize or archive while preserving protected records.",
   ],
   reuse: [
     "Trust: trust_events plus admin_trust_actions; trust_event_effects is summarized as supporting lineage.",
@@ -105,6 +114,7 @@ const ANALYSIS = {
     "Incidents: incident_events is the authoritative response timeline, with incident_records, notes, and postmortems as supporting records.",
     "Financial: immutable ledger, settlement snapshots, terminal refund records, webhook audit log, and state transitions are reused directly.",
     "Governance: dashboard/intelligence/business metrics services remain informational-only and are referenced as derived sources.",
+    "Compliance: compliance_events is the immutable source for retention policy, privacy, deletion, and archival actions.",
   ],
   risks: [
     "Cross-domain correlation can render the same underlying business activity more than once; source_table and event_identifier make duplicates explainable.",
@@ -112,10 +122,12 @@ const ANALYSIS = {
     "Free-text search across a union read model is useful for investigations but should not replace source-specific indexed lookups for very large forensic jobs.",
     "Operational_events currently has no immutability trigger, so verification lineage is visible but not as strongly protected as trust/financial ledgers.",
     "Incident duplication is possible by design; source references and search make duplicates explainable without blocking legitimate response tracks.",
+    "Compliance requests can contain sensitive context, so metadata sanitization is applied before export.",
   ],
   schemaChanges: [
     "Migration 022 adds audit timeline indexes only; it creates no new mutable audit record table.",
     "Migration 023 adds immutable incident management tables for T7.3.",
+    "Migration 025 adds retention policies, deletion request workflow records, archive records, and immutable compliance_events.",
   ],
 };
 
@@ -680,6 +692,47 @@ function notificationsSource() {
   `;
 }
 
+function complianceEventsSource() {
+  return `
+    SELECT
+      'compliance'::text AS domain,
+      ce.created_at::timestamptz AS event_time,
+      ce.actor_type::text AS actor_type,
+      ce.actor_user_id::text AS actor_id,
+      actor.name::text AS actor_label,
+      ce.event_type::text AS action,
+      ce.target_type::text AS target_type,
+      ce.target_id::text AS target_id,
+      COALESCE(target_user.name, ce.target_id)::text AS target_label,
+      ce.event_type::text AS event_type,
+      ce.details::text AS details,
+      'compliance_events'::text AS source_table,
+      ce.id::text AS source_event_id,
+      ce.id::text AS source_record_id,
+      ce.id::text AS event_identifier,
+      CONCAT('compliance_events:', ce.id::text)::text AS record_identifier,
+      66::int AS source_rank,
+      true::boolean AS immutable,
+      jsonb_build_object(
+        'event_id', ce.id,
+        'deletion_request_id', ce.deletion_request_id,
+        'policy_key', ce.policy_key,
+        'target_type', ce.target_type,
+        'target_id', ce.target_id,
+        'metadata', ce.metadata,
+        'request_status', ddr.status,
+        'request_type', ddr.request_type,
+        'subject_type', ddr.subject_type,
+        'subject_id', ddr.subject_id
+      ) AS metadata,
+      CONCAT_WS(' ', ce.id, ce.event_type, ce.actor_user_id, ce.target_type, ce.target_id, ce.deletion_request_id, ce.policy_key, ce.details, ce.metadata)::text AS search_text
+    FROM compliance_events ce
+    LEFT JOIN users actor ON actor.id = ce.actor_user_id
+    LEFT JOIN data_deletion_requests ddr ON ddr.id = ce.deletion_request_id
+    LEFT JOIN users target_user ON target_user.id::text = ce.target_id
+  `;
+}
+
 function financialLedgerSource() {
   return `
     SELECT
@@ -1069,6 +1122,7 @@ const SOURCE_BRANCHES = {
     paymentOrderAttemptsSource,
   ],
   notifications: [notificationsSource],
+  compliance: [complianceEventsSource],
 };
 
 function buildAuditEventsSql(filters) {
@@ -1207,6 +1261,13 @@ function eventHref(row) {
     return `/admin/incidents?q=${encodeURIComponent(String(row.target_id))}`;
   }
   if (row.domain === "notifications") return "/notifications";
+  if (row.domain === "compliance") {
+    const requestId = metadata.deletion_request_id;
+    if (requestId) {
+      return `/admin/compliance?requestId=${encodeURIComponent(String(requestId))}`;
+    }
+    return "/admin/compliance";
+  }
   return "/admin";
 }
 
@@ -1270,7 +1331,7 @@ async function getAuditCenter(options = {}) {
   const filters = normalizeAuditFilters(options);
   const adminFilters = {
     ...filters,
-    domains: ["trust", "moderation", "appeals", "verification", "incidents"],
+    domains: ["trust", "moderation", "appeals", "verification", "incidents", "compliance"],
     actorType: "admin",
     actorId: null,
     cursor: null,

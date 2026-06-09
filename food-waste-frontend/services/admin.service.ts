@@ -22,6 +22,14 @@ import type {
   BusinessMetricsData,
   BusinessMetricsQuery,
   BusinessMetricsResponse,
+  ArchiveComplianceEvidenceResponse,
+  ComplianceDashboardData,
+  ComplianceDashboardResponse,
+  ComplianceDeletionRequestDetail,
+  ComplianceDeletionRequestResponse,
+  ComplianceQuery,
+  ComplianceSubjectType,
+  CreateComplianceDeletionRequest,
   CreateIncidentRequest,
   DbId,
   GovernanceEscalationAnalytics,
@@ -63,6 +71,7 @@ import type {
   RecordAdminTrustActionResponse,
   TrustExplainability,
   TrustSubjectType,
+  UpdateComplianceRequestStatus,
   UpdateIncidentStatusRequest,
   UpdateModerationAppealStatusResponse,
 } from "@shared/contracts/api-contracts";
@@ -122,6 +131,8 @@ export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
 export type AdminGovernanceDashboard = GovernanceDashboardData;
 export type AdminAuditCenter = AuditCenterData;
 export type AdminBusinessMetrics = BusinessMetricsData;
+export type AdminComplianceDashboard = ComplianceDashboardData;
+export type AdminComplianceRequestDetail = ComplianceDeletionRequestDetail;
 export type AdminIncidentCenter = IncidentCenterData;
 export type AdminIncidentDetail = IncidentDetailData;
 export type AdminActiveIncidentConflict = ActiveIncidentConflict;
@@ -139,6 +150,7 @@ export type AuditCenterParams = AuditCenterQuery & {
   domains?: string;
 };
 export type BusinessMetricsParams = BusinessMetricsQuery;
+export type ComplianceParams = ComplianceQuery;
 export type OperationalMonitoringParams = OperationalMonitoringQuery;
 export type IncidentParams = IncidentQuery;
 
@@ -475,6 +487,92 @@ export async function exportBusinessMetrics(
   };
 }
 
+export async function getComplianceDashboard(
+  params: ComplianceParams = {}
+): Promise<AdminComplianceDashboard> {
+  const { data } = await api.get<
+    ComplianceDashboardResponse | { compliance: AdminComplianceDashboard }
+  >("/admin/compliance", { params });
+
+  return getEnvelopeData<{ compliance: AdminComplianceDashboard }>(data)
+    .compliance;
+}
+
+export async function createComplianceDeletionRequest(
+  payload: CreateComplianceDeletionRequest
+): Promise<AdminComplianceRequestDetail> {
+  const { data } = await api.post<
+    ComplianceDeletionRequestResponse | { request: AdminComplianceRequestDetail }
+  >("/admin/compliance/deletion-requests", payload);
+
+  return getEnvelopeData<{ request: AdminComplianceRequestDetail }>(data).request;
+}
+
+export async function getComplianceDeletionRequest(
+  id: DbId
+): Promise<AdminComplianceRequestDetail> {
+  const { data } = await api.get<
+    ComplianceDeletionRequestResponse | { request: AdminComplianceRequestDetail }
+  >(`/admin/compliance/deletion-requests/${String(id)}`);
+
+  return getEnvelopeData<{ request: AdminComplianceRequestDetail }>(data).request;
+}
+
+async function patchComplianceDeletionRequest(
+  id: DbId,
+  action: "review" | "approve" | "reject" | "execute",
+  payload: UpdateComplianceRequestStatus = {}
+): Promise<AdminComplianceRequestDetail> {
+  const { data } = await api.patch<
+    ComplianceDeletionRequestResponse | { request: AdminComplianceRequestDetail }
+  >(`/admin/compliance/deletion-requests/${String(id)}/${action}`, payload);
+
+  return getEnvelopeData<{ request: AdminComplianceRequestDetail }>(data).request;
+}
+
+export async function reviewComplianceDeletionRequest(
+  id: DbId,
+  note?: string | null
+): Promise<AdminComplianceRequestDetail> {
+  return patchComplianceDeletionRequest(id, "review", { note });
+}
+
+export async function approveComplianceDeletionRequest(
+  id: DbId,
+  note?: string | null
+): Promise<AdminComplianceRequestDetail> {
+  return patchComplianceDeletionRequest(id, "approve", { note });
+}
+
+export async function rejectComplianceDeletionRequest(
+  id: DbId,
+  note?: string | null
+): Promise<AdminComplianceRequestDetail> {
+  return patchComplianceDeletionRequest(id, "reject", { note });
+}
+
+export async function executeComplianceDeletionRequest(
+  id: DbId,
+  note?: string | null
+): Promise<AdminComplianceRequestDetail> {
+  return patchComplianceDeletionRequest(id, "execute", { note });
+}
+
+export async function archiveComplianceEvidence(
+  evidenceType: ComplianceSubjectType | string,
+  id: DbId,
+  reason?: string | null
+): Promise<ArchiveComplianceEvidenceResponse["data"]["evidence"]> {
+  const { data } = await api.post<
+    ArchiveComplianceEvidenceResponse | ArchiveComplianceEvidenceResponse["data"]
+  >(
+    `/admin/compliance/evidence/${encodeURIComponent(evidenceType)}/${encodeURIComponent(String(id))}/archive`,
+    { reason }
+  );
+
+  return getEnvelopeData<ArchiveComplianceEvidenceResponse["data"]>(data).evidence;
+}
+
 export async function getIncidents(
   params: IncidentParams = {}
 ): Promise<AdminIncidentCenter> {
@@ -653,6 +751,14 @@ export const adminService = {
   exportAuditCenter,
   getBusinessMetrics,
   exportBusinessMetrics,
+  getComplianceDashboard,
+  createComplianceDeletionRequest,
+  getComplianceDeletionRequest,
+  reviewComplianceDeletionRequest,
+  approveComplianceDeletionRequest,
+  rejectComplianceDeletionRequest,
+  executeComplianceDeletionRequest,
+  archiveComplianceEvidence,
   getIncidents,
   getIncident,
   createIncident,

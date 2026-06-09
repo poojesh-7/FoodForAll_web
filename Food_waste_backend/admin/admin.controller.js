@@ -89,6 +89,14 @@ const {
   listIncidents,
   transitionIncidentStatus,
 } = require("../shared/services/incidentManagement.service");
+const {
+  createDeletionRequest,
+  executeDeletionRequest,
+  getComplianceDashboard: getComplianceDashboardService,
+  getDeletionRequestDetail,
+  markEvidenceArchived,
+  transitionDeletionRequest,
+} = require("../shared/services/compliance.service");
 
 //
 // 📌 GET PENDING NGOS
@@ -1591,6 +1599,250 @@ exports.exportBusinessMetricsCsv = async (req, res) => {
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to export business metrics CSV",
     });
+  }
+};
+
+function recordComplianceOperationalEvent(req, eventName, metadata = {}) {
+  logger.security("Compliance action recorded", {
+    adminId: req.user?.id,
+    eventName,
+    ...metadata,
+  });
+  void recordOperationalEvent({
+    category: "compliance",
+    severity: "info",
+    eventName,
+    metadata: {
+      adminId: req.user?.id,
+      ...metadata,
+    },
+  });
+}
+
+exports.getComplianceDashboard = async (req, res) => {
+  try {
+    const compliance = await getComplianceDashboardService(req.query);
+    res.json({ compliance });
+  } catch (err) {
+    logger.error("Failed to fetch compliance dashboard", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch compliance dashboard",
+    });
+  }
+};
+
+exports.getComplianceDeletionRequest = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Deletion request id is required" });
+  }
+
+  try {
+    const request = await getDeletionRequestDetail({ requestId: id });
+    if (!request) {
+      return res.status(404).json({ error: "Deletion request not found" });
+    }
+    res.json({ request });
+  } catch (err) {
+    logger.error("Failed to fetch compliance deletion request", {
+      err,
+      adminId: req.user?.id,
+      requestId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch deletion request",
+    });
+  }
+};
+
+exports.createComplianceDeletionRequest = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const request = await createDeletionRequest({
+      client,
+      adminId: req.user.id,
+      requestType: req.body?.requestType || req.body?.request_type,
+      subjectType: req.body?.subjectType || req.body?.subject_type,
+      subjectId: req.body?.subjectId || req.body?.subject_id,
+      targetUserId: req.body?.targetUserId || req.body?.target_user_id,
+      reason: req.body?.reason,
+      legalHold: req.body?.legalHold || req.body?.legal_hold,
+      policyKey: req.body?.policyKey || req.body?.policy_key,
+      metadata: req.body?.metadata || {},
+    });
+    await client.query("COMMIT");
+
+    recordComplianceOperationalEvent(req, "compliance_deletion_request_created", {
+      requestId: request?.request?.id,
+      requestType: request?.request?.request_type,
+      subjectType: request?.request?.subject_type,
+      subjectId: request?.request?.subject_id,
+    });
+
+    res.status(201).json({ request });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Compliance deletion request creation failed", {
+      err,
+      adminId: req.user?.id,
+      body: req.body,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create deletion request",
+      code: err.code,
+      activeRequest: err.activeRequest,
+    });
+  } finally {
+    client.release();
+  }
+};
+
+async function transitionComplianceRequest(req, res, status) {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Deletion request id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const request = await transitionDeletionRequest({
+      client,
+      requestId: id,
+      adminId: req.user.id,
+      status,
+      note: req.body?.note,
+    });
+    if (!request) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Deletion request not found" });
+    }
+    await client.query("COMMIT");
+
+    recordComplianceOperationalEvent(req, `compliance_deletion_request_${status.toLowerCase()}`, {
+      requestId: id,
+      status,
+      requestType: request?.request?.request_type,
+      subjectType: request?.request?.subject_type,
+      subjectId: request?.request?.subject_id,
+    });
+
+    res.json({ request });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Compliance deletion request transition failed", {
+      err,
+      adminId: req.user?.id,
+      requestId: id,
+      status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update deletion request",
+    });
+  } finally {
+    client.release();
+  }
+}
+
+exports.reviewComplianceDeletionRequest = (req, res) =>
+  transitionComplianceRequest(req, res, "UNDER_REVIEW");
+
+exports.approveComplianceDeletionRequest = (req, res) =>
+  transitionComplianceRequest(req, res, "APPROVED");
+
+exports.rejectComplianceDeletionRequest = (req, res) =>
+  transitionComplianceRequest(req, res, "REJECTED");
+
+exports.executeComplianceDeletionRequest = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Deletion request id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const request = await executeDeletionRequest({
+      client,
+      requestId: id,
+      adminId: req.user.id,
+      note: req.body?.note,
+    });
+    if (!request) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Deletion request not found" });
+    }
+    await client.query("COMMIT");
+
+    recordComplianceOperationalEvent(req, "compliance_deletion_request_executed", {
+      requestId: id,
+      requestType: request?.request?.request_type,
+      subjectType: request?.request?.subject_type,
+      subjectId: request?.request?.subject_id,
+    });
+
+    res.json({ request });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Compliance deletion request execution failed", {
+      err,
+      adminId: req.user?.id,
+      requestId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to execute deletion request",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.archiveComplianceEvidence = async (req, res) => {
+  const { evidenceType, id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Evidence id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const evidence = await markEvidenceArchived({
+      client,
+      adminId: req.user.id,
+      evidenceType,
+      evidenceId: id,
+      reason: req.body?.reason,
+    });
+    await client.query("COMMIT");
+
+    recordComplianceOperationalEvent(req, "compliance_evidence_archived", {
+      evidenceType,
+      evidenceId: id,
+    });
+
+    res.json({ evidence });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error("Compliance evidence archival failed", {
+      err,
+      adminId: req.user?.id,
+      evidenceType,
+      evidenceId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to archive evidence",
+    });
+  } finally {
+    client.release();
   }
 };
 

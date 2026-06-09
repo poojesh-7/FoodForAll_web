@@ -16,6 +16,17 @@ exports.getUser = async (req, res) => {
     return res.status(400).json({ error: "User id is required" });
   }
 
+  if (String(req.user.id) !== String(id) && req.user.role !== "admin") {
+    logger.security("Blocked user profile read", {
+      requesterId: req.user?.id,
+      targetUserId: id,
+      role: req.user?.role,
+      path: req.originalUrl,
+      ip: req.ip,
+    });
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
   const result = await pool.query(
     "SELECT id, name, phone, email, role, created_at FROM users WHERE id=$1",
     [id],

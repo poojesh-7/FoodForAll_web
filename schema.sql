@@ -578,6 +578,7 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "refresh_token_device" "text",
     "refresh_token_last_used_at" timestamp without time zone,
     "last_auth_activity_at" timestamp without time zone,
+    "auth_session_version" integer DEFAULT 0 NOT NULL,
     CONSTRAINT "users_role_check" CHECK ((("role")::"text" = ANY ((ARRAY['user'::character varying, 'admin'::character varying, 'provider'::character varying, 'ngo'::character varying, 'volunteer'::character varying])::"text"[])))
 );
 

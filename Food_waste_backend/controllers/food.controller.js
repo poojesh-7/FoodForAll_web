@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const crypto = require("crypto");
 
 const notificationQueue = require("../queues/notification.queue");
 const { ensureFoodListingSoftDeleteSchema } = require("../shared/services/foodListingSchema.service");
@@ -136,9 +137,13 @@ exports.registerRestaurant = async (req, res) => {
 
     const { uploadBuffer } = require("../shared/services/cloudinary.service");
     const storagePrefix = process.env.ENV_RESOURCE_PREFIX || process.env.APP_ENV || "local";
+    const certificateNonce =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : crypto.randomBytes(16).toString("hex");
     const uploadedImage = await uploadBuffer(req.file.buffer, {
       folder: `food-rescue/${storagePrefix}/fssai`,
-      public_id: `provider_${userId}_fssai`,
+      public_id: `provider_${userId}_fssai_${certificateNonce}`,
       overwrite: true,
       invalidate: true,
       mimetype: req.file.mimetype,

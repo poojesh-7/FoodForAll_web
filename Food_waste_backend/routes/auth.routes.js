@@ -12,7 +12,7 @@ router.post("/verify-otp", otpVerifyLimiter, authCtrl.verifyOTP);
 
 router.post("/set-role", authLimiter, authMiddleware, authCtrl.setRole);
 router.post("/refresh-token", authLimiter, authCtrl.refreshToken);
-router.post("/complete-profile", authLimiter, authCtrl.completeProfile);
+router.post("/complete-profile", authLimiter, authMiddleware, authCtrl.completeProfile);
 router.put("/update-location", authMiddleware, authCtrl.updateLocation);
 router.get("/me", authMiddleware, authCtrl.getMe);
 router.post("/logout", authLimiter, authCtrl.logout);

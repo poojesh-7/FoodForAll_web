@@ -44,12 +44,13 @@ function signWithClaims(options = {}) {
 }
 
 test("signAccessToken creates a verifiable HS256 token with required claims", () => {
-  const user = { id: randomUUID(), role: "admin" };
+  const user = { id: randomUUID(), role: "admin", auth_session_version: 2 };
   const token = signAccessToken(user);
   const decoded = verifyAccessToken(token);
 
   assert.equal(decoded.id, user.id);
   assert.equal(decoded.role, user.role);
+  assert.equal(decoded.sv, user.auth_session_version);
   assert.equal(decoded.iss, JWT_ISSUER);
   assert.equal(decoded.aud, JWT_AUDIENCE);
   assert.equal(decoded.exp > Math.floor(Date.now() / 1000), true);

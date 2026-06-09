@@ -2679,11 +2679,11 @@ export const apiContracts = {
     {
       method: "POST",
       path: "/api/v1/auth/complete-profile",
-      auth: "public",
-      middleware: [],
+      auth: "protected",
+      middleware: ["authMiddleware"],
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CompleteProfileRequest" },
       response: "CompleteProfileResponse",
-      statusCodes: [200, 400, 409, 500],
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
     },
     {
       method: "PUT",

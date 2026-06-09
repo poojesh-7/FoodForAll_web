@@ -42,6 +42,10 @@ const {
   extractAccessTokenFromSocketHandshake,
   verifyAccessToken,
 } = require("../../utils/token");
+const {
+  SessionSecurityError,
+  assertAccessTokenSession,
+} = require("../../shared/services/sessionSecurity.service");
 const requestContextMiddleware = require("../../middlewares/requestContext.middleware");
 const healthRoutes = require("../../routes/health.routes");
 const metricsRoutes = require("../../routes/metrics.routes");
@@ -95,7 +99,7 @@ app.use("/health", healthRoutes);
 app.use("/metrics", metricsRoutes);
 // require("../../admin/cleanup");
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const socketMeta = {
     socketId: socket.id,
     ip: socket.handshake.address,
@@ -130,13 +134,20 @@ io.use((socket, next) => {
       return next(new Error("Invalid token"));
     }
 
-    socket.user = decoded;
-    socket.data.user = decoded;
+    const sessionUser = await assertAccessTokenSession({ decoded });
+    socket.user = {
+      ...decoded,
+      role: sessionUser.role,
+      auth_session_version: sessionUser.auth_session_version,
+    };
+    socket.data.user = socket.user;
 
     next();
   } catch (err) {
     const reason =
-      err instanceof TokenVerificationError ? err.reason : "auth_exception";
+      err instanceof TokenVerificationError || err instanceof SessionSecurityError
+        ? err.reason
+        : "auth_exception";
 
     logger.security("Socket authentication failed", {
       reason,

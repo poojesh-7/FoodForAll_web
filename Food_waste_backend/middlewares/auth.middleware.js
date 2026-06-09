@@ -2,6 +2,10 @@ const { isValidId } = require("../utils/validation");
 const logger = require("../shared/utils/logger");
 const { mergeContext } = require("../shared/utils/requestContext");
 const {
+  SessionSecurityError,
+  assertAccessTokenSession,
+} = require("../shared/services/sessionSecurity.service");
+const {
   TokenSourceError,
   TokenVerificationError,
   extractAccessTokenFromRequest,
@@ -22,7 +26,7 @@ function unauthorized(req, res, message, reason, meta = {}) {
   });
 }
 
-module.exports = (req, res, next) => {
+module.exports = async (req, res, next) => {
   let tokenSource;
   let token;
 
@@ -57,8 +61,14 @@ module.exports = (req, res, next) => {
       );
     }
 
-    req.user = decoded;
-    mergeContext({ userId: decoded.id, role: decoded.role });
+    const sessionUser = await assertAccessTokenSession({ decoded });
+
+    req.user = {
+      ...decoded,
+      role: sessionUser.role,
+      auth_session_version: sessionUser.auth_session_version,
+    };
+    mergeContext({ userId: decoded.id, role: sessionUser.role });
     next();
   } catch (err) {
     if (err instanceof TokenVerificationError) {
@@ -68,6 +78,12 @@ module.exports = (req, res, next) => {
           : "Authentication token is invalid";
 
       return unauthorized(req, res, message, err.reason, { tokenSource });
+    }
+
+    if (err instanceof SessionSecurityError) {
+      return unauthorized(req, res, "Authentication token is invalid", err.reason, {
+        tokenSource,
+      });
     }
 
     return unauthorized(req, res, "Authentication failed", "auth_exception", {

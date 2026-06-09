@@ -6,7 +6,6 @@ const PUBLIC_AUTH_PATHS = [
   "/auth/send-otp",
   "/auth/verify-otp",
   REFRESH_TOKEN_PATH,
-  "/auth/complete-profile",
   "/auth/logout",
 ];
 

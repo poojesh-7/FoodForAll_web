@@ -40,6 +40,9 @@ const { validateOnboardingRoleSelection } = require("../utils/roles");
 const {
   shouldSkipRuntimeSchemaMutation,
 } = require("../shared/config/runtimeSchema");
+const {
+  assertProfilePhoneMatchesAuthenticatedUser,
+} = require("../shared/services/authProfile.service");
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -72,7 +75,8 @@ async function ensureAuthHardeningSchema() {
       ADD COLUMN IF NOT EXISTS refresh_token_family TEXT NULL,
       ADD COLUMN IF NOT EXISTS refresh_token_device TEXT NULL,
       ADD COLUMN IF NOT EXISTS refresh_token_last_used_at TIMESTAMP NULL,
-      ADD COLUMN IF NOT EXISTS last_auth_activity_at TIMESTAMP NULL
+      ADD COLUMN IF NOT EXISTS last_auth_activity_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS auth_session_version INTEGER NOT NULL DEFAULT 0
     `);
   }
 
@@ -195,7 +199,7 @@ async function findUserByPhone(normalizedPhone) {
 
   const result = await pool.query(
     `
-    SELECT id, role, phone
+    SELECT id, role, phone, auth_session_version
     FROM users
     WHERE phone = ANY($1::text[])
     ORDER BY CASE WHEN phone=$2 THEN 0 ELSE 1 END
@@ -218,7 +222,7 @@ async function findUserByPhone(normalizedPhone) {
           AND NOT EXISTS (
             SELECT 1 FROM users WHERE phone=$1 AND id<>$2
           )
-        RETURNING id, role, phone
+        RETURNING id, role, phone, auth_session_version
         `,
         [normalizedPhone, user.id]
       );
@@ -244,6 +248,7 @@ async function findOrCreateUserByPhone(normalizedPhone) {
       user: {
         id: existingUser.id,
         role: existingUser.role,
+        auth_session_version: existingUser.auth_session_version,
       },
     };
   }
@@ -254,7 +259,7 @@ async function findOrCreateUserByPhone(normalizedPhone) {
     VALUES ($1, $2)
     ON CONFLICT (phone)
     DO UPDATE SET phone=EXCLUDED.phone
-    RETURNING id, role
+    RETURNING id, role, auth_session_version
     `,
     [normalizedPhone, null]
   );
@@ -470,7 +475,7 @@ exports.setRole = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE users SET role=$1 WHERE id=$2 RETURNING id, role`,
+      `UPDATE users SET role=$1 WHERE id=$2 RETURNING id, role, auth_session_version`,
       [normalizedRole, userId]
     );
 
@@ -547,7 +552,8 @@ exports.refreshToken = async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT id, role, refresh_token, refresh_token_expiry, refresh_token_device
+      SELECT id, role, refresh_token, refresh_token_expiry, refresh_token_device,
+             auth_session_version
       FROM users
       WHERE refresh_token=$1 OR refresh_token=$2
       `,
@@ -696,6 +702,14 @@ exports.refreshToken = async (req, res) => {
 exports.completeProfile = async (req, res) => {
   try {
     await ensureAuthHardeningSchema();
+    const authenticatedUserId = req.user?.id;
+
+    if (!authenticatedUserId) {
+      return res.status(401).json({
+        error: "Authentication required",
+      });
+    }
+
     const {
       phone,
       name,
@@ -749,13 +763,40 @@ exports.completeProfile = async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
-
-    const existingPhoneUser = await findUserByPhone(normalizedPhone);
-    await ensureEmailAvailable(
-      pool,
-      normalizedEmail,
-      existingPhoneUser?.id ?? null
+    const currentUserResult = await pool.query(
+      `
+      SELECT id, phone
+      FROM users
+      WHERE id=$1
+      `,
+      [authenticatedUserId]
     );
+    const currentUser = currentUserResult.rows[0];
+
+    if (!currentUser) {
+      return res.status(404).json({
+        error: "User not found",
+      });
+    }
+
+    try {
+      assertProfilePhoneMatchesAuthenticatedUser({
+        submittedPhone: normalizedPhone,
+        authenticatedPhone: currentUser.phone,
+      });
+    } catch (err) {
+      logger.security("Blocked profile completion phone mismatch", {
+        reason: err.reason || "profile_phone_mismatch",
+        userId: authenticatedUserId,
+        ip: getClientIp(req),
+      });
+
+      return res.status(err.statusCode || 403).json({
+        error: err.message || "Profile phone does not match authenticated user",
+      });
+    }
+
+    await ensureEmailAvailable(pool, normalizedEmail, authenticatedUserId);
 
     const normalizedName =
       String(name).trim();
@@ -791,38 +832,17 @@ exports.completeProfile = async (req, res) => {
 
     const result = await pool.query(
       `
-      INSERT INTO users (
-        name,
-        phone,
-        email,
-        role,
-        address,
-        latitude,
-        longitude,
-        location,
-        is_verified
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8,
-        true
-      )
-      ON CONFLICT (phone)
-      DO UPDATE SET
-        name = EXCLUDED.name,
-        email = EXCLUDED.email,
-        role = EXCLUDED.role,
-        address = EXCLUDED.address,
-        latitude = EXCLUDED.latitude,
-        longitude = EXCLUDED.longitude,
-        location = EXCLUDED.location,
+      UPDATE users
+      SET
+        name = $1,
+        email = $2,
+        role = $3,
+        address = $4,
+        latitude = $5,
+        longitude = $6,
+        location = $7,
         is_verified = true
+      WHERE id = $8
       RETURNING
         id,
         name,
@@ -831,11 +851,11 @@ exports.completeProfile = async (req, res) => {
         role,
         address,
         latitude,
-        longitude
+        longitude,
+        auth_session_version
       `,
       [
         normalizedName,
-        normalizedPhone,
         normalizedEmail,
         normalizedRole,
         normalizedAddress,
@@ -845,6 +865,7 @@ exports.completeProfile = async (req, res) => {
         hasLocation
           ? `SRID=4326;POINT(${longitudeValue} ${latitudeValue})`
           : null,
+        authenticatedUserId,
       ]
     );
     const user = result.rows[0];
@@ -1149,7 +1170,8 @@ exports.logout = async (req, res) => {
         SET refresh_token=NULL,
             refresh_token_expiry=NULL,
             refresh_token_device=NULL,
-            refresh_token_family=NULL
+            refresh_token_family=NULL,
+            auth_session_version=auth_session_version + 1
         WHERE id=$1
       `,
       [req.user.id]
@@ -1176,7 +1198,8 @@ exports.logout = async (req, res) => {
           SET refresh_token=NULL,
               refresh_token_expiry=NULL,
               refresh_token_device=NULL,
-              refresh_token_family=NULL
+              refresh_token_family=NULL,
+              auth_session_version=auth_session_version + 1
           WHERE refresh_token=$1 OR refresh_token=$2
           `,
           [verifiedRefreshToken, hashRefreshToken(verifiedRefreshToken)]

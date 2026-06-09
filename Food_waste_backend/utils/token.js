@@ -117,8 +117,16 @@ function verifyJwtToken(token) {
 }
 
 function signAccessToken(user) {
+  const sessionVersion = Number(
+    user.auth_session_version ?? user.sessionVersion ?? user.session_version ?? 0
+  );
+
   return jwt.sign(
-    { id: user.id, role: user.role },
+    {
+      id: user.id,
+      role: user.role,
+      sv: Number.isFinite(sessionVersion) && sessionVersion >= 0 ? sessionVersion : 0,
+    },
     getJwtSecret(),
     {
       algorithm: JWT_ALGORITHMS[0],

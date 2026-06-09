@@ -1092,6 +1092,7 @@ async function executeAccountAnonymization({ client, request, adminId }) {
         refresh_token_device=NULL,
         refresh_token_last_used_at=NULL,
         last_auth_activity_at=NOW(),
+        auth_session_version=auth_session_version + 1,
         is_available=false
     WHERE id=$1
     RETURNING id, role

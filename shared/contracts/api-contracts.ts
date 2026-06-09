@@ -505,6 +505,22 @@ export interface NotificationRow extends DbRow {
   created_at?: ISODateString;
 }
 
+export interface NotificationQuery {
+  cursor?: string;
+  limit?: string;
+}
+
+export interface NotificationPagination {
+  limit: number;
+  has_more: boolean;
+  next_cursor: string | null;
+}
+
+export interface NotificationPageData {
+  notifications: NotificationRow[];
+  pagination: NotificationPagination;
+}
+
 export interface UnreadCountData {
   unread: number;
 }
@@ -936,7 +952,9 @@ export type ProviderRatingsResponse = ApiResponse<ProviderRatingSummary>;
 export type ImpactSummaryResponse = ApiResponse<ImpactSummary>;
 
 // Notification requests/responses
-export type GetNotificationsResponse = ApiResponse<NotificationRow[]>;
+export type GetNotificationsResponse =
+  | ApiResponse<NotificationRow[]>
+  | ApiResponse<NotificationPageData>;
 export type MarkNotificationReadResponse = ApiResponse<NotificationRow>;
 export type UnreadCountResponse = ApiResponse<UnreadCountData>;
 export type MarkAllNotificationsReadResponse = ApiResponse<EmptyData>;
@@ -3203,7 +3221,7 @@ export const apiContracts = {
       path: "/api/v1/notifications",
       auth: "protected",
       middleware: ["authMiddleware"],
-      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      request: { params: "NoRequestParams", query: "NotificationQuery", body: "NoRequestBody" },
       response: "GetNotificationsResponse",
       statusCodes: [200, 401],
     },

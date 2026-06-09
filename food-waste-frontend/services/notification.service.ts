@@ -4,6 +4,8 @@ import type {
   DbId,
   GetNotificationsResponse,
   MarkNotificationReadResponse,
+  NotificationPageData,
+  NotificationPagination,
   NotificationRow,
   UnreadCountResponse,
 } from "@shared/contracts/api-contracts";
@@ -27,12 +29,83 @@ function getArrayData<TItem>(body: { data: TItem[] } | TItem[] | unknown): TItem
     : [];
 }
 
-export async function getNotifications(): Promise<NotificationRow[]> {
-  const { data } = await api.get<GetNotificationsResponse | NotificationRow[]>(
-    "/notifications"
-  );
+function getHeaderValue(
+  headers: Record<string, unknown>,
+  name: string
+): string | null {
+  const getter = (headers as { get?: (headerName: string) => unknown }).get;
+  const fromGetter = typeof getter === "function" ? getter.call(headers, name) : null;
+  const exact = headers[name];
+  const lower = headers[name.toLowerCase()];
+  const value = fromGetter ?? exact ?? lower;
+  return typeof value === "string" && value.trim() ? value : null;
+}
 
-  return getArrayData<NotificationRow>(data);
+function parseHeaderPagination(
+  headers: Record<string, unknown>,
+  fallbackLimit: number
+): NotificationPagination {
+  const nextCursor = getHeaderValue(headers, "x-next-cursor");
+  const headerLimit = Number(getHeaderValue(headers, "x-notification-limit"));
+  const hasMore = getHeaderValue(headers, "x-has-more") === "true";
+
+  return {
+    limit: Number.isFinite(headerLimit) && headerLimit > 0 ? headerLimit : fallbackLimit,
+    has_more: hasMore,
+    next_cursor: nextCursor,
+  };
+}
+
+function normalizeNotificationPage(
+  body: GetNotificationsResponse | NotificationRow[] | NotificationPageData,
+  headers: Record<string, unknown>,
+  fallbackLimit: number
+): NotificationPageData {
+  const data = getEnvelopeData<NotificationRow[] | NotificationPageData | unknown>(body);
+
+  if (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    "notifications" in data
+  ) {
+    const page = data as Partial<NotificationPageData>;
+    return {
+      notifications: Array.isArray(page.notifications)
+        ? page.notifications.filter(
+            (item): item is NotificationRow => Boolean(item) && typeof item === "object"
+          )
+        : [],
+      pagination:
+        page.pagination ?? parseHeaderPagination(headers, fallbackLimit),
+    };
+  }
+
+  return {
+    notifications: getArrayData<NotificationRow>(body),
+    pagination: parseHeaderPagination(headers, fallbackLimit),
+  };
+}
+
+export async function getNotifications(params: {
+  cursor?: string | null;
+  limit?: number;
+} = {}): Promise<NotificationPageData> {
+  const limit = params.limit ?? 30;
+  const { data, headers } = await api.get<
+    GetNotificationsResponse | NotificationRow[] | NotificationPageData
+  >("/notifications", {
+    params: {
+      limit,
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+    },
+  });
+
+  return normalizeNotificationPage(
+    data,
+    headers as Record<string, unknown>,
+    limit
+  );
 }
 
 export async function getUnreadCount(): Promise<number> {

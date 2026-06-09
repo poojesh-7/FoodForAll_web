@@ -1,15 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
+import { ChevronDown } from "lucide-react";
 import NotificationList from "@/components/notifications/NotificationList";
 import { useNotificationStore } from "@/store/notificationStore";
 
 export default function NotificationsPage() {
   const notifications = useNotificationStore((state) => state.notifications);
+  const pagination = useNotificationStore((state) => state.pagination);
   const unreadCount = useNotificationStore((state) => state.unreadCount);
   const loading = useNotificationStore((state) => state.loading);
+  const loadingMore = useNotificationStore((state) => state.loadingMore);
   const error = useNotificationStore((state) => state.error);
   const loadNotifications = useNotificationStore((state) => state.loadNotifications);
+  const loadMoreNotifications = useNotificationStore(
+    (state) => state.loadMoreNotifications
+  );
   const markAsRead = useNotificationStore((state) => state.markAsRead);
   const markAllAsRead = useNotificationStore((state) => state.markAllAsRead);
 
@@ -42,7 +48,7 @@ export default function NotificationsPage() {
         <section className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Total
+              Loaded
             </p>
             <p className="mt-1 text-2xl font-semibold text-zinc-950">
               {notifications.length}
@@ -73,6 +79,19 @@ export default function NotificationsPage() {
             notifications={notifications}
             onMarkAsRead={(id) => void markAsRead(id)}
           />
+          {pagination.has_more && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMoreNotifications()}
+                disabled={loadingMore}
+                className="inline-flex min-h-10 items-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                {loadingMore ? "Loading" : "Load more"}
+              </button>
+            </div>
+          )}
         </section>
       </div>
     </main>

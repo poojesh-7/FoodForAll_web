@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { notificationService } from "@/services/notification.service";
-import type { DbId, NotificationRow } from "@shared/contracts/api-contracts";
+import type {
+  DbId,
+  NotificationPagination,
+  NotificationRow,
+} from "@shared/contracts/api-contracts";
 
 type NotificationSyncMessage =
   | { action: "read"; id: string }
@@ -8,12 +12,15 @@ type NotificationSyncMessage =
 
 interface NotificationState {
   notifications: NotificationRow[];
+  pagination: NotificationPagination;
   unreadCount: number;
   loading: boolean;
+  loadingMore: boolean;
   countLoading: boolean;
   error: string;
   loaded: boolean;
   loadNotifications: () => Promise<void>;
+  loadMoreNotifications: () => Promise<void>;
   loadUnreadCount: () => Promise<void>;
   receiveNotification: (notification: NotificationRow) => void;
   markAsRead: (id: DbId) => Promise<void>;
@@ -25,6 +32,11 @@ interface NotificationState {
 
 const CHANNEL_NAME = "food-waste-notifications";
 const STORAGE_KEY = "food-waste-notification-sync";
+const DEFAULT_PAGINATION: NotificationPagination = {
+  limit: 30,
+  has_more: false,
+  next_cursor: null,
+};
 
 let channel: BroadcastChannel | null = null;
 
@@ -55,6 +67,25 @@ function sortNewestFirst(notifications: NotificationRow[]) {
   });
 }
 
+function mergeNotifications(
+  current: NotificationRow[],
+  incoming: NotificationRow[]
+) {
+  const byId = new Map<string, NotificationRow>();
+  const anonymous: NotificationRow[] = [];
+
+  for (const notification of [...current, ...incoming]) {
+    const id = getNotificationId(notification);
+    if (!id) {
+      anonymous.push(notification);
+      continue;
+    }
+    byId.set(id, notification);
+  }
+
+  return sortNewestFirst([...byId.values(), ...anonymous]);
+}
+
 function broadcast(message: NotificationSyncMessage) {
   if (typeof window === "undefined") return;
 
@@ -67,8 +98,10 @@ function broadcast(message: NotificationSyncMessage) {
 
 export const useNotificationStore = create<NotificationState>((set, get) => ({
   notifications: [],
+  pagination: DEFAULT_PAGINATION,
   unreadCount: 0,
   loading: false,
+  loadingMore: false,
   countLoading: false,
   error: "",
   loaded: false,
@@ -76,18 +109,47 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   loadNotifications: async () => {
     try {
       set({ loading: true, error: "" });
-      const notifications = await notificationService.getNotifications();
-      const normalized = sortNewestFirst(notifications.map(normalizeNotification));
+      const [page, unreadCount] = await Promise.all([
+        notificationService.getNotifications({ limit: DEFAULT_PAGINATION.limit }),
+        notificationService.getUnreadCount(),
+      ]);
+      const normalized = sortNewestFirst(
+        page.notifications.map(normalizeNotification)
+      );
 
       set({
         notifications: normalized,
-        unreadCount: normalized.filter((notification) => !notification.is_read).length,
+        pagination: page.pagination,
+        unreadCount,
         loaded: true,
       });
     } catch (error) {
       set({ error: notificationService.getErrorMessage(error) });
     } finally {
       set({ loading: false });
+    }
+  },
+
+  loadMoreNotifications: async () => {
+    const nextCursor = get().pagination.next_cursor;
+    if (!nextCursor || get().loadingMore) return;
+
+    try {
+      set({ loadingMore: true, error: "" });
+      const page = await notificationService.getNotifications({
+        cursor: nextCursor,
+        limit: get().pagination.limit || DEFAULT_PAGINATION.limit,
+      });
+      const normalized = page.notifications.map(normalizeNotification);
+
+      set((state) => ({
+        notifications: mergeNotifications(state.notifications, normalized),
+        pagination: page.pagination,
+      }));
+    } catch (error) {
+      set({ error: notificationService.getErrorMessage(error) });
+    } finally {
+      set({ loadingMore: false });
     }
   },
 
@@ -212,8 +274,10 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   resetNotifications: () =>
     set({
       notifications: [],
+      pagination: DEFAULT_PAGINATION,
       unreadCount: 0,
       loading: false,
+      loadingMore: false,
       countLoading: false,
       error: "",
       loaded: false,

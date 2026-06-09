@@ -63,6 +63,11 @@ function buildCorsOptions() {
   return {
     origin: assertAllowedOrigin,
     credentials: true,
+    exposedHeaders: [
+      "X-Notification-Limit",
+      "X-Has-More",
+      "X-Next-Cursor",
+    ],
     optionsSuccessStatus: 204,
   };
 }

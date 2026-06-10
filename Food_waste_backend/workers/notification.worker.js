@@ -10,8 +10,12 @@ const notificationWorker = new Worker(
   "notification-queue",
   withWorkerBoundary("notification-queue", async (job) => {
     const { userId, type, title, message, data } = job.data;
+    const idempotencyKey =
+      job.data.idempotencyKey ||
+      job.data.idempotency_key ||
+      (job.id ? `notification-queue:${job.id}:${job.timestamp || "unknown"}` : null);
 
-    await notifyUser(userId, type, title, message, data);
+    await notifyUser(userId, type, title, message, data, { idempotencyKey });
   }),
   workerOptions(connection)
 );

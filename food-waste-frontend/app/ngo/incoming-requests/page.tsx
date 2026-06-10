@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { getRestaurantDisplayName } from "@/lib/food";
@@ -62,24 +63,13 @@ function displayValue(value: unknown) {
 }
 
 function formatRelativeTime(value?: string | null) {
-  if (!value) return "Just now";
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return "Just now";
-
-  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60000));
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  return `${Math.floor(hours / 24)}d ago`;
+  return formatPlatformRelativeTime(value);
 }
 
 function formatPickupTime(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "-" : formatPlatformDateTime(date);
 }
 
 function isNearExpiry(value?: string | null) {

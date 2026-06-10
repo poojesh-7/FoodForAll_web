@@ -11,10 +11,13 @@ const operationalCleanupQueue = require("../../queues/operationalCleanup.queue")
 const deadLetterQueue = require("../../queues/deadLetter.queue");
 const { ensureObservabilitySchema, recordAlert } = require("./observability.service");
 const { setGauge, setQueueCountGauge } = require("./metrics.service");
+const {
+  DELAYED_OVERDUE_MS,
+  classifyDelayedJob,
+} = require("../utils/queueJobClassification");
 
 const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
 const STUCK_ACTIVE_MS = Number(process.env.QUEUE_STUCK_ACTIVE_MS || 15 * 60 * 1000);
-const DELAYED_OVERDUE_MS = Number(process.env.QUEUE_DELAYED_OVERDUE_MS || 2 * 60 * 1000);
 
 const monitoredQueueConfigs = [
   { queue: expiryQueue, workerRequired: true },
@@ -32,8 +35,12 @@ const monitoredQueueConfigs = [
 const monitoredQueues = monitoredQueueConfigs.map(({ queue }) => queue);
 const queuesByName = new Map(monitoredQueues.map((queue) => [queue.name, queue]));
 
-async function serializeJob(job) {
+async function serializeJob(queueName, job) {
   if (!job) return null;
+  const dueAt =
+    job.delay && job.timestamp
+      ? new Date(Number(job.timestamp) + Number(job.delay)).toISOString()
+      : null;
   return {
     id: job.id,
     name: job.name,
@@ -44,10 +51,8 @@ async function serializeJob(job) {
     processedOn: job.processedOn || null,
     finishedOn: job.finishedOn || null,
     delay: job.delay || 0,
-    dueAt:
-      job.delay && job.timestamp
-        ? new Date(Number(job.timestamp) + Number(job.delay)).toISOString()
-        : null,
+    dueAt,
+    ...(dueAt ? classifyDelayedJob(queueName, job) : {}),
     data: {
       reservationId: job.data?.reservationId || null,
       reservationIds: Array.isArray(job.data?.reservationIds)
@@ -174,7 +179,13 @@ async function getQueueHealth({ includeJobs = true } = {}) {
           category: "queue",
           severity: "warning",
           message: `${overdueDelayed.length} overdue delayed jobs in ${queue.name}`,
-          metadata: { queueName: queue.name, jobIds: overdueDelayed.map((job) => job.id) },
+          metadata: {
+            queueName: queue.name,
+            jobIds: overdueDelayed.map((job) => job.id),
+            classifications: overdueDelayed.map((job) =>
+              classifyDelayedJob(queue.name, job)
+            ),
+          },
         });
       }
 
@@ -208,9 +219,9 @@ async function getQueueHealth({ includeJobs = true } = {}) {
         overdue_delayed_count: overdueDelayed.length,
         worker_heartbeat_status: heartbeatStatus,
         worker: heartbeat,
-        failed_jobs: await Promise.all(failedJobs.map(serializeJob)),
-        active_jobs: await Promise.all(activeJobs.map(serializeJob)),
-        delayed_jobs: await Promise.all(delayedJobs.map(serializeJob)),
+        failed_jobs: await Promise.all(failedJobs.map((job) => serializeJob(queue.name, job))),
+        active_jobs: await Promise.all(activeJobs.map((job) => serializeJob(queue.name, job))),
+        delayed_jobs: await Promise.all(delayedJobs.map((job) => serializeJob(queue.name, job))),
       };
     })
   );
@@ -264,6 +275,7 @@ async function retryFailedJob(queueName, jobId) {
 }
 
 module.exports = {
+  classifyDelayedJob,
   cleanupQueues,
   getQueueHealth,
   monitoredQueueConfigs,

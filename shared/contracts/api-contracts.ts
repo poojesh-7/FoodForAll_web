@@ -2478,6 +2478,12 @@ export interface AdminQueueJob {
   processedOn?: number | null;
   finishedOn?: number | null;
   delay?: number;
+  dueAt?: ISODateString | null;
+  delayed_classification?: "valid" | "retry_pending" | "stale" | "cleanup_candidate";
+  delayed_reason?: string;
+  expected_delay?: boolean;
+  overdue_ms?: number;
+  recovery_hint?: string;
   data?: {
     reservationId?: DbId | null;
     reservationIds?: DbId[];
@@ -2501,6 +2507,7 @@ export interface AdminQueueHealth {
   counts: AdminQueueCounts;
   retry_exhausted_count?: number;
   stuck_active_count?: number;
+  overdue_delayed_count?: number;
   worker_heartbeat_status?: string;
   worker?: AdminWorkerHeartbeat | null;
   drilldown_href?: string;

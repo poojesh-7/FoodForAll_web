@@ -1,3 +1,5 @@
+import { formatPlatformDateTime } from "./dateTime";
+
 type GovernanceEvent = {
   event_type?: string | null;
   from_status?: unknown;
@@ -45,8 +47,7 @@ export function formatGovernanceDate(value: string | undefined | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
 
-  // Centralized here so future timezone normalization has one governance entry point.
-  return date.toLocaleString();
+  return formatPlatformDateTime(date);
 }
 
 export function governanceStatusBadge(status: unknown) {

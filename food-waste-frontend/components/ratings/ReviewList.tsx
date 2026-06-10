@@ -1,4 +1,5 @@
 import type { ListingRating } from "@shared/contracts/api-contracts";
+import { formatPlatformDate } from "@/lib/dateTime";
 import { MessageSquare, Star } from "lucide-react";
 
 type ReviewListProps = {
@@ -9,7 +10,7 @@ type ReviewListProps = {
 function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString();
+  return formatPlatformDate(date);
 }
 
 export default function ReviewList({

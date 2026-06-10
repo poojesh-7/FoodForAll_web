@@ -1,4 +1,5 @@
 import type { FoodListingRow, NearbyFoodListing } from "@shared/contracts/api-contracts";
+import { formatPlatformDateTime } from "./dateTime";
 import { sanitizeTextInput } from "./sanitize";
 
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;
@@ -101,7 +102,7 @@ export function toDateTimeLocal(value?: string | number | null) {
 export function formatFoodDate(value?: string | number | null) {
   if (!value) return "-";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "-" : formatPlatformDateTime(date);
 }
 
 export function isNormalUserPaidListing(listing: FoodCardListing) {

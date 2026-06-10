@@ -6,6 +6,7 @@ import { Plus } from "lucide-react";
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
+import { formatGovernanceDate } from "@/lib/governanceFormatting";
 import { adminService } from "@/services/admin.service";
 import { useAdminStore } from "@/store/adminStore";
 import type { AdminQueueJob } from "@shared/contracts/api-contracts";
@@ -36,6 +37,18 @@ function queueIncidentHref(queueName: string, context: Record<string, unknown> =
   return `/admin/incidents?${params.toString()}`;
 }
 
+function delayedBadgeClass(classification?: string) {
+  if (classification === "valid") return "bg-emerald-50 text-emerald-700";
+  if (classification === "retry_pending") return "bg-blue-50 text-blue-700";
+  if (classification === "cleanup_candidate") return "bg-red-50 text-red-700";
+  return "bg-amber-50 text-amber-700";
+}
+
+function formatDelayedLabel(value?: string) {
+  if (!value) return "Unknown";
+  return value.replace(/_/g, " ");
+}
+
 export default function AdminQueuesPage() {
   const queues = useAdminStore((state) => state.queues);
   const loading = useAdminStore((state) => state.loading);
@@ -61,6 +74,11 @@ export default function AdminQueuesPage() {
 
   const active = queues.reduce((sum, queue) => sum + queueTotal(queue.counts.active), 0);
   const failed = queues.reduce((sum, queue) => sum + queueTotal(queue.counts.failed), 0);
+  const delayed = queues.reduce((sum, queue) => sum + queueTotal(queue.counts.delayed), 0);
+  const overdueDelayed = queues.reduce(
+    (sum, queue) => sum + queueTotal(queue.overdue_delayed_count),
+    0
+  );
   const retryExhausted = queues.reduce(
     (sum, queue) => sum + queueTotal(queue.retry_exhausted_count),
     0
@@ -81,9 +99,10 @@ export default function AdminQueuesPage() {
     >
       {error && <AdminStateBlock title={error} tone="error" />}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <AdminMetricCard label="Active Jobs" value={active} detail="Currently processing" />
         <AdminMetricCard label="Failed Jobs" value={failed} detail="Needs operational review" />
+        <AdminMetricCard label="Delayed Jobs" value={delayed} detail={`${overdueDelayed} overdue`} />
         <AdminMetricCard label="Retry Exhausted" value={retryExhausted} detail="Dead-letter candidates" />
         <AdminMetricCard label="Stuck Jobs" value={stuck} detail="Active longer than 15 minutes" />
         <AdminMetricCard label="Completed Jobs" value={completed} detail="Completed job history" />
@@ -197,6 +216,65 @@ export default function AdminQueuesPage() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
+        {queues
+          .filter((queue) => queue.delayed_jobs?.length)
+          .map((queue) => (
+            <div
+              key={`${queue.name}-delayed`}
+              className="rounded-lg border border-zinc-200 bg-white shadow-sm"
+            >
+              <div className="border-b border-zinc-200 px-4 py-3">
+                <h2 className="text-base font-semibold text-zinc-950">
+                  Delayed Jobs: {queue.name}
+                </h2>
+              </div>
+              <ul className="divide-y divide-zinc-100 text-sm">
+                {queue.delayed_jobs?.slice(0, 5).map((job: AdminQueueJob) => (
+                  <li key={String(job.id)} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-zinc-950">
+                          {job.name || "job"} #{String(job.id)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          Due {formatGovernanceDate(job.dueAt)} | {job.delayed_reason || "Delayed job"}
+                        </p>
+                        {job.recovery_hint && (
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {job.recovery_hint}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span
+                          className={`rounded-md px-2 py-1 text-xs font-medium ${delayedBadgeClass(
+                            job.delayed_classification
+                          )}`}
+                        >
+                          {formatDelayedLabel(job.delayed_classification)}
+                        </span>
+                        <Link
+                          href={queueIncidentHref(queue.name, {
+                            jobId: job.id,
+                            jobName: job.name,
+                            dueAt: job.dueAt,
+                            classification: job.delayed_classification,
+                            overdueMs: job.overdue_ms,
+                          })}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 transition hover:bg-zinc-100"
+                          title="Create incident"
+                          aria-label={`Create incident for delayed job ${String(job.id)}`}
+                        >
+                          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+
         {queues
           .filter((queue) => queue.failed_jobs?.length)
           .map((queue) => (

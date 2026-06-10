@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPlatformRelativeTime } from "@/lib/dateTime";
 import type { DbId, NotificationRow } from "@shared/contracts/api-contracts";
 
 type NotificationListProps = {
@@ -9,30 +10,6 @@ type NotificationListProps = {
   compact?: boolean;
   onMarkAsRead?: (id: DbId) => void;
 };
-
-function formatRelativeTime(value?: string) {
-  if (!value) return "Just now";
-
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return "Just now";
-
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
-  if (seconds < 60) return "Just now";
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
-}
 
 export default function NotificationList({
   notifications,
@@ -104,7 +81,7 @@ export default function NotificationList({
                     {notification.title || "Notification"}
                   </h3>
                   <time className="shrink-0 text-xs text-zinc-500">
-                    {formatRelativeTime(notification.created_at)}
+                    {formatPlatformRelativeTime(notification.created_at)}
                   </time>
                 </div>
                 {notification.message && (

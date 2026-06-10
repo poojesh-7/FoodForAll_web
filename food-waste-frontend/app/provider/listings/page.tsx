@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Plus, ShieldAlert } from "lucide-react";
 import toast from "react-hot-toast";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
+import { formatPlatformDate } from "@/lib/dateTime";
 import { formatFoodDate, getListingPrice, isFreeRescueListing } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
@@ -61,7 +62,7 @@ function getListingStatusLabel(listing: FoodListingRow) {
 function formatReviewDate(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? "-" : formatPlatformDate(date);
 }
 
 function ListingMetric({

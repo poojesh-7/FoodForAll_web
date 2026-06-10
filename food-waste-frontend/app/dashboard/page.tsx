@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import ImpactMetricGrid from "@/components/analytics/ImpactMetricGrid";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
+import { formatPlatformDateTime } from "@/lib/dateTime";
 import { getRoleDashboard } from "@/lib/onboarding";
 import { impactService } from "@/services/impact.service";
 import { ratingService } from "@/services/rating.service";
@@ -16,7 +17,7 @@ import { useRouter } from "next/navigation";
 function formatRestrictionDate(value: unknown) {
   if (!value) return null;
   const date = new Date(String(value));
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : null;
+  return Number.isFinite(date.getTime()) ? formatPlatformDateTime(date) : null;
 }
 
 export default function DashboardPage() {

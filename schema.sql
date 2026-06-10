@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS "public"."notifications" (
     "message" "text",
     "is_read" boolean DEFAULT false,
     "created_at" timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    "listing_id" "uuid"
+    "listing_id" "uuid",
+    "idempotency_key" "text"
 );
 
 
@@ -1081,6 +1082,8 @@ CREATE INDEX "idx_ngos_verification" ON "public"."ngos" USING "btree" ("is_verif
 
 
 CREATE INDEX "idx_notifications_user_read" ON "public"."notifications" USING "btree" ("user_id", "is_read", "created_at" DESC);
+
+CREATE UNIQUE INDEX "idx_notifications_idempotency_key" ON "public"."notifications" USING "btree" ("idempotency_key") WHERE ("idempotency_key" IS NOT NULL);
 
 
 

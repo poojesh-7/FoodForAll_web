@@ -15,6 +15,7 @@ const {
   DELAYED_OVERDUE_MS,
   classifyDelayedJob,
 } = require("../utils/queueJobClassification");
+const { heartbeatStatus } = require("../utils/heartbeatStatus");
 
 const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
 const STUCK_ACTIVE_MS = Number(process.env.QUEUE_STUCK_ACTIVE_MS || 15 * 60 * 1000);
@@ -68,7 +69,8 @@ async function getWorkerHeartbeats() {
   try {
     await ensureObservabilitySchema();
     const result = await pool.query(`
-      SELECT worker_name, queue_name, status, last_job_id, last_seen_at, metadata
+      SELECT worker_name, queue_name, status, last_job_id, last_seen_at, metadata,
+             EXTRACT(EPOCH FROM (NOW() - last_seen_at))::int AS seconds_since_seen
       FROM worker_heartbeats
       ORDER BY worker_name
     `);
@@ -79,12 +81,7 @@ async function getWorkerHeartbeats() {
 }
 
 function getHeartbeatStatus(heartbeat) {
-  if (!heartbeat) return "missing";
-
-  const lastSeenAt = new Date(heartbeat.last_seen_at).getTime();
-  if (!Number.isFinite(lastSeenAt)) return "invalid";
-
-  return Date.now() - lastSeenAt > STALE_HEARTBEAT_MS ? "stale" : "ok";
+  return heartbeatStatus(heartbeat, STALE_HEARTBEAT_MS);
 }
 
 async function getQueueHealth({ includeJobs = true } = {}) {

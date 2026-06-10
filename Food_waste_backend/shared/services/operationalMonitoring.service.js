@@ -3,6 +3,10 @@ const redis = require("../config/redis");
 const {
   monitoredQueueConfigs,
 } = require("./queueObservability.service");
+const {
+  heartbeatAgeMs,
+  heartbeatStatus: getHeartbeatStatus,
+} = require("../utils/heartbeatStatus");
 
 const WINDOW_OPTIONS = {
   "1h": { label: "Last Hour", hours: 1 },
@@ -78,17 +82,6 @@ async function checkRedis() {
   };
 }
 
-function heartbeatAgeMs(heartbeat) {
-  const secondsSinceSeen = Number(heartbeat?.seconds_since_seen);
-  if (Number.isFinite(secondsSinceSeen)) {
-    return Math.max(0, secondsSinceSeen * 1000);
-  }
-
-  const lastSeen = new Date(heartbeat?.last_seen_at).getTime();
-  if (!Number.isFinite(lastSeen)) return null;
-  return Math.max(0, Date.now() - lastSeen);
-}
-
 function requiresWorkerHeartbeat(heartbeat) {
   const queueName = heartbeat?.queue_name || heartbeat?.worker_name;
   return workerRequirementByQueue.get(queueName) !== false;
@@ -140,17 +133,12 @@ async function getWorkerSnapshot() {
   };
 }
 
-function heartbeatStatus(heartbeat) {
-  if (!heartbeat) return "missing";
-  const ageMs = heartbeatAgeMs(heartbeat);
-  if (ageMs === null) return "invalid";
-  return ageMs > STALE_HEARTBEAT_MS ? "stale" : "ok";
-}
-
 function queueHealthFromCounts({ counts, isPaused, heartbeat, workerRequired }) {
   const waiting = toInt(counts.waiting) + toInt(counts.delayed) + toInt(counts["waiting-children"]);
   const failed = toInt(counts.failed);
-  const workerState = workerRequired ? heartbeatStatus(heartbeat) : "not_required";
+  const workerState = workerRequired
+    ? getHeartbeatStatus(heartbeat, STALE_HEARTBEAT_MS)
+    : "not_required";
 
   if (
     isPaused ||
@@ -216,7 +204,9 @@ async function getQueueSnapshot() {
           delayed: toInt(counts.delayed),
           "waiting-children": toInt(counts["waiting-children"]),
         },
-        worker_heartbeat_status: workerRequired ? heartbeatStatus(heartbeat) : "not_required",
+        worker_heartbeat_status: workerRequired
+          ? getHeartbeatStatus(heartbeat, STALE_HEARTBEAT_MS)
+          : "not_required",
         worker: heartbeat,
         drilldown_href: "/admin/queues",
         failed_jobs: failedJobs.map((job) => ({

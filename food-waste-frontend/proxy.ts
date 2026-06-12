@@ -33,12 +33,6 @@ export function proxy(req: NextRequest) {
   const isProtectedRoute = matchesRoute(pathname, protectedRoutes);
   const isAuthenticated = hasAuthCookie(req);
 
-  if (pathname === "/") {
-    return NextResponse.redirect(
-      new URL(isAuthenticated ? "/dashboard" : "/login", req.url)
-    );
-  }
-
   if (isProtectedRoute && !isAuthenticated) {
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("next", pathname);
@@ -50,7 +44,6 @@ export function proxy(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/",
     "/dashboard/:path*",
     "/select-role/:path*",
     "/complete-profile/:path*",

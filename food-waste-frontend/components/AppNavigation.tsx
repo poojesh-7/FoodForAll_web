@@ -33,6 +33,8 @@ const roleLinks: Partial<Record<UserRole, { href: string; label: string }[]>> = 
   admin: [{ href: "/admin", label: "Admin" }],
 };
 
+const publicRoutes = ["/", "/login", "/privacy", "/terms", "/refund-policy", "/contact"];
+
 function isActive(pathname: string, href: string) {
   if (href === "/ngo" || href === "/volunteer/dashboard") {
     return pathname === href;
@@ -73,6 +75,10 @@ export default function AppNavigation() {
       document.body.style.overflow = "";
     };
   }, [drawerOpen]);
+
+  if (publicRoutes.includes(pathname)) {
+    return null;
+  }
 
   if (
     !initialized ||

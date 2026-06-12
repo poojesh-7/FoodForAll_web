@@ -39,6 +39,21 @@ function getResponseStatus(error: unknown) {
   return null;
 }
 
+function isPermanentAuthFailure(error: unknown) {
+  const status = getResponseStatus(error);
+  return status === 401 || status === 403;
+}
+
+function getSessionRecoveryMessage(error: unknown) {
+  const status = getResponseStatus(error);
+
+  if (status === 429) {
+    return "Session verification is temporarily rate limited. Please try again shortly.";
+  }
+
+  return "We could not verify your session. Please try again.";
+}
+
 async function fetchMeWithRecovery({
   attempts = 1,
   retryUnauthorized = false,
@@ -79,6 +94,7 @@ interface AuthState {
   authSuccess: string | null;
   authRetryAfter: number | null;
   setUser: (user: AuthStoreUser | null) => void;
+  expireSession: () => void;
   clearMessages: () => void;
   bootstrapAuth: () => Promise<AuthMeUser | null>;
   fetchMe: () => Promise<AuthMeUser | null>;
@@ -119,6 +135,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
   },
 
+  expireSession: () => {
+    claimAuthOperation();
+    set({
+      user: null,
+      isAuthenticated: false,
+      isOnboarded: false,
+      initialized: true,
+      authBootstrapped: true,
+      isInitializing: false,
+      loading: false,
+      authError: null,
+      authSuccess: null,
+      authRetryAfter: null,
+    });
+  },
+
   clearMessages: () => set({ authError: null, authSuccess: null, authRetryAfter: null }),
 
   bootstrapAuth: async () => {
@@ -154,23 +186,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         });
 
         return user;
-      } catch {
+      } catch (error) {
         if (!isCurrentAuthOperation(operationId)) {
           return null;
         }
 
+        const currentUser = get().user;
+        const permanentFailure = isPermanentAuthFailure(error);
+
         set({
-          user: null,
-          isAuthenticated: false,
-          isOnboarded: false,
+          user: permanentFailure ? null : currentUser,
+          isAuthenticated: permanentFailure ? false : Boolean(currentUser),
+          isOnboarded: permanentFailure ? false : isUserOnboarded(currentUser),
           initialized: true,
-          authBootstrapped: true,
+          authBootstrapped: permanentFailure,
           isInitializing: false,
-          authError: null,
+          authError: permanentFailure ? null : getSessionRecoveryMessage(error),
           authSuccess: null,
         });
 
-        return null;
+        return permanentFailure ? null : (currentUser as AuthMeUser | null);
       } finally {
         if (isCurrentAuthOperation(operationId)) {
           set({ isInitializing: false });
@@ -206,23 +241,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       return user;
-    } catch {
+    } catch (error) {
       if (!isCurrentAuthOperation(operationId)) {
         return null;
       }
 
+      const currentUser = get().user;
+      const permanentFailure = isPermanentAuthFailure(error);
+
       set({
-        user: null,
-        isAuthenticated: false,
-        isOnboarded: false,
+        user: permanentFailure ? null : currentUser,
+        isAuthenticated: permanentFailure ? false : Boolean(currentUser),
+        isOnboarded: permanentFailure ? false : isUserOnboarded(currentUser),
         initialized: true,
-        authBootstrapped: true,
+        authBootstrapped: permanentFailure,
         isInitializing: false,
-        authError: null,
+        authError: permanentFailure ? null : getSessionRecoveryMessage(error),
         authSuccess: null,
       });
 
-      return null;
+      return permanentFailure ? null : (currentUser as AuthMeUser | null);
     } finally {
       if (isCurrentAuthOperation(operationId)) {
         set({ isInitializing: false });

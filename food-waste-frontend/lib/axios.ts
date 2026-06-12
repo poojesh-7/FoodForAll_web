@@ -2,6 +2,7 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { getPublicApiBaseUrl } from "./env";
 
 const REFRESH_TOKEN_PATH = "/auth/refresh-token";
+export const AUTH_SESSION_EXPIRED_EVENT = "auth:session-expired";
 const PUBLIC_AUTH_PATHS = [
   "/auth/send-otp",
   "/auth/verify-otp",
@@ -14,10 +15,10 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
 };
 
 let refreshPromise: Promise<unknown> | null = null;
-let refreshTokenFailed = false;
+let refreshAuthRejected = false;
 
 export function resetAuthRefreshFailure() {
-  refreshTokenFailed = false;
+  refreshAuthRejected = false;
 }
 
 const api = axios.create({
@@ -40,10 +41,29 @@ function getPathname(url?: string) {
 }
 
 function shouldSkipRefresh(url?: string) {
-  if (refreshTokenFailed) return true;
+  if (refreshAuthRejected) return true;
 
   const pathname = getPathname(url);
   return PUBLIC_AUTH_PATHS.some((path) => pathname.endsWith(path));
+}
+
+function getResponseStatus(error: unknown) {
+  if (error && typeof error === "object" && "response" in error) {
+    const response = (error as { response?: { status?: unknown } }).response;
+    return typeof response?.status === "number" ? response.status : null;
+  }
+
+  return null;
+}
+
+function isPermanentRefreshFailure(error: unknown) {
+  const status = getResponseStatus(error);
+  return status === 401 || status === 403;
+}
+
+function notifySessionExpired() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT));
 }
 
 function refreshAccessToken() {
@@ -89,7 +109,10 @@ api.interceptors.response.use(
       resetAuthRefreshFailure();
       return api(originalRequest);
     } catch (refreshError) {
-      refreshTokenFailed = true;
+      refreshAuthRejected = isPermanentRefreshFailure(refreshError);
+      if (refreshAuthRejected) {
+        notifySessionExpired();
+      }
       return Promise.reject(refreshError);
     }
   }

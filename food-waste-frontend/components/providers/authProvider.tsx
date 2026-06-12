@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { AUTH_SESSION_EXPIRED_EVENT } from "@/lib/axios";
 import { getPostAuthRedirect, getRouteAccessRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
@@ -29,6 +30,14 @@ function matchesRoute(pathname: string, routes: string[]) {
   return routes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
+function getSessionExpiredLoginPath(pathname: string) {
+  const params = new URLSearchParams({
+    next: pathname,
+    session: "expired",
+  });
+  return `/login?${params.toString()}`;
+}
+
 export default function AuthProvider({
   children,
 }: {
@@ -42,8 +51,10 @@ export default function AuthProvider({
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const initialized = useAuthStore((state) => state.initialized);
   const loading = useAuthStore((state) => state.loading);
+  const authError = useAuthStore((state) => state.authError);
   const bootstrapAuth = useAuthStore((state) => state.bootstrapAuth);
   const clearMessages = useAuthStore((state) => state.clearMessages);
+  const expireSession = useAuthStore((state) => state.expireSession);
 
   const authResolved = initialized && !isInitializing;
   const isProtectedRoute = matchesRoute(pathname, protectedRoutes);
@@ -58,6 +69,13 @@ export default function AuthProvider({
   }, [clearMessages, pathname]);
 
   useEffect(() => {
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, expireSession);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, expireSession);
+    };
+  }, [expireSession]);
+
+  useEffect(() => {
     if (!isProtectedRoute) return;
     if (initialized || isInitializing) return;
 
@@ -68,7 +86,8 @@ export default function AuthProvider({
     if (!isProtectedRoute || !authResolved) return;
 
     if (!user) {
-      router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+      if (authError) return;
+      router.replace(getSessionExpiredLoginPath(pathname));
       return;
     }
 
@@ -82,6 +101,7 @@ export default function AuthProvider({
     routeAccessRedirect,
     router,
     user,
+    authError,
   ]);
 
   useEffect(() => {
@@ -94,20 +114,57 @@ export default function AuthProvider({
     return <FullscreenLoading />;
   }
 
-  if (
-    isProtectedRoute &&
-    (!authResolved || loading || !user || routeAccessRedirect)
-  ) {
+  if (isProtectedRoute && authResolved && !user && authError) {
+    return (
+      <SessionRecoveryError
+        message={authError}
+        onRetry={() => {
+          void bootstrapAuth();
+        }}
+      />
+    );
+  }
+
+  if (isProtectedRoute && authResolved && !user) {
+    return (
+      <FullscreenLoading message="Your session has expired. Redirecting to login..." />
+    );
+  }
+
+  if (isProtectedRoute && (!authResolved || loading || routeAccessRedirect)) {
     return <FullscreenLoading />;
   }
 
   return <>{children}</>;
 }
 
-function FullscreenLoading() {
+function FullscreenLoading({ message = "Loading..." }: { message?: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 text-sm text-zinc-600">
-      Loading...
+      {message}
+    </div>
+  );
+}
+
+function SessionRecoveryError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
+      <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 text-center shadow-sm">
+        <p className="text-sm text-zinc-700">{message}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-4 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+        >
+          Try again
+        </button>
+      </div>
     </div>
   );
 }

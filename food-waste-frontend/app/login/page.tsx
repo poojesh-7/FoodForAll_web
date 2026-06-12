@@ -33,6 +33,15 @@ function getSafeNextPath() {
   return nextPath?.startsWith("/") && !nextPath.startsWith("//") ? nextPath : null;
 }
 
+function getInitialSessionNotice() {
+  if (typeof window === "undefined") return "";
+
+  const params = new URLSearchParams(window.location.search);
+  return params.get("session") === "expired"
+    ? "Your session has expired. Please sign in again."
+    : "";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [otpSent, setOtpSent] = useState(false);
@@ -42,6 +51,7 @@ export default function LoginPage() {
   const [resendSeconds, setResendSeconds] = useState(0);
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState(getInitialSessionNotice);
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
@@ -103,6 +113,7 @@ export default function LoginPage() {
       setOtpValue("");
       setOtpSent(false);
       setResendSeconds(0);
+      setSessionNotice("");
       clearMessages();
     },
   });
@@ -117,6 +128,7 @@ export default function LoginPage() {
       const value = event.target.value.replace(/\D/g, "").slice(0, 6);
       setValue("otp", value, { shouldDirty: true, shouldValidate: true });
       setOtpValue(value);
+      setSessionNotice("");
       clearMessages();
     },
   });
@@ -125,6 +137,7 @@ export default function LoginPage() {
     if (resendSeconds > 0) return;
 
     clearMessages();
+    setSessionNotice("");
     const isValid = await trigger("phone");
 
     if (!isValid) return;
@@ -148,6 +161,7 @@ export default function LoginPage() {
 
   const handleVerifyOtp = async (values: LoginFormValues) => {
     clearMessages();
+    setSessionNotice("");
     setVerifyingOtp(true);
     const result = await verifyOtp(values).finally(() => {
       setVerifyingOtp(false);
@@ -188,8 +202,14 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {(authError || authSuccess) && (
+        {(authError || authSuccess || sessionNotice) && (
           <div aria-live="polite" className="space-y-2">
+            {sessionNotice && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {sessionNotice}
+              </p>
+            )}
+
             {authError && (
               <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {authError}

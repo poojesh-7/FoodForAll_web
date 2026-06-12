@@ -132,6 +132,18 @@ function setAuthCookies(res, { accessToken, refreshToken }) {
   setRefreshCookie(res, refreshToken);
 }
 
+function clearAuthCookies(res) {
+  res.clearCookie("accessToken", getClearCookieOptions());
+  res.clearCookie("refreshToken", getClearCookieOptions());
+}
+
+function rejectRefreshToken(res, message) {
+  clearAuthCookies(res);
+  return res.status(401).json({
+    error: message,
+  });
+}
+
 function getRefreshReuseKey(refreshToken) {
   return `auth:refresh-reuse:${crypto
     .createHash("sha256")
@@ -525,9 +537,7 @@ exports.refreshToken = async (req, res) => {
         reason: "missing_refresh_token",
         ip: getClientIp(req),
       });
-      return res.status(401).json({
-        error: "Refresh token required",
-      });
+      return rejectRefreshToken(res, "Refresh token required");
     }
 
     let verifiedRefreshToken;
@@ -542,9 +552,7 @@ exports.refreshToken = async (req, res) => {
         ip: getClientIp(req),
       });
 
-      return res.status(401).json({
-        error: "Invalid refresh token",
-      });
+      return rejectRefreshToken(res, "Invalid refresh token");
     }
 
     const refreshTokenHash = hashRefreshToken(verifiedRefreshToken);
@@ -589,9 +597,7 @@ exports.refreshToken = async (req, res) => {
         ip: getClientIp(req),
       });
 
-      return res.status(401).json({
-        error: "Invalid refresh token",
-      });
+      return rejectRefreshToken(res, "Invalid refresh token");
     }
 
     const user = result.rows[0];
@@ -603,9 +609,7 @@ exports.refreshToken = async (req, res) => {
         ip: getClientIp(req),
       });
 
-      return res.status(401).json({
-        error: "Refresh token expired",
-      });
+      return rejectRefreshToken(res, "Refresh token expired");
     }
 
     // 🔁 Rotate refresh token
@@ -666,9 +670,7 @@ exports.refreshToken = async (req, res) => {
         ip: getClientIp(req),
       });
 
-      return res.status(401).json({
-        error: "Refresh token was already rotated",
-      });
+      return rejectRefreshToken(res, "Refresh token was already rotated");
     }
 
     const accessToken = generateAccessToken(user);
@@ -1208,8 +1210,7 @@ exports.logout = async (req, res) => {
     }
 
     // 🍪 Always clear cookies
-    res.clearCookie("accessToken", getClearCookieOptions());
-    res.clearCookie("refreshToken", getClearCookieOptions());
+    clearAuthCookies(res);
 
     return res.json({ success: true });
 

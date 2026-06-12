@@ -15,7 +15,9 @@
     "migrate:verify": "node scripts/verify-migrations.js",
     "migrate:lint": "node scripts/validate-migration-files.js",
     "admin:bootstrap": "node scripts/bootstrap-admin.js",
-    "trust:rebuild-providers": "node scripts/rebuild-provider-trust-projections.js"
+    "trust:rebuild-providers": "node scripts/rebuild-provider-trust-projections.js",
+    "dev:combined": "concurrently \"npm run dev\" \"npm run workers\"",
+    "start:combined": "concurrently \"npm run start\" \"npm run workers:start\""
   },
   "keywords": [],
   "author": "",
@@ -30,6 +32,7 @@
     "bullmq": "^5.74.1",
     "cashfree-pg": "^5.1.0",
     "compression": "^1.8.1",
+    "concurrently": "^10.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "crypto": "^1.0.1",

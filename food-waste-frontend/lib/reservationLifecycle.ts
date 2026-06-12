@@ -80,7 +80,12 @@ const ACTIVE_PAYMENT_STATUSES = ["not_required", "paid", "pending", "success"];
 
 type LifecycleReservation = Pick<
   ReservationDetails | ReservationHistoryRow,
-  "completed_at" | "payment_expires_at" | "payment_status" | "status" | "task_status"
+  | "completed_at"
+  | "payment_expires_at"
+  | "payment_status"
+  | "picked_up_at"
+  | "status"
+  | "task_status"
 >;
 
 export function normalizeStatus(value: unknown) {
@@ -157,7 +162,13 @@ export function classifyReservationLifecycle(
     ACTIVE_TASK_STATUSES.includes(taskStatus) ||
     ACTIVE_PAYMENT_STATUSES.includes(paymentStatus)
   ) {
-    if (taskStatus === "in_progress" || taskStatus === "assigned") {
+    if (
+      taskStatus === "in_progress" ||
+      taskStatus === "assigned" ||
+      taskStatus === "picked_from_provider" ||
+      taskStatus === "volunteer_started" ||
+      Boolean(reservation.picked_up_at)
+    ) {
       return {
         group: "active",
         status: "in_progress",

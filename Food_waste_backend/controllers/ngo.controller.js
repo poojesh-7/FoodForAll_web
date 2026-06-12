@@ -40,6 +40,7 @@ const {
 const {
   notifyAdminsNgoVerificationSubmitted,
 } = require("../shared/services/operationalNotification.service");
+const { operationalPolicy } = require("../shared/config/operationalPolicy");
 
 const RESERVATION_EXISTS_MESSAGE = "User already has reservation for this listing.";
 
@@ -1386,7 +1387,7 @@ exports.acceptNGORequest = async (req, res) => {
     await ensureListingNotPreviouslyReserved(client, req.user.id, listingId);
 
     const endTime = new Date(listing.pickup_end_time).getTime();
-    if (endTime - Date.now() < 30 * 60 * 1000) {
+    if (endTime - Date.now() < operationalPolicy.food.minNgoRescueRemainingMs) {
       const error = new Error("Insufficient pickup time remaining");
       error.statusCode = 400;
       throw error;

@@ -1,8 +1,10 @@
 const pool = require("../config/db");
 const { ensurePaymentHardeningSchema } = require("./paymentReconciliation.service");
+const { operationalPolicy } = require("../config/operationalPolicy");
 
 async function getPaymentHealth() {
   await ensurePaymentHardeningSchema();
+  const paymentHoldTimeoutMinutes = operationalPolicy.payment.holdTimeoutMinutes;
 
   const [
     payments,
@@ -34,17 +36,23 @@ async function getPaymentHealth() {
       FROM cashfree_webhook_events
       WHERE received_at > NOW() - INTERVAL '24 hours'
     `),
-    pool.query(`
+    pool.query(
+      `
       SELECT p.order_id, p.reservation_id, p.status, p.gateway_status,
              p.reconciliation_status, p.reconciliation_attempts,
              r.payment_expires_at
       FROM payments p
       LEFT JOIN reservations r ON r.id=p.reservation_id
       WHERE p.status='pending'
-      AND COALESCE(r.payment_expires_at, p.created_at + INTERVAL '10 minutes') <= NOW()
+      AND COALESCE(
+        r.payment_expires_at,
+        p.created_at + ($1::int * INTERVAL '1 minute')
+      ) <= NOW()
       ORDER BY COALESCE(r.payment_expires_at, p.created_at) ASC
       LIMIT 20
-    `),
+    `,
+      [paymentHoldTimeoutMinutes]
+    ),
     pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE p.reservation_id IS NOT NULL AND r.id IS NULL)::int AS orphan_payments,

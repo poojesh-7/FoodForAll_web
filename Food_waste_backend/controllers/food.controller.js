@@ -13,6 +13,7 @@ const {
 } = require("../shared/services/operationalNotification.service");
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
+const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
   sanitizeOptionalText,
   sanitizePlainText,
@@ -383,9 +384,9 @@ exports.createFood = async (req, res) => {
       });
     }
 
-    if (endTime - now < 30 * 60 * 1000) {
+    if (endTime - now < operationalPolicy.food.minPickupWindowMs) {
       return res.status(400).json({
-        error: "Minimum pickup window is 30 minutes",
+        error: `Minimum pickup window is ${operationalPolicy.food.minPickupWindowMinutes} minutes`,
       });
     }
 
@@ -485,7 +486,10 @@ exports.createFood = async (req, res) => {
       jobOptions("critical", { delay: expiryDelay, jobId: `expiry-${listing.id}` })
     );
 
-    const alertDelay = Math.max(endTime - 30 * 60 * 1000 - Date.now(), 0);
+    const alertDelay = Math.max(
+      endTime - operationalPolicy.food.expiryAlertLeadMs - Date.now(),
+      0
+    );
 
     await alertQueue.add(
       "expiry-alert",
@@ -1037,9 +1041,11 @@ exports.requestNGO = async (req, res) => {
 
   // ⏱ Time check
   const endTime = new Date(food.pickup_end_time).getTime();
-  if (endTime - Date.now() < 30 * 60 * 1000) {
+  if (endTime - Date.now() < operationalPolicy.food.minNgoRescueRemainingMs) {
     return res.status(400).json({
-      error: "Cannot request NGO: less than 30 minutes remaining",
+      error: `Cannot request NGO: less than ${
+        operationalPolicy.food.minNgoRescueRemainingMinutes
+      } minutes remaining`,
     });
   }
 

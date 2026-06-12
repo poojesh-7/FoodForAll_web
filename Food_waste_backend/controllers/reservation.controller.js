@@ -52,6 +52,7 @@ const {
 } = require("../shared/services/abuseGuard.service");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { withTransaction } = require("../shared/utils/transaction");
+const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
   publishListingUpdated,
   publishPaymentUpdated,
@@ -102,7 +103,10 @@ async function ensureListingNotPreviouslyReserved(client, userId, listingId) {
 
 function getCancellationCutoff(pickupEndTime) {
   const cutoff = new Date(pickupEndTime);
-  cutoff.setMinutes(cutoff.getMinutes() - 20);
+  cutoff.setMinutes(
+    cutoff.getMinutes() -
+      operationalPolicy.reservation.selfPickupCancellationCutoffMinutes
+  );
   return cutoff;
 }
 
@@ -1323,8 +1327,10 @@ exports.markAsPickedUp = async (req, res) => {
 
       // correct delivery timing
       const assignedAt = new Date(reservation.assigned_at).getTime();
-      const pickupDeadline = assignedAt + 15 * 60 * 1000;
-      const deliveryDeadline = pickupDeadline + 30 * 60 * 1000;
+      const pickupDeadline =
+        assignedAt + operationalPolicy.volunteer.pickupTimeoutMs;
+      const deliveryDeadline =
+        pickupDeadline + operationalPolicy.volunteer.deliveryTimeoutMs;
 
       const delay = Math.max(deliveryDeadline - Date.now(), 0);
 

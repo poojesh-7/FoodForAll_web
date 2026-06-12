@@ -85,6 +85,21 @@ const numberFromEnv = (name, { min, max, fallback }) =>
     }).min(min, `${name} must be at least ${min}`).max(max, `${name} must be at most ${max}`)
   );
 
+const integerFromEnv = (name, { min, max, fallback }) =>
+  z.preprocess(
+    (value) => {
+      const raw = String(value || fallback || "").trim();
+      return raw ? Number(raw) : undefined;
+    },
+    z.number({
+      invalid_type_error: `${name} must be an integer`,
+      required_error: `${name} is required`,
+    })
+      .int(`${name} must be an integer`)
+      .min(min, `${name} must be at least ${min}`)
+      .max(max, `${name} must be at most ${max}`)
+  );
+
 const envSchema = z.object({
   APP_ENV: requiredString("APP_ENV")
     .transform((value) =>
@@ -156,6 +171,47 @@ const envSchema = z.object({
     min: 1,
     max: 50,
     fallback: "5",
+  }),
+  VOLUNTEER_PICKUP_TIMEOUT_MINUTES: integerFromEnv("VOLUNTEER_PICKUP_TIMEOUT_MINUTES", {
+    min: 1,
+    max: 1440,
+    fallback: "15",
+  }),
+  VOLUNTEER_DELIVERY_TIMEOUT_MINUTES: integerFromEnv("VOLUNTEER_DELIVERY_TIMEOUT_MINUTES", {
+    min: 1,
+    max: 1440,
+    fallback: "30",
+  }),
+  FOOD_MIN_PICKUP_WINDOW_MINUTES: integerFromEnv("FOOD_MIN_PICKUP_WINDOW_MINUTES", {
+    min: 1,
+    max: 1440,
+    fallback: "30",
+  }),
+  FOOD_MIN_NGO_RESCUE_REMAINING_MINUTES: integerFromEnv(
+    "FOOD_MIN_NGO_RESCUE_REMAINING_MINUTES",
+    {
+      min: 1,
+      max: 1440,
+      fallback: "30",
+    }
+  ),
+  FOOD_EXPIRY_ALERT_LEAD_MINUTES: integerFromEnv("FOOD_EXPIRY_ALERT_LEAD_MINUTES", {
+    min: 1,
+    max: 1440,
+    fallback: "30",
+  }),
+  SELF_PICKUP_CANCELLATION_CUTOFF_MINUTES: integerFromEnv(
+    "SELF_PICKUP_CANCELLATION_CUTOFF_MINUTES",
+    {
+      min: 1,
+      max: 1440,
+      fallback: "20",
+    }
+  ),
+  PAYMENT_HOLD_TIMEOUT_MINUTES: integerFromEnv("PAYMENT_HOLD_TIMEOUT_MINUTES", {
+    min: 1,
+    max: 1440,
+    fallback: "10",
   }),
   MAX_UPLOAD_BYTES: numberFromEnv("MAX_UPLOAD_BYTES", {
     min: 1024,
@@ -490,6 +546,19 @@ function applyNormalizedEnv(env) {
   process.env.SOCKET_PING_INTERVAL_MS = String(env.SOCKET_PING_INTERVAL_MS);
   process.env.SOCKET_PING_TIMEOUT_MS = String(env.SOCKET_PING_TIMEOUT_MS);
   process.env.QUEUE_WORKER_CONCURRENCY = String(env.QUEUE_WORKER_CONCURRENCY);
+  process.env.VOLUNTEER_PICKUP_TIMEOUT_MINUTES = String(env.VOLUNTEER_PICKUP_TIMEOUT_MINUTES);
+  process.env.VOLUNTEER_DELIVERY_TIMEOUT_MINUTES = String(
+    env.VOLUNTEER_DELIVERY_TIMEOUT_MINUTES
+  );
+  process.env.FOOD_MIN_PICKUP_WINDOW_MINUTES = String(env.FOOD_MIN_PICKUP_WINDOW_MINUTES);
+  process.env.FOOD_MIN_NGO_RESCUE_REMAINING_MINUTES = String(
+    env.FOOD_MIN_NGO_RESCUE_REMAINING_MINUTES
+  );
+  process.env.FOOD_EXPIRY_ALERT_LEAD_MINUTES = String(env.FOOD_EXPIRY_ALERT_LEAD_MINUTES);
+  process.env.SELF_PICKUP_CANCELLATION_CUTOFF_MINUTES = String(
+    env.SELF_PICKUP_CANCELLATION_CUTOFF_MINUTES
+  );
+  process.env.PAYMENT_HOLD_TIMEOUT_MINUTES = String(env.PAYMENT_HOLD_TIMEOUT_MINUTES);
   process.env.MAX_UPLOAD_BYTES = String(env.MAX_UPLOAD_BYTES);
   process.env.PLATFORM_COMMISSION_PERCENT = String(env.PLATFORM_COMMISSION_PERCENT);
   process.env.TRUST_MAX_GAIN_PER_DAY = String(env.TRUST_MAX_GAIN_PER_DAY);

@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const logger = require("../utils/logger");
 const { PaymentError } = require("../utils/errors");
 const { jobOptions } = require("../utils/queueOptions");
+const { operationalPolicy } = require("../config/operationalPolicy");
 const {
   recordAlert,
   recordOperationalEvent,
@@ -149,7 +150,7 @@ async function createPayment({
 
     await markPaymentOrderAttemptDbInserted({ client, orderId });
 
-    const expiryTime = new Date(Date.now() + 10 * 60 * 1000);
+    const expiryTime = new Date(Date.now() + operationalPolicy.payment.holdTimeoutMs);
 
     for (const reservation of reservations) {
       await client.query(
@@ -168,7 +169,7 @@ async function createPayment({
           paymentSessionId,
         },
         jobOptions("critical", {
-          delay: 10 * 60 * 1000,
+          delay: operationalPolicy.payment.holdTimeoutMs,
           jobId: `payment-batch-${orderId}`,
         })
       )

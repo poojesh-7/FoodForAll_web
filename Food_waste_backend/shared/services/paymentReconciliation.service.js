@@ -61,6 +61,7 @@ const {
 } = require("./realtime.service");
 const { jobOptions } = require("../utils/queueOptions");
 const { withTransaction } = require("../utils/transaction");
+const { operationalPolicy } = require("../config/operationalPolicy");
 
 const paidStatuses = new Set(["PAID", "SUCCESS"]);
 const failedStatuses = new Set(["FAILED", "EXPIRED", "CANCELLED", "USER_DROPPED"]);
@@ -2882,6 +2883,7 @@ async function reconcileStalePaymentSessions(options = {}) {
     reservationIds = null,
     limit = PAYMENT_RECONCILIATION_LIMIT,
   } = options;
+  const paymentHoldTimeoutMinutes = operationalPolicy.payment.holdTimeoutMinutes;
 
   await ensurePaymentHardeningSchema();
 
@@ -2901,7 +2903,10 @@ async function reconcileStalePaymentSessions(options = {}) {
         AND r.status='payment_pending'
         AND r.payment_status='pending'
         AND p.status='pending'
-        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+        AND COALESCE(
+          r.payment_expires_at,
+          r.reserved_at + ($2::int * INTERVAL '1 minute')
+        ) <= NOW()
         AND NOT EXISTS (
           SELECT 1
           FROM cashfree_webhook_events we
@@ -2911,7 +2916,7 @@ async function reconcileStalePaymentSessions(options = {}) {
         )
         FOR UPDATE OF r SKIP LOCKED
         `,
-        [reservationIds]
+        [reservationIds, paymentHoldTimeoutMinutes]
       );
       rows = result.rows;
     } else {
@@ -2923,7 +2928,10 @@ async function reconcileStalePaymentSessions(options = {}) {
         WHERE r.status='payment_pending'
         AND r.payment_status='pending'
         AND p.status='pending'
-        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+        AND COALESCE(
+          r.payment_expires_at,
+          r.reserved_at + ($2::int * INTERVAL '1 minute')
+        ) <= NOW()
         AND NOT EXISTS (
           SELECT 1
           FROM cashfree_webhook_events we
@@ -2935,7 +2943,7 @@ async function reconcileStalePaymentSessions(options = {}) {
         LIMIT $1
         FOR UPDATE OF r SKIP LOCKED
         `,
-        [limit]
+        [limit, paymentHoldTimeoutMinutes]
       );
       rows = result.rows;
     }

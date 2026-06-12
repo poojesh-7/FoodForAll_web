@@ -18,6 +18,7 @@ const {
 } = require("../shared/services/volunteerRequestSchema.service");
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
+const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
   isProvided,
   isNumberInRange,
@@ -566,7 +567,7 @@ exports.startTask = async (req, res) => {
         "pickup-timeout",
         { reservationId: updatedReservation.id },
         jobOptions("critical", {
-          delay: 15 * 60 * 1000, // 15 minutes
+          delay: operationalPolicy.volunteer.pickupTimeoutMs,
           jobId: `pickup-${updatedReservation.id}`,
         })
       );

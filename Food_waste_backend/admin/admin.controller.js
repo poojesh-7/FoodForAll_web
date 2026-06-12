@@ -1,6 +1,7 @@
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 const { isValidId } = require("../utils/validation");
+const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
   ensureObservabilitySchema,
   recordOperationalEvent,
@@ -455,12 +456,16 @@ async function getOperationalEventSummary() {
 }
 
 async function getReservationDiagnostics() {
-  const result = await pool.query(`
+  const result = await pool.query(
+    `
     SELECT
       COUNT(*) FILTER (
         WHERE r.status='payment_pending'
         AND r.payment_status='pending'
-        AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') <= NOW()
+        AND COALESCE(
+          r.payment_expires_at,
+          r.reserved_at + ($1::int * INTERVAL '1 minute')
+        ) <= NOW()
       )::int AS expired_payment_pending,
       COUNT(*) FILTER (
         WHERE r.status='payment_pending'
@@ -482,7 +487,9 @@ async function getReservationDiagnostics() {
       )::int AS refund_pending_cancelled
     FROM reservations r
     LEFT JOIN food_listings f ON f.id=r.listing_id
-  `);
+  `,
+    [operationalPolicy.payment.holdTimeoutMinutes]
+  );
 
   return result.rows[0];
 }

@@ -7,6 +7,7 @@ const {
 const {
   recordOperationalEvent,
 } = require("./observability.service");
+const { operationalPolicy } = require("../config/operationalPolicy");
 
 function numberFromEnv(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const value = Number(process.env[name] ?? fallback);
@@ -121,13 +122,17 @@ async function getReservationHoldCounters(client, userId, options = {}) {
     options.lookbackHours || getAbuseGuardConfig().abandonmentLookbackHours,
     { min: 1, max: 24 * 30 }
   );
+  const paymentHoldTimeoutMinutes = operationalPolicy.payment.holdTimeoutMinutes;
   const result = await client.query(
     `
     SELECT
       COUNT(*) FILTER (
         WHERE status='payment_pending'
         AND payment_status='pending'
-        AND COALESCE(payment_expires_at, reserved_at + INTERVAL '10 minutes') > NOW()
+        AND COALESCE(
+          payment_expires_at,
+          reserved_at + ($3::int * INTERVAL '1 minute')
+        ) > NOW()
       )::int AS active_unpaid_holds,
       COUNT(*) FILTER (
         WHERE (
@@ -143,7 +148,10 @@ async function getReservationHoldCounters(client, userId, options = {}) {
           OR (
             status='payment_pending'
             AND payment_status='pending'
-            AND COALESCE(payment_expires_at, reserved_at + INTERVAL '10 minutes') <= NOW()
+            AND COALESCE(
+              payment_expires_at,
+              reserved_at + ($3::int * INTERVAL '1 minute')
+            ) <= NOW()
           )
         )
         AND reserved_at >= NOW() - ($2::int * INTERVAL '1 hour')
@@ -163,7 +171,7 @@ async function getReservationHoldCounters(client, userId, options = {}) {
     FROM reservations
     WHERE user_id=$1
     `,
-    [userId, lookbackHours]
+    [userId, lookbackHours, paymentHoldTimeoutMinutes]
   );
 
   return {
@@ -266,6 +274,7 @@ async function getAbuseAnalytics(options = {}) {
   const db = options.db || pool;
   const limit = abuseAnalyticsLimit(options.limit);
   const lookbackDays = Math.max(1, Math.min(Math.trunc(Number(options.sinceDays || 30)), 365));
+  const paymentHoldTimeoutMinutes = operationalPolicy.payment.holdTimeoutMinutes;
 
   const [
     topAbandonedHoldUsers,
@@ -288,7 +297,10 @@ async function getAbuseAnalytics(options = {}) {
              COUNT(*) FILTER (
                WHERE r.status='payment_pending'
                AND r.payment_status='pending'
-               AND COALESCE(r.payment_expires_at, r.reserved_at + INTERVAL '10 minutes') > NOW()
+               AND COALESCE(
+                 r.payment_expires_at,
+                 r.reserved_at + ($3::int * INTERVAL '1 minute')
+               ) > NOW()
              )::int AS active_unpaid_holds,
              MAX(r.reserved_at) AS last_seen_at
       FROM reservations r
@@ -306,7 +318,7 @@ async function getAbuseAnalytics(options = {}) {
       ORDER BY abandoned_hold_count DESC, active_unpaid_holds DESC, last_seen_at DESC
       LIMIT $2
       `,
-      [lookbackDays, limit]
+      [lookbackDays, limit, paymentHoldTimeoutMinutes]
     ),
     db.query(
       `

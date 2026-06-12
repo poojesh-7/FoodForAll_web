@@ -673,7 +673,15 @@ exports.getProviderReservations = async (req, res) => {
              p.reliability_deposit_amount,
              p.reliability_deposit_status,
              requester.id AS requester_id,
-             requester.name AS requester_name,
+             CASE
+               WHEN r.pickup_type = 'ngo'
+               THEN COALESCE(
+                 NULLIF(TRIM(requester_ngo.organization_name), ''),
+                 requester.name
+               )
+               ELSE requester.name
+             END AS requester_name,
+             requester_ngo.organization_name AS requester_organization_name,
              requester.phone AS requester_phone,
              volunteer.name AS assigned_volunteer_name,
              volunteer.phone AS assigned_volunteer_phone,
@@ -684,6 +692,7 @@ exports.getProviderReservations = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON f.id = r.listing_id
       JOIN users requester ON requester.id = r.user_id
+      LEFT JOIN ngos requester_ngo ON requester_ngo.user_id = requester.id
       LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
       LEFT JOIN payments p ON p.reservation_id = r.id
       WHERE f.provider_id = $1

@@ -456,6 +456,7 @@ export interface ProviderReservationRow extends ReservationDetails {
   listing_id: DbId;
   requester_id: DbId;
   requester_name: string | null;
+  requester_organization_name?: string | null;
   requester_phone: string | null;
   reservation_kind: "user" | "ngo" | string;
   lifecycle_group?: "active" | "history" | string;

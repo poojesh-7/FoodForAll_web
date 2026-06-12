@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const redis = require("../config/redis");
 const logger = require("../utils/logger");
+const { providerDisplaySelect } = require("./providerDisplay.service");
 
 function unique(values) {
   return [...new Set(values.filter((value) => value !== undefined && value !== null))];
@@ -105,7 +106,15 @@ async function getReservationSnapshot(reservationId, client = pool) {
            f.is_free,
            f.price,
            requester.id AS requester_id,
-           requester.name AS requester_name,
+           CASE
+             WHEN r.pickup_type = 'ngo'
+             THEN COALESCE(
+               NULLIF(TRIM(requester_ngo.organization_name), ''),
+               requester.name
+             )
+             ELSE requester.name
+           END AS requester_name,
+           requester_ngo.organization_name AS requester_organization_name,
            requester.phone AS requester_phone,
            requester.role AS requester_role,
            volunteer.name AS assigned_volunteer_name,
@@ -117,6 +126,7 @@ async function getReservationSnapshot(reservationId, client = pool) {
     FROM reservations r
     JOIN food_listings f ON f.id = r.listing_id
     LEFT JOIN users requester ON requester.id = r.user_id
+    LEFT JOIN ngos requester_ngo ON requester_ngo.user_id = requester.id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
     WHERE r.id=$1
     `,
@@ -128,7 +138,22 @@ async function getReservationSnapshot(reservationId, client = pool) {
 
 async function getListingSnapshot(listingId, client = pool) {
   const result = await client.query(
-    `SELECT * FROM food_listings WHERE id=$1`,
+    `
+    SELECT f.*,
+           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+           restaurant.restaurant_name
+    FROM food_listings f
+    JOIN users provider ON provider.id=f.provider_id
+    LEFT JOIN LATERAL (
+      SELECT restaurant_name,
+             NULL::text AS business_name
+      FROM restaurants
+      WHERE user_id=f.provider_id
+      ORDER BY is_verified DESC, id DESC
+      LIMIT 1
+    ) restaurant ON true
+    WHERE f.id=$1
+    `,
     [listingId]
   );
 
@@ -314,8 +339,10 @@ async function publishListingUpdated(listingId, options = {}) {
   let listing;
 
   try {
-    listing =
-      options.listing || (await getListingSnapshot(listingId, options.client));
+    listing = await getListingSnapshot(listingId, options.client);
+    if (options.listing) {
+      listing = listing ? { ...listing, ...options.listing } : options.listing;
+    }
   } catch (err) {
     logger.warn("Listing realtime snapshot failed", { err, listingId });
     return null;

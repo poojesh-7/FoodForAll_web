@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import type { Socket } from "socket.io-client";
 import toast from "react-hot-toast";
 import { socket } from "@/lib/socket";
@@ -28,6 +29,33 @@ type SocketContextValue = {
 
 const SocketContext = createContext<SocketContextValue | null>(null);
 
+const realtimeStatusRoutes = [
+  "/dashboard",
+  "/food",
+  "/reservations",
+  "/notifications",
+  "/provider/listings",
+  "/provider/reservations",
+  "/provider/moderation-cases",
+  "/ngo",
+  "/ngo/nearby-listings",
+  "/ngo/reservations",
+  "/ngo/volunteers",
+  "/volunteer/dashboard",
+  "/volunteer/ngos",
+  "/volunteer/requests",
+  "/volunteer/tasks",
+  "/payment-success",
+  "/payment-failed",
+  "/admin/monitoring",
+  "/admin/queues",
+  "/admin/moderation-cases",
+];
+
+function matchesRoute(pathname: string, routes: string[]) {
+  return routes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
 export function useSocket() {
   const context = useContext(SocketContext);
   if (!context) {
@@ -37,6 +65,7 @@ export function useSocket() {
 }
 
 export default function SocketProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initialized = useAuthStore((state) => state.initialized);
@@ -158,14 +187,22 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     () => ({ socket, connected, reconnecting, offline }),
     [connected, reconnecting, offline]
   );
+  const showConnectionStatus =
+    initialized &&
+    !isInitializing &&
+    isAuthenticated &&
+    isOnboarded &&
+    matchesRoute(pathname, realtimeStatusRoutes);
 
   return (
     <SocketContext.Provider value={value}>
-      <ConnectionStatusBanner
-        connected={connected}
-        reconnecting={reconnecting}
-        offline={offline}
-      />
+      {showConnectionStatus && (
+        <ConnectionStatusBanner
+          connected={connected}
+          reconnecting={reconnecting}
+          offline={offline}
+        />
+      )}
       {children}
     </SocketContext.Provider>
   );

@@ -6,7 +6,6 @@ import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 import type { UserRole } from "@shared/contracts/api-contracts";
 
-
 type CompleteProfileForm = {
   name: string;
   email: string;
@@ -28,6 +27,24 @@ function isProfileRole(role: UserRole | null | undefined) {
   return role === "user" || role === "volunteer";
 }
 
+function getProfileOnboardingCopy(role: UserRole | null | undefined) {
+  if (role === "volunteer") {
+    return {
+      step: "Volunteer onboarding",
+      title: "Volunteer Registration",
+      description:
+        "Help transport rescued food from providers to recipients and support local food rescue efforts.",
+    };
+  }
+
+  return {
+    step: "Profile setup",
+    title: "Complete Your Profile",
+    description:
+      "Tell us a little about yourself so we can personalize your FoodForAll experience.",
+  };
+}
+
 export default function CompleteProfilePage() {
   const router = useRouter();
 
@@ -45,6 +62,7 @@ export default function CompleteProfilePage() {
     useCurrentLocation: true,
   });
   const [formError, setFormError] = useState("");
+  const onboardingCopy = getProfileOnboardingCopy(user?.role);
 
   useEffect(() => {
     if (!user?.role) {
@@ -102,11 +120,16 @@ export default function CompleteProfilePage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
-      <div className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+      <div className="w-full max-w-lg space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-950">Complete Profile</h1>
-          <p className="mt-1 text-sm text-zinc-600">
-            Add the basic details needed for your account.
+          <p className="text-sm font-semibold text-emerald-700">
+            {onboardingCopy.step}
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-950">
+            {onboardingCopy.title}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-600">
+            {onboardingCopy.description}
           </p>
         </div>
 
@@ -125,37 +148,66 @@ export default function CompleteProfilePage() {
           </div>
         )}
 
-        <input
-          value={form.name}
-          placeholder="Name"
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, name: event.target.value })}
-        />
+        <div className="space-y-2">
+          <label htmlFor="name" className="block text-sm font-medium text-zinc-700">
+            Name
+          </label>
+          <input
+            id="name"
+            value={form.name}
+            placeholder="Your full name"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            onChange={(event) => setForm({ ...form, name: event.target.value })}
+          />
+        </div>
 
-        <input
-          value={form.email}
-          type="email"
-          placeholder="Email"
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, email: event.target.value })}
-        />
+        <div className="space-y-2">
+          <label htmlFor="email" className="block text-sm font-medium text-zinc-700">
+            Email
+          </label>
+          <input
+            id="email"
+            value={form.email}
+            type="email"
+            placeholder="you@example.com"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            onChange={(event) => setForm({ ...form, email: event.target.value })}
+          />
+        </div>
 
-        <input
-          value={form.address}
-          placeholder="Address"
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) => setForm({ ...form, address: event.target.value })}
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="address"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Address
+          </label>
+          <input
+            id="address"
+            value={form.address}
+            placeholder="Optional pickup or delivery area"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            onChange={(event) => setForm({ ...form, address: event.target.value })}
+          />
+        </div>
 
-        <label className="flex items-center gap-2 text-sm text-zinc-700">
+        <label className="flex items-start gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
           <input
             type="checkbox"
             checked={form.useCurrentLocation}
+            className="mt-1"
             onChange={(event) =>
               setForm({ ...form, useCurrentLocation: event.target.checked })
             }
           />
-          Use my current location
+          <span>
+            <span className="block font-medium text-zinc-950">
+              Use my current location
+            </span>
+            <span className="mt-1 block text-zinc-600">
+              This helps match nearby food, NGOs, and pickup activity.
+            </span>
+          </span>
         </label>
 
         <button

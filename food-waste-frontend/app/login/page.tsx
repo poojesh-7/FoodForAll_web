@@ -190,17 +190,47 @@ export default function LoginPage() {
       : "Send OTP";
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
-      <form
-        onSubmit={handleSubmit(handleVerifyOtp)}
-        className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
-      >
-        <div>
-          <h1 className="text-2xl font-semibold text-zinc-950">Login</h1>
-          <p className="mt-1 text-sm text-zinc-600">
-            Sign in with your phone number.
-          </p>
-        </div>
+    <main className="min-h-screen bg-zinc-50 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
+        <section className="space-y-6">
+          <div className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            Food rescue platform
+          </div>
+          <div className="max-w-2xl space-y-4">
+            <h1 className="text-4xl font-semibold text-zinc-950 sm:text-5xl">
+              FoodForAll
+            </h1>
+            <p className="text-lg leading-8 text-zinc-700">
+              Connect restaurants, NGOs, volunteers and communities to rescue
+              surplus food before it goes to waste.
+            </p>
+          </div>
+          <ul className="grid max-w-2xl gap-3 text-sm font-medium text-zinc-700 sm:grid-cols-3 lg:grid-cols-1">
+            {[
+              "Reduce food waste.",
+              "Support communities.",
+              "Create measurable impact.",
+            ].map((item) => (
+              <li key={item} className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-600" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <form
+          onSubmit={handleSubmit(handleVerifyOtp)}
+          className="w-full space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
+        >
+          <div>
+            <h2 className="text-2xl font-semibold text-zinc-950">
+              Sign in to FoodForAll
+            </h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Use your phone number to receive a secure OTP.
+            </p>
+          </div>
 
         {(authError || authSuccess || sessionNotice) && (
           <div aria-live="polite" className="space-y-2">
@@ -290,7 +320,8 @@ export default function LoginPage() {
             </button>
           </div>
         )}
-      </form>
+        </form>
+      </div>
     </main>
   );
 }

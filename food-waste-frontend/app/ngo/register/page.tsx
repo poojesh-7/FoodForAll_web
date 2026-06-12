@@ -65,12 +65,18 @@ export default function NGORegisterPage() {
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
+        className="w-full max-w-lg space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
       >
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-950">Register NGO</h1>
-          <p className="mt-1 text-sm text-zinc-600">
-            Submit your organization details for verification.
+          <p className="text-sm font-semibold text-emerald-700">
+            Organization onboarding
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-950">
+            NGO Registration
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-600">
+            Provide organization information to participate in food rescue
+            operations and community distribution.
           </p>
         </div>
 
@@ -80,36 +86,63 @@ export default function NGORegisterPage() {
           </p>
         )}
 
-        <input
-          value={form.organization_name}
-          placeholder="Organization name"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, organization_name: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="organization_name"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Organization name
+          </label>
+          <input
+            id="organization_name"
+            value={form.organization_name}
+            placeholder="Registered NGO name"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, organization_name: event.target.value })
+            }
+          />
+        </div>
 
-        <input
-          value={form.registration_number}
-          placeholder="Registration number"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, registration_number: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="registration_number"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Registration number
+          </label>
+          <input
+            id="registration_number"
+            value={form.registration_number}
+            placeholder="Government registration number"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, registration_number: event.target.value })
+            }
+          />
+        </div>
 
-        <input
-          value={form.service_radius_km}
-          inputMode="decimal"
-          placeholder="Service radius (km)"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, service_radius_km: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="service_radius_km"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Service radius
+          </label>
+          <input
+            id="service_radius_km"
+            value={form.service_radius_km}
+            inputMode="decimal"
+            placeholder="Service radius in km"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, service_radius_km: event.target.value })
+            }
+          />
+        </div>
 
         <button
           type="submit"

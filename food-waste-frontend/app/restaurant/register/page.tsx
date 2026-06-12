@@ -72,12 +72,18 @@ export default function RestaurantRegisterPage() {
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-md space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
+        className="w-full max-w-lg space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
       >
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-950">Register Restaurant</h1>
-          <p className="mt-1 text-sm text-zinc-600">
-            Submit your restaurant details for verification.
+          <p className="text-sm font-semibold text-emerald-700">
+            Provider onboarding
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-950">
+            Provider Registration
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-600">
+            Complete verification to start sharing surplus food with nearby
+            NGOs and users.
           </p>
         </div>
 
@@ -87,47 +93,86 @@ export default function RestaurantRegisterPage() {
           </p>
         )}
 
-        <input
-          value={form.restaurant_name}
-          placeholder="Restaurant name"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, restaurant_name: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="restaurant_name"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Restaurant or provider name
+          </label>
+          <input
+            id="restaurant_name"
+            value={form.restaurant_name}
+            placeholder="Registered food provider name"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, restaurant_name: event.target.value })
+            }
+          />
+        </div>
 
-        <input
-          value={form.fssai_number}
-          placeholder="FSSAI number"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, fssai_number: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="fssai_number"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            FSSAI number
+          </label>
+          <input
+            id="fssai_number"
+            value={form.fssai_number}
+            placeholder="Food safety license number"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, fssai_number: event.target.value })
+            }
+          />
+        </div>
 
-        <input
-          value={form.service_radius_km}
-          inputMode="decimal"
-          placeholder="Service radius (km)"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-          onChange={(event) =>
-            setForm({ ...form, service_radius_km: event.target.value })
-          }
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="provider_service_radius_km"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Service radius
+          </label>
+          <input
+            id="provider_service_radius_km"
+            value={form.service_radius_km}
+            inputMode="decimal"
+            placeholder="Service radius in km"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+            onChange={(event) =>
+              setForm({ ...form, service_radius_km: event.target.value })
+            }
+          />
+        </div>
 
-        <input
-          type="file"
-          accept="image/*,.pdf"
-          disabled={loading}
-          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700"
-          onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
-            setError("");
-          }}
-        />
+        <div className="space-y-2">
+          <label
+            htmlFor="fssai_certificate"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            FSSAI certificate
+          </label>
+          <input
+            id="fssai_certificate"
+            type="file"
+            accept="image/*,.pdf"
+            disabled={loading}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 disabled:bg-zinc-100"
+            onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null);
+              setError("");
+            }}
+          />
+          <p className="text-xs text-zinc-500">
+            Upload an image or PDF for verification.
+          </p>
+        </div>
 
         <button
           type="submit"

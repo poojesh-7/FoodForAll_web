@@ -28,6 +28,7 @@ type GoogleAccounts = {
           text: "continue_with" | "signin_with" | "signup_with";
           shape: "rectangular" | "pill" | "circle" | "square";
           width?: number;
+          click_listener?: () => void;
         }
       ) => void;
     };
@@ -43,9 +44,23 @@ declare global {
 const GOOGLE_SDK_POLL_INTERVAL_MS = 100;
 const GOOGLE_SDK_READY_TIMEOUT_MS = 8000;
 const GOOGLE_SDK_LOAD_ERROR =
-  "Google sign-in could not load. Please refresh the page or try again later.";
+  "Google sign-in could not load. Check your connection, refresh the page, or try again later.";
+const GOOGLE_SDK_INIT_ERROR =
+  "Google sign-in could not start. Refresh the page and try again.";
+const GOOGLE_BUTTON_RENDER_ERROR =
+  "Google sign-in button could not render. Refresh the page and try again.";
+const GOOGLE_POPUP_NOTICE =
+  "If the Google sign-in window did not open, allow pop-ups for this site and try again.";
+const GOOGLE_CREDENTIAL_ERROR =
+  "Google sign-in was cancelled or did not return account details. Please try again.";
+const GOOGLE_POPUP_NOTICE_DELAY_MS = 5000;
 
 type GoogleSdkStatus = "loading" | "ready" | "failed";
+
+let initializedGoogleClientId: string | null = null;
+let activeGoogleCredentialHandler:
+  | ((response: GoogleCredentialResponse) => void)
+  | null = null;
 
 function isGoogleSdkReady() {
   const googleAccountsId = window.google?.accounts?.id;
@@ -81,6 +96,31 @@ function getInitialSessionNotice() {
   return "";
 }
 
+function initializeGoogleIdentity(
+  clientId: string,
+  onCredential: (response: GoogleCredentialResponse) => void
+) {
+  const googleAccountsId = window.google?.accounts?.id;
+
+  if (!googleAccountsId?.initialize) {
+    throw new Error("Google Identity Services is not ready.");
+  }
+
+  activeGoogleCredentialHandler = onCredential;
+
+  if (initializedGoogleClientId === clientId) {
+    return;
+  }
+
+  googleAccountsId.initialize({
+    client_id: clientId,
+    callback: (response) => {
+      activeGoogleCredentialHandler?.(response);
+    },
+  });
+  initializedGoogleClientId = clientId;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const googleClientId = getPublicGoogleClientId();
@@ -94,6 +134,8 @@ export default function LoginPage() {
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const googleAuthBusyRef = useRef(false);
   const redirectingRef = useRef(false);
+  const popupNoticeTimerRef = useRef<number | null>(null);
+  const [googlePopupNotice, setGooglePopupNotice] = useState("");
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
@@ -101,6 +143,21 @@ export default function LoginPage() {
   const authSuccess = useAuthStore((state) => state.authSuccess);
   const googleLogin = useAuthStore((state) => state.googleLogin);
   const clearMessages = useAuthStore((state) => state.clearMessages);
+
+  const clearPopupNoticeTimer = useCallback(() => {
+    if (popupNoticeTimerRef.current === null) return;
+
+    window.clearTimeout(popupNoticeTimerRef.current);
+    popupNoticeTimerRef.current = null;
+  }, []);
+
+  const schedulePopupNotice = useCallback(() => {
+    clearPopupNoticeTimer();
+    setGooglePopupNotice("");
+    popupNoticeTimerRef.current = window.setTimeout(() => {
+      setGooglePopupNotice(GOOGLE_POPUP_NOTICE);
+    }, GOOGLE_POPUP_NOTICE_DELAY_MS);
+  }, [clearPopupNoticeTimer]);
 
   useEffect(() => {
     clearMessages();
@@ -132,15 +189,24 @@ export default function LoginPage() {
   const handleGoogleCredential = useCallback(
     async (response: GoogleCredentialResponse) => {
       if (
-        !response.credential ||
         googleAuthBusyRef.current ||
         redirectingRef.current
       ) {
         return;
       }
 
+      clearPopupNoticeTimer();
+
+      if (!response.credential) {
+        setGooglePopupNotice("");
+        setGoogleSdkError(GOOGLE_CREDENTIAL_ERROR);
+        return;
+      }
+
       clearMessages();
       setSessionNotice("");
+      setGooglePopupNotice("");
+      setGoogleSdkError("");
       googleAuthBusyRef.current = true;
       setGoogleLoading(true);
 
@@ -159,6 +225,7 @@ export default function LoginPage() {
       clearMessages,
       finishAuthRedirect,
       googleLogin,
+      clearPopupNoticeTimer,
     ]
   );
 
@@ -228,23 +295,36 @@ export default function LoginPage() {
 
     try {
       googleButtonElement.replaceChildren();
-      googleAccountsId.initialize({
-        client_id: googleClientId,
-        callback: handleGoogleCredential,
-      });
+      initializeGoogleIdentity(googleClientId, handleGoogleCredential);
+    } catch (error) {
+      console.error("Google sign-in initialization failed", error);
+      googleButtonElement.replaceChildren();
+      failureTimer = window.setTimeout(() => {
+        setGoogleSdkStatus("failed");
+        setGoogleSdkError(GOOGLE_SDK_INIT_ERROR);
+      }, 0);
+      return () => {
+        if (failureTimer !== null) {
+          window.clearTimeout(failureTimer);
+        }
+      };
+    }
+
+    try {
       googleAccountsId.renderButton(googleButtonElement, {
         theme: "outline",
         size: "large",
         text: "continue_with",
         shape: "rectangular",
         width: 320,
+        click_listener: schedulePopupNotice,
       });
     } catch (error) {
       console.error("Google sign-in render failed", error);
       googleButtonElement.replaceChildren();
       failureTimer = window.setTimeout(() => {
         setGoogleSdkStatus("failed");
-        setGoogleSdkError(GOOGLE_SDK_LOAD_ERROR);
+        setGoogleSdkError(GOOGLE_BUTTON_RENDER_ERROR);
       }, 0);
     }
 
@@ -253,18 +333,29 @@ export default function LoginPage() {
         window.clearTimeout(failureTimer);
       }
 
+      if (activeGoogleCredentialHandler === handleGoogleCredential) {
+        activeGoogleCredentialHandler = null;
+      }
+      clearPopupNoticeTimer();
       googleButtonElement.replaceChildren();
     };
-  }, [googleClientId, googleSdkStatus, handleGoogleCredential]);
+  }, [
+    clearPopupNoticeTimer,
+    googleClientId,
+    googleSdkStatus,
+    handleGoogleCredential,
+    schedulePopupNotice,
+  ]);
 
   useEffect(() => {
     const googleButtonElement = googleButtonRef.current;
 
     return () => {
+      clearPopupNoticeTimer();
       googleButtonElement?.replaceChildren();
       window.google?.accounts?.id?.cancel?.();
     };
-  }, []);
+  }, [clearPopupNoticeTimer]);
 
   const busy = loading || redirecting || googleLoading;
   const googleSdkLoading = googleSdkStatus === "loading";
@@ -386,8 +477,17 @@ export default function LoginPage() {
               </div>
             )}
 
-            {googleClientId && googleSdkError && (
-              <p className="text-sm text-red-700">{googleSdkError}</p>
+            {googleClientId && (googleSdkError || googlePopupNotice) && (
+              <div aria-live="polite" className="space-y-2">
+                {googleSdkError && (
+                  <p className="text-sm text-red-700">{googleSdkError}</p>
+                )}
+                {googlePopupNotice && (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {googlePopupNotice}
+                  </p>
+                )}
+              </div>
             )}
 
             <p className="text-sm leading-6 text-zinc-600">

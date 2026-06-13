@@ -48,7 +48,8 @@ function isVerificationRole(role: UserRole | null | undefined): role is Verifica
 function getVerificationStatus(user: OnboardingUser | null | undefined): VerificationStatus {
   if (!isVerificationRole(user?.role)) return "approved";
   if (user?.verification_status) return user.verification_status;
-  return user?.is_verified ? "approved" : "pending";
+  if (user?.is_verified) return "approved";
+  return "unregistered";
 }
 
 export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {

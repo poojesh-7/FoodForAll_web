@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 import {
   HandHeart,
@@ -9,6 +8,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { PublicPageShell } from "@/components/public/PublicSite";
+import PublicAuthActions from "@/components/public/PublicAuthActions";
 
 export const metadata: Metadata = {
   title: "FoodForAll | Food Rescue Platform",
@@ -83,19 +83,8 @@ export default function Home() {
             surplus food listings, reservations, pickup support, notifications,
             trust workflows, and impact tracking in one platform.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/login"
-              className="rounded-md bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800"
-            >
-              Login
-            </Link>
-            <Link
-              href="/login"
-              className="rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100"
-            >
-              Get Started
-            </Link>
+          <div className="mt-6">
+            <PublicAuthActions variant="lightCta" />
           </div>
         </div>
 
@@ -198,20 +187,7 @@ export default function Home() {
               Continue with Google to join the FoodForAll pilot.
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/login"
-              className="rounded-md bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100"
-            >
-              Login
-            </Link>
-            <Link
-              href="/login"
-              className="rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
-            >
-              Get Started
-            </Link>
-          </div>
+          <PublicAuthActions variant="darkCta" />
         </div>
       </section>
     </PublicPageShell>

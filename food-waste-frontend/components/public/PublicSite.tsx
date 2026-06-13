@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import PublicAuthActions from "@/components/public/PublicAuthActions";
 
 export const businessName = "FoodForAll";
 export const supportEmail = "foodforall.support@gmail.com";
@@ -22,9 +23,7 @@ export function PublicHeader() {
           FoodForAll
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium text-zinc-700">
-          <Link href="/login" className="text-zinc-950 hover:text-emerald-700">
-            Login
-          </Link>
+          <PublicAuthActions />
           {publicLinks.map((link) => (
             <Link key={link.href} href={link.href} className="hover:text-emerald-700">
               {link.label}

@@ -31,7 +31,7 @@ export default function ContactPage() {
           </div>
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Planned Domain
+              Planned Domain (coming soon)
             </dt>
             <dd className="mt-1 font-medium text-zinc-950">{plannedDomain}</dd>
           </div>
@@ -50,7 +50,7 @@ export default function ContactPage() {
           </div>
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Domain Support Mailbox
+              Future Domain Support Mailbox
             </dt>
             <dd className="mt-1">
               <a

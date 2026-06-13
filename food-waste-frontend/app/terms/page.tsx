@@ -28,8 +28,10 @@ export default function TermsPage() {
       <LegalSection title="Account Responsibilities">
         <SimpleList
           items={[
-            "Use your own phone number for OTP login and keep account access secure.",
+            "Use your own Google account for authentication and keep account access secure.",
+            "Provide and maintain an accurate phone number for provider contact, NGO contact, volunteer coordination, reservation communication, support, compliance, account recovery, and future phone verification support.",
             "Provide accurate role, profile, organization, location, and verification information.",
+            "Complete required role selection, profile completion, and role-specific onboarding before using protected platform workflows.",
             "Do not misuse OTP, reservation, payment, volunteer, provider, NGO, notification, reporting, or compliance workflows.",
             "Do not impersonate another person or organization.",
             "Tell FoodForAll about safety, payment, account, or policy concerns through support or in-app reporting where available.",

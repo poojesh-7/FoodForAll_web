@@ -62,6 +62,9 @@ export interface OptionalCoordinatesQuery {
 export interface AuthUser {
   id: DbId;
   role: UserRole | null;
+  auth_provider?: "otp" | "google" | string;
+  email_verified?: boolean;
+  phone_verified_at?: ISODateString | null;
 }
 
 export interface UserProfile {
@@ -69,6 +72,9 @@ export interface UserProfile {
   name: string | null;
   phone: string | null;
   email: string | null;
+  email_verified?: boolean;
+  auth_provider?: "otp" | "google" | string;
+  phone_verified_at?: ISODateString | null;
   role: UserRole | null;
   created_at: ISODateString;
 }
@@ -105,11 +111,15 @@ export interface AuthMeUser extends UserProfile {
 export interface CompleteProfileUser {
   id: DbId;
   name: string;
+  phone: string;
   email: string;
   role: UserRole;
-  address: string | null;
+  address: string;
   latitude: number | string | null;
   longitude: number | string | null;
+  auth_provider?: "otp" | "google" | string;
+  email_verified?: boolean;
+  phone_verified_at?: ISODateString | null;
 }
 
 export interface RestaurantRegistration {
@@ -571,6 +581,16 @@ export interface VerifyOTPData {
 }
 export type VerifyOTPResponse = ApiResponse<VerifyOTPData>;
 
+export interface GoogleLoginRequest {
+  credential: string;
+}
+export interface GoogleLoginData {
+  user: AuthUser;
+  isNewUser: boolean;
+  linkedExistingUser: boolean;
+}
+export type GoogleLoginResponse = ApiResponse<GoogleLoginData>;
+
 export interface SetRoleRequest {
   role: UserRole;
 }
@@ -586,7 +606,7 @@ export interface CompleteProfileRequest {
   name: string;
   email: string;
   role: UserRole;
-  address?: string | null;
+  address: string;
   latitude?: number | string | null;
   longitude?: number | string | null;
 }
@@ -2686,6 +2706,15 @@ export const apiContracts = {
     },
     {
       method: "POST",
+      path: "/api/v1/auth/google",
+      auth: "public",
+      middleware: ["authLimiter"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "GoogleLoginRequest" },
+      response: "GoogleLoginResponse",
+      statusCodes: [200, 400, 401, 409, 503, 500],
+    },
+    {
+      method: "POST",
       path: "/api/v1/auth/set-role",
       auth: "protected",
       middleware: ["authMiddleware"],
@@ -2773,7 +2802,7 @@ export const apiContracts = {
       method: "POST",
       path: "/api/v1/food/register",
       auth: "protected",
-      middleware: ["authMiddleware", "upload.single('fssai_certificate')"],
+      middleware: ["authMiddleware", "upload.fssaiCertificate.single('fssai_certificate')"],
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "RegisterRestaurantRequest", contentType: "multipart/form-data" },
       response: "RegisterRestaurantResponse",
       statusCodes: [201, 400, 401, 403, 404, 409, 500],

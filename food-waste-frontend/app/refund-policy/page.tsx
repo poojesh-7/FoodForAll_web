@@ -88,8 +88,8 @@ export default function RefundPolicyPage() {
           <a className="font-medium text-emerald-700" href={`mailto:${supportEmail}`}>
             {supportEmail}
           </a>
-          . Please include the phone number used for login and any available
-          reservation or order reference.
+          . Please include your Google account email, account phone number if
+          available, and any reservation or order reference.
         </p>
       </LegalSection>
     </LegalPageShell>

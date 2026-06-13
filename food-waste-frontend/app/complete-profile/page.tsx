@@ -3,10 +3,18 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getPostAuthRedirect } from "@/lib/onboarding";
+import {
+  sanitizePhoneInput,
+  validateEmail,
+  validatePersonName,
+  validatePhone,
+  validateRequiredAddress,
+} from "@/lib/validation";
 import { useAuthStore } from "@/store/authStore";
 import type { UserRole } from "@shared/contracts/api-contracts";
 
 type CompleteProfileForm = {
+  phone: string;
   name: string;
   email: string;
   address: string;
@@ -19,12 +27,25 @@ function getCurrentPosition() {
   });
 }
 
-function getUserPhone(user: ReturnType<typeof useAuthStore.getState>["user"]) {
-  return user && "phone" in user ? user.phone : null;
+function getUserStringField(
+  user: ReturnType<typeof useAuthStore.getState>["user"],
+  field: "phone" | "name" | "email"
+) {
+  if (!user) return "";
+
+  if (field === "phone") {
+    return "phone" in user && user.phone ? String(user.phone) : "";
+  }
+
+  if (field === "name") {
+    return "name" in user && user.name ? String(user.name) : "";
+  }
+
+  return "email" in user && user.email ? String(user.email) : "";
 }
 
 function isProfileRole(role: UserRole | null | undefined) {
-  return role === "user" || role === "volunteer";
+  return role === "user" || role === "volunteer" || role === "provider" || role === "ngo";
 }
 
 function getProfileOnboardingCopy(role: UserRole | null | undefined) {
@@ -34,6 +55,24 @@ function getProfileOnboardingCopy(role: UserRole | null | undefined) {
       title: "Volunteer Registration",
       description:
         "Help transport rescued food from providers to recipients and support local food rescue efforts.",
+    };
+  }
+
+  if (role === "provider") {
+    return {
+      step: "Provider onboarding",
+      title: "Complete Your Provider Profile",
+      description:
+        "Add your operational contact details before submitting provider verification.",
+    };
+  }
+
+  if (role === "ngo") {
+    return {
+      step: "NGO onboarding",
+      title: "Complete Your Organization Contact",
+      description:
+        "Add your operational contact details before submitting NGO verification.",
     };
   }
 
@@ -54,15 +93,29 @@ export default function CompleteProfilePage() {
   const authSuccess = useAuthStore((state) => state.authSuccess);
   const completeProfile = useAuthStore((state) => state.completeProfile);
   const clearMessages = useAuthStore((state) => state.clearMessages);
+  const userPhone = getUserStringField(user, "phone");
+  const userName = getUserStringField(user, "name");
+  const userEmail = getUserStringField(user, "email");
 
   const [form, setForm] = useState<CompleteProfileForm>({
-    name: user && "name" in user && user.name ? user.name : "",
-    email: user && "email" in user && user.email ? user.email : "",
+    phone: userPhone,
+    name: userName,
+    email: userEmail,
     address: "",
     useCurrentLocation: true,
   });
   const [formError, setFormError] = useState("");
   const onboardingCopy = getProfileOnboardingCopy(user?.role);
+  const emailLocked = Boolean(userEmail);
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      phone: current.phone || userPhone,
+      name: current.name || userName,
+      email: userEmail || current.email,
+    }));
+  }, [user?.id, userEmail, userName, userPhone]);
 
   useEffect(() => {
     if (!user?.role) {
@@ -78,20 +131,23 @@ export default function CompleteProfilePage() {
   const submit = async () => {
     if (loading) return;
 
-    const phone = getUserPhone(user);
-
     if (!user?.role || !isProfileRole(user.role)) {
       router.replace(getPostAuthRedirect(user));
       return;
     }
 
-    if (!phone) {
-      setFormError("Session is missing a phone number. Please login again.");
+    const phoneError = validatePhone(form.phone);
+    const nameError = validatePersonName(form.name);
+    const emailError = validateEmail(form.email);
+    const addressError = validateRequiredAddress(form.address);
+
+    if (phoneError || nameError || emailError || addressError) {
+      setFormError(phoneError || nameError || emailError || addressError);
       return;
     }
 
-    if (!form.name.trim() || !form.email.trim()) {
-      setFormError("Name and email are required.");
+    if (emailLocked && userEmail && form.email.trim() !== userEmail) {
+      setFormError("Use the email from your Google account.");
       return;
     }
 
@@ -101,11 +157,11 @@ export default function CompleteProfilePage() {
 
       const position = form.useCurrentLocation ? await getCurrentPosition() : null;
       const updatedUser = await completeProfile({
-        phone,
+        phone: sanitizePhoneInput(form.phone),
         name: form.name.trim(),
         email: form.email.trim(),
         role: user.role,
-        address: form.address.trim() || null,
+        address: form.address.trim(),
         latitude: position?.coords.latitude ?? null,
         longitude: position?.coords.longitude ?? null,
       });
@@ -170,8 +226,31 @@ export default function CompleteProfilePage() {
             value={form.email}
             type="email"
             placeholder="you@example.com"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            readOnly={emailLocked}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 read-only:bg-zinc-100"
             onChange={(event) => setForm({ ...form, email: event.target.value })}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="phone" className="block text-sm font-medium text-zinc-700">
+            Phone number
+          </label>
+          <input
+            id="phone"
+            value={form.phone}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={16}
+            placeholder="9999999999 or +919999999999"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            onChange={(event) =>
+              setForm({
+                ...form,
+                phone: sanitizePhoneInput(event.target.value),
+              })
+            }
           />
         </div>
 
@@ -185,7 +264,7 @@ export default function CompleteProfilePage() {
           <input
             id="address"
             value={form.address}
-            placeholder="Optional pickup or delivery area"
+            placeholder="Pickup or delivery area"
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
             onChange={(event) => setForm({ ...form, address: event.target.value })}
           />

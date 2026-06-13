@@ -16,8 +16,13 @@ const { jobOptions } = require("../shared/utils/queueOptions");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
   sanitizeOptionalText,
-  sanitizePlainText,
 } = require("../shared/utils/sanitize");
+const {
+  normalizeBusinessName,
+  normalizeFssaiNumber,
+  normalizeRequiredText,
+  normalizeServiceRadiusKm,
+} = require("../utils/fieldValidation");
 const {
   isIntegerInRange,
   isNumberInRange,
@@ -38,7 +43,7 @@ exports.registerRestaurant = async (req, res) => {
 
     // 🔹 Fetch user
     const userResult = await pool.query(
-      "SELECT id, role FROM users WHERE id=$1",
+      "SELECT id, role, phone, name, email FROM users WHERE id=$1",
       [userId]
     );
 
@@ -49,6 +54,12 @@ exports.registerRestaurant = async (req, res) => {
     }
 
     const user = userResult.rows[0];
+
+    if (!user.phone || !user.name || !user.email) {
+      return res.status(409).json({
+        error: "Complete profile with phone contact before provider onboarding",
+      });
+    }
 
     if (!["user", "volunteer", "provider"].includes(user.role)) {
       logger.security("Blocked provider onboarding application", {
@@ -97,15 +108,7 @@ exports.registerRestaurant = async (req, res) => {
 
     const latitudeValue = toNumber(latitude);
     const longitudeValue = toNumber(longitude);
-    const serviceRadius = isProvided(service_radius_km)
-      ? toNumber(service_radius_km)
-      : 5;
-
-    if (!Number.isFinite(serviceRadius) || serviceRadius <= 0 || serviceRadius > 100) {
-      return res.status(400).json({
-        error: "Service radius must be between 1 and 100 km",
-      });
-    }
+    const serviceRadius = normalizeServiceRadiusKm(service_radius_km, 5);
 
     if (!req.file) {
       return res.status(400).json({
@@ -113,14 +116,11 @@ exports.registerRestaurant = async (req, res) => {
       });
     }
 
-    const normalizedName = sanitizePlainText(restaurant_name, { maxLength: 160 });
-    const normalizedFssai = String(fssai_number).trim();
-
-    if (!isProvided(normalizedName)) {
-      return res.status(400).json({
-        error: "Restaurant name is required",
-      });
-    }
+    const normalizedName = normalizeBusinessName(
+      restaurant_name,
+      "Restaurant or provider name"
+    );
+    const normalizedFssai = normalizeFssaiNumber(fssai_number);
 
     // 🔹 Check if restaurant already exists for this user
     const existingRestaurant = await pool.query(
@@ -263,6 +263,12 @@ exports.registerRestaurant = async (req, res) => {
       });
     }
 
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+      });
+    }
+
     res.status(500).json({
       error: "Restaurant registration failed",
     });
@@ -335,7 +341,14 @@ exports.createFood = async (req, res) => {
     } = req.body;
 
     // 🔹 Normalize
-    title = sanitizePlainText(title, { maxLength: 160 });
+    title = normalizeRequiredText(title, {
+      field: "Food title",
+      minLength: 3,
+      maxLength: 160,
+      pattern: /^[\p{L}\p{N}][\p{L}\p{N}\p{M} &.,'()/_-]{2,159}$/u,
+      patternMessage:
+        "Food title can contain letters, numbers, spaces, and common punctuation",
+    });
     description = sanitizeOptionalText(description, {
       maxLength: 2000,
       preserveNewlines: true,
@@ -521,6 +534,12 @@ exports.createFood = async (req, res) => {
       });
     }
 
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+      });
+    }
+
     res.status(500).json({
       error: "Food creation failed",
     });
@@ -568,7 +587,14 @@ exports.updateFood = async (req, res) => {
 
     const { title, description, price, is_free, quantity, pickup_end_time } =
       req.body;
-    const sanitizedTitle = sanitizePlainText(title, { maxLength: 160 });
+    const sanitizedTitle = normalizeRequiredText(title, {
+      field: "Food title",
+      minLength: 3,
+      maxLength: 160,
+      pattern: /^[\p{L}\p{N}][\p{L}\p{N}\p{M} &.,'()/_-]{2,159}$/u,
+      patternMessage:
+        "Food title can contain letters, numbers, spaces, and common punctuation",
+    });
     const sanitizedDescription = sanitizeOptionalText(description, {
       maxLength: 2000,
       preserveNewlines: true,
@@ -684,6 +710,9 @@ exports.updateFood = async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     logger.error("Food update failed", { err, listingId: id, userId: req.user?.id });
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     res.status(500).json({ error: "Food update failed" });
   } finally {
     client.release();

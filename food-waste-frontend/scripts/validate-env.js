@@ -1,5 +1,6 @@
 const appEnv = (process.env.NEXT_PUBLIC_APP_ENV || "local").toLowerCase();
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api/v1").trim();
+const googleClientId = (process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "").trim();
 
 try {
   if (!["local", "development", "staging", "production"].includes(appEnv)) {
@@ -13,6 +14,10 @@ try {
 
   if (appEnv === "production" && parsed.protocol !== "https:") {
     throw new Error("NEXT_PUBLIC_API_URL must use HTTPS in production");
+  }
+
+  if (appEnv === "production" && !googleClientId) {
+    throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is required in production");
   }
 
   process.stdout.write("Frontend environment validation passed\n");

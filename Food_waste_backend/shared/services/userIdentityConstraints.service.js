@@ -37,6 +37,30 @@ async function getDuplicatePhones(client) {
   return result.rows;
 }
 
+async function getDuplicateGoogleIds(client) {
+  const column = await client.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name='users'
+        AND column_name='google_id'
+    ) AS exists
+  `);
+
+  if (!column.rows[0]?.exists) return [];
+
+  const result = await client.query(`
+    SELECT trim(google_id) AS identity, array_agg(id ORDER BY id) AS ids
+    FROM users
+    WHERE google_id IS NOT NULL
+      AND trim(google_id) <> ''
+    GROUP BY trim(google_id)
+    HAVING count(*) > 1
+  `);
+
+  return result.rows;
+}
+
 async function normalizeExistingEmails(client) {
   await client.query(`
     UPDATE users
@@ -95,6 +119,7 @@ async function normalizeExistingPhones(client) {
 async function assertNoIdentityDuplicates(client) {
   const duplicateEmails = await getDuplicateEmails(client);
   const duplicatePhones = await getDuplicatePhones(client);
+  const duplicateGoogleIds = await getDuplicateGoogleIds(client);
 
   if (duplicateEmails.length) {
     throw new Error(
@@ -107,9 +132,44 @@ async function assertNoIdentityDuplicates(client) {
       `Duplicate phone numbers exist: ${formatDuplicateGroups(duplicatePhones)}`
     );
   }
+
+  if (duplicateGoogleIds.length) {
+    throw new Error(
+      `Duplicate Google identities exist: ${formatDuplicateGroups(duplicateGoogleIds)}`
+    );
+  }
 }
 
 async function createIdentityIndexes(client) {
+  await client.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS google_id TEXT NULL,
+      ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'otp',
+      ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP NULL
+  `);
+
+  await client.query(`
+    UPDATE users
+    SET email_verified=false
+    WHERE email_verified IS NULL
+  `);
+
+  await client.query(`
+    UPDATE users
+    SET auth_provider='otp'
+    WHERE auth_provider IS NULL OR trim(auth_provider) = ''
+  `);
+
+  await client.query(`
+    ALTER TABLE users
+      ALTER COLUMN phone DROP NOT NULL,
+      ALTER COLUMN email_verified SET DEFAULT false,
+      ALTER COLUMN email_verified SET NOT NULL,
+      ALTER COLUMN auth_provider SET DEFAULT 'otp',
+      ALTER COLUMN auth_provider SET NOT NULL
+  `);
+
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx
     ON users (lower(trim(email)))
@@ -130,6 +190,29 @@ async function createIdentityIndexes(client) {
       END IF;
     END
     $$;
+  `);
+
+  await client.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'users_auth_provider_check'
+      ) THEN
+        ALTER TABLE users
+        ADD CONSTRAINT users_auth_provider_check
+        CHECK (auth_provider IN ('otp', 'google'));
+      END IF;
+    END
+    $$;
+  `);
+
+  await client.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique_idx
+    ON users (google_id)
+    WHERE google_id IS NOT NULL
+      AND trim(google_id) <> ''
   `);
 }
 

@@ -15,9 +15,14 @@ export function getPublicSocketUrl() {
   return getPublicApiBaseUrl().replace(/\/api\/v1\/?$/, "");
 }
 
+export function getPublicGoogleClientId() {
+  return (process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "").trim();
+}
+
 export function validatePublicEnv() {
   const appEnv = (process.env.NEXT_PUBLIC_APP_ENV || "local").toLowerCase();
   const apiUrl = getPublicApiBaseUrl();
+  const googleClientId = getPublicGoogleClientId();
 
   if (!["local", "development", "staging", "production"].includes(appEnv)) {
     throw new Error("NEXT_PUBLIC_APP_ENV must be local, development, staging, or production");
@@ -28,5 +33,9 @@ export function validatePublicEnv() {
     throw new Error("NEXT_PUBLIC_API_URL must use HTTPS in production");
   }
 
-  return { appEnv, apiUrl };
+  if (appEnv === "production" && !googleClientId) {
+    throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is required in production");
+  }
+
+  return { appEnv, apiUrl, googleClientId };
 }

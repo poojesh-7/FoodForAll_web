@@ -5,7 +5,7 @@ export const businessName = "FoodForAll";
 export const supportEmail = "foodforall.support@gmail.com";
 export const domainSupportEmail = "support@foodforall.in";
 export const plannedDomain = "foodforall.in";
-export const legalLastUpdated = "June 12, 2026";
+export const legalLastUpdated = "June 13, 2026";
 
 const publicLinks = [
   { href: "/privacy", label: "Privacy Policy" },

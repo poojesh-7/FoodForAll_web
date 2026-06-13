@@ -6,6 +6,11 @@ import { authService } from "@/services/auth";
 import { foodService } from "@/services/food.service";
 import { ngoService } from "@/services/ngo.service";
 import { userService } from "@/services/user";
+import {
+  validateAddress,
+  validateEmail,
+  validatePersonName,
+} from "@/lib/validation";
 import { useAuthStore } from "@/store/authStore";
 import type {
   NGOProfile,
@@ -75,6 +80,10 @@ function getCurrentPosition() {
   });
 }
 
+function getAuthEmail(user: ReturnType<typeof useAuthStore.getState>["user"]) {
+  return user && "email" in user && user.email ? String(user.email) : "";
+}
+
 export default function ProfilePage() {
   const authUser = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
@@ -93,6 +102,8 @@ export default function ProfilePage() {
   const [locationSaving, setLocationSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const authEmail = getAuthEmail(authUser);
+  const emailLocked = authUser?.auth_provider === "google" && Boolean(authEmail);
 
   useEffect(() => {
     if (!authUser?.id) return;
@@ -141,8 +152,17 @@ export default function ProfilePage() {
   const saveProfile = async () => {
     if (!authUser?.id || saving) return;
 
-    if (!form.name.trim() || !form.email.trim()) {
-      setError("Name and email are required.");
+    const nameError = validatePersonName(form.name);
+    const emailError = validateEmail(form.email);
+
+    if (nameError || emailError) {
+      setError(nameError || emailError);
+      setSuccess("");
+      return;
+    }
+
+    if (emailLocked && authEmail && form.email.trim() !== authEmail) {
+      setError("Google account email cannot be changed.");
       setSuccess("");
       return;
     }
@@ -184,6 +204,14 @@ export default function ProfilePage() {
       setLocationSaving(true);
       setError("");
       setSuccess("");
+
+      const addressError = validateAddress(form.address);
+
+      if (addressError) {
+        setError(addressError);
+        setSuccess("");
+        return;
+      }
 
       const position = await getCurrentPosition();
 
@@ -269,7 +297,8 @@ export default function ProfilePage() {
             value={form.email}
             type="email"
             placeholder="Email"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            readOnly={emailLocked}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 read-only:bg-zinc-100"
             onChange={(event) => setForm({ ...form, email: event.target.value })}
           />
 

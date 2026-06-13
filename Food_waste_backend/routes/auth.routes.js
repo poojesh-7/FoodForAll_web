@@ -9,6 +9,7 @@ const {
 
 router.post("/send-otp", otpSendLimiter, authCtrl.sendOTP);
 router.post("/verify-otp", otpVerifyLimiter, authCtrl.verifyOTP);
+router.post("/google", authLimiter, authCtrl.googleLogin);
 
 router.post("/set-role", authLimiter, authMiddleware, authCtrl.setRole);
 router.post("/refresh-token", authLimiter, authCtrl.refreshToken);

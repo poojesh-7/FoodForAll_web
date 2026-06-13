@@ -17,9 +17,6 @@ const BASE_REQUIRED_ENV = [
   "REDIS_URL",
   "JWT_SECRET",
   "FRONTEND_URL",
-  "TWILIO_ACCOUNT_SID",
-  "TWILIO_AUTH_TOKEN",
-  "TWILIO_VERIFY_SERVICE_SID",
   "CASHFREE_APP_ID",
   "CASHFREE_SECRET_KEY",
   "CASHFREE_ENV",
@@ -124,9 +121,13 @@ const envSchema = z.object({
   JWT_SECRET: requiredString("JWT_SECRET"),
   FRONTEND_URL: urlString("FRONTEND_URL", ["http:", "https:"]),
   FRONTEND_ORIGINS: optionalString,
-  TWILIO_ACCOUNT_SID: requiredString("TWILIO_ACCOUNT_SID"),
-  TWILIO_AUTH_TOKEN: requiredString("TWILIO_AUTH_TOKEN"),
-  TWILIO_VERIFY_SERVICE_SID: requiredString("TWILIO_VERIFY_SERVICE_SID"),
+  GOOGLE_CLIENT_ID: optionalString,
+  GOOGLE_WEB_CLIENT_ID: optionalString,
+  GOOGLE_ALLOWED_CLIENT_IDS: optionalString,
+  AUTH_ENABLE_OTP: optionalString,
+  TWILIO_ACCOUNT_SID: optionalString,
+  TWILIO_AUTH_TOKEN: optionalString,
+  TWILIO_VERIFY_SERVICE_SID: optionalString,
   CASHFREE_APP_ID: requiredString("CASHFREE_APP_ID"),
   CASHFREE_SECRET_KEY: requiredString("CASHFREE_SECRET_KEY"),
   CASHFREE_ENV: requiredString("CASHFREE_ENV").transform((value) => value.toLowerCase()),
@@ -395,6 +396,13 @@ function validateCrossFieldRules(env, ctx) {
       if (!String(env[key] || "").trim()) addMissingIssue(ctx, key);
     }
 
+    if (
+      !String(env.GOOGLE_CLIENT_ID || "").trim() &&
+      !String(env.GOOGLE_ALLOWED_CLIENT_IDS || "").trim()
+    ) {
+      addMissingIssue(ctx, "GOOGLE_CLIENT_ID");
+    }
+
     assertHttpsUrl("FRONTEND_URL", env.FRONTEND_URL, ctx);
     assertHttpsUrl("SUPABASE_URL", env.SUPABASE_URL, ctx);
 
@@ -414,6 +422,20 @@ function validateCrossFieldRules(env, ctx) {
           message: `Production CORS origin must use HTTPS: ${origin}`,
         });
       }
+    }
+  }
+
+  const otpEnabled = ["1", "true", "yes"].includes(
+    String(env.AUTH_ENABLE_OTP || "").trim().toLowerCase()
+  );
+
+  if (otpEnabled) {
+    for (const key of [
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_VERIFY_SERVICE_SID",
+    ]) {
+      if (!String(env[key] || "").trim()) addMissingIssue(ctx, key);
     }
   }
 

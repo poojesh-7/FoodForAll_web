@@ -54,6 +54,10 @@ function getVerificationStatus(user: OnboardingUser | null | undefined): Verific
 export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {
   if (!user?.role) return "/select-role";
 
+  if (user.role !== "admin" && !isProfileComplete(user)) {
+    return "/complete-profile";
+  }
+
   if (isVerificationRole(user.role)) {
     const verificationStatus = getVerificationStatus(user);
 
@@ -71,7 +75,6 @@ export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {
     return pendingVerificationRoute;
   }
 
-  if (!isProfileComplete(user)) return getRoleRegistrationRoute(user.role);
   return getRoleDashboard(user.role);
 }
 
@@ -113,21 +116,11 @@ export function getRouteAccessRedirect(
     return pathname === "/select-role" ? null : "/select-role";
   }
 
-  if (
-    (user.role === "user" || user.role === "volunteer") &&
-    !isProfileComplete(user)
-  ) {
+  if (user.role !== "admin" && !isProfileComplete(user)) {
     return pathname === "/complete-profile" ? null : "/complete-profile";
   }
 
   if (pathname === "/select-role" || pathname.startsWith("/select-role/")) {
-    return getPostAuthRedirect(user);
-  }
-
-  if (
-    (pathname === "/complete-profile" || pathname.startsWith("/complete-profile/")) &&
-    (user.role === "provider" || user.role === "ngo")
-  ) {
     return getPostAuthRedirect(user);
   }
 

@@ -28,6 +28,11 @@ const {
 } = require("../shared/services/volunteerRequestSchema.service");
 const logger = require("../shared/utils/logger");
 const {
+  normalizeBusinessName,
+  normalizeRegistrationNumber,
+  normalizeServiceRadiusKm,
+} = require("../utils/fieldValidation");
+const {
   isIntegerInRange,
   isNumberInRange,
   isProvided,
@@ -97,7 +102,7 @@ exports.registerNGO = async (req, res) => {
 
     // 🔹 Role check
     const userResult = await pool.query(
-      "SELECT id, role FROM users WHERE id=$1",
+      "SELECT id, role, phone, name, email FROM users WHERE id=$1",
       [userId]
     );
 
@@ -108,6 +113,12 @@ exports.registerNGO = async (req, res) => {
     }
 
     const user = userResult.rows[0];
+
+    if (!user.phone || !user.name || !user.email) {
+      return res.status(409).json({
+        error: "Complete profile with phone contact before NGO onboarding",
+      });
+    }
 
     if (!["user", "volunteer", "ngo"].includes(user.role)) {
       logger.security("Blocked NGO onboarding application", {
@@ -156,18 +167,12 @@ exports.registerNGO = async (req, res) => {
 
     const latitudeValue = toNumber(latitude);
     const longitudeValue = toNumber(longitude);
-    const serviceRadius = isProvided(service_radius_km)
-      ? toNumber(service_radius_km)
-      : 10;
-
-    if (!isNumberInRange(serviceRadius, 1, 100)) {
-      return res.status(400).json({
-        error: "Service radius must be between 1 and 100 km",
-      });
-    }
-
-    const normalizedName = String(organization_name).trim();
-    const normalizedReg = String(registration_number).trim();
+    const serviceRadius = normalizeServiceRadiusKm(service_radius_km, 10);
+    const normalizedName = normalizeBusinessName(
+      organization_name,
+      "Organization name"
+    );
+    const normalizedReg = normalizeRegistrationNumber(registration_number);
 
     // 🔹 Check if NGO already registered for this user
     const existingNGO = await pool.query(
@@ -299,6 +304,12 @@ exports.registerNGO = async (req, res) => {
     if (err.code === "23505") {
       return res.status(409).json({
         error: "NGO already exists (duplicate entry)",
+      });
+    }
+
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
       });
     }
 

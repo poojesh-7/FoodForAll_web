@@ -195,7 +195,7 @@ export default function Home() {
           <div>
             <h2 className="text-2xl font-semibold">Ready to start?</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-300">
-              Login or create an account with OTP to join the FoodForAll pilot.
+              Continue with Google to join the FoodForAll pilot.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

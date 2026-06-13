@@ -548,8 +548,12 @@ ALTER TABLE "public"."restaurants" OWNER TO "postgres";
 CREATE TABLE IF NOT EXISTS "public"."users" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" character varying(100),
-    "phone" character varying(15) NOT NULL,
+    "phone" character varying(15),
     "email" character varying(150),
+    "google_id" "text",
+    "email_verified" boolean DEFAULT false NOT NULL,
+    "auth_provider" "text" DEFAULT 'otp'::"text" NOT NULL,
+    "phone_verified_at" timestamp without time zone,
     "role" character varying(20),
     "profile_image" "text",
     "is_verified" boolean DEFAULT false,
@@ -580,6 +584,7 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "refresh_token_last_used_at" timestamp without time zone,
     "last_auth_activity_at" timestamp without time zone,
     "auth_session_version" integer DEFAULT 0 NOT NULL,
+    CONSTRAINT "users_auth_provider_check" CHECK (("auth_provider" = ANY (ARRAY['otp'::"text", 'google'::"text"]))),
     CONSTRAINT "users_role_check" CHECK ((("role")::"text" = ANY ((ARRAY['user'::character varying, 'admin'::character varying, 'provider'::character varying, 'ngo'::character varying, 'volunteer'::character varying])::"text"[])))
 );
 
@@ -1330,6 +1335,9 @@ CREATE UNIQUE INDEX "unique_volunteer_active_task" ON "public"."reservations" US
 
 
 CREATE UNIQUE INDEX "users_email_unique_idx" ON "public"."users" USING "btree" ("lower"(TRIM(BOTH FROM "email"))) WHERE (("email" IS NOT NULL) AND (TRIM(BOTH FROM "email") <> ''::"text"));
+
+
+CREATE UNIQUE INDEX "users_google_id_unique_idx" ON "public"."users" USING "btree" ("google_id") WHERE (("google_id" IS NOT NULL) AND (TRIM(BOTH FROM "google_id") <> ''::"text"));
 
 
 

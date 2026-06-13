@@ -10,6 +10,8 @@ const {
 const logger = require("../shared/utils/logger");
 const {
   ensureEmailAvailable,
+  ensurePhoneAvailable,
+  findUserByEmail,
   getIdentityConflictMessage,
   isIdentityUniqueViolation,
 } = require("../utils/identity");
@@ -36,6 +38,12 @@ const {
   normalizeEmail,
   toNumber,
 } = require("../utils/validation");
+const {
+  normalizeAddress,
+  normalizePersonName,
+  normalizeRequiredAddress,
+  normalizeRequiredPhone,
+} = require("../utils/fieldValidation");
 const { validateOnboardingRoleSelection } = require("../utils/roles");
 const {
   shouldSkipRuntimeSchemaMutation,
@@ -43,6 +51,9 @@ const {
 const {
   assertProfilePhoneMatchesAuthenticatedUser,
 } = require("../shared/services/authProfile.service");
+const {
+  verifyGoogleIdToken,
+} = require("../shared/services/googleAuth.service");
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -76,7 +87,16 @@ async function ensureAuthHardeningSchema() {
       ADD COLUMN IF NOT EXISTS refresh_token_device TEXT NULL,
       ADD COLUMN IF NOT EXISTS refresh_token_last_used_at TIMESTAMP NULL,
       ADD COLUMN IF NOT EXISTS last_auth_activity_at TIMESTAMP NULL,
-      ADD COLUMN IF NOT EXISTS auth_session_version INTEGER NOT NULL DEFAULT 0
+      ADD COLUMN IF NOT EXISTS auth_session_version INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS google_id TEXT NULL,
+      ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'otp',
+      ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP NULL,
+      ALTER COLUMN phone DROP NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique_idx
+        ON users (google_id)
+        WHERE google_id IS NOT NULL AND trim(google_id) <> '';
     `);
   }
 
@@ -267,8 +287,8 @@ async function findOrCreateUserByPhone(normalizedPhone) {
 
   const newUser = await pool.query(
     `
-    INSERT INTO users (phone, role)
-    VALUES ($1, $2)
+    INSERT INTO users (phone, role, auth_provider, email_verified)
+    VALUES ($1, $2, 'otp', false)
     ON CONFLICT (phone)
     DO UPDATE SET phone=EXCLUDED.phone
     RETURNING id, role, auth_session_version
@@ -279,6 +299,156 @@ async function findOrCreateUserByPhone(normalizedPhone) {
   return {
     isNewUser: true,
     user: newUser.rows[0],
+  };
+}
+
+async function createAuthenticatedSession(req, res, user) {
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken();
+  const refreshTokenHash = hashRefreshToken(refreshToken);
+  const refreshTokenFamily = crypto.randomUUID();
+  const expiry = getRefreshExpiry();
+
+  await pool.query(
+    `
+    UPDATE users
+    SET refresh_token=$1,
+        refresh_token_expiry=$2,
+        refresh_token_family=$3,
+        refresh_token_device=$4,
+        refresh_token_last_used_at=NOW(),
+        last_auth_activity_at=NOW()
+    WHERE id=$5
+    `,
+    [
+      refreshTokenHash,
+      expiry,
+      refreshTokenFamily,
+      getSessionFingerprint(req),
+      user.id,
+    ]
+  );
+
+  setAuthCookies(res, { accessToken, refreshToken });
+
+  return {
+    accessToken,
+    refreshToken,
+  };
+}
+
+function isGoogleIdentityConflict(row, googleId) {
+  return Boolean(row?.google_id && row.google_id !== googleId);
+}
+
+async function findOrCreateUserByGoogleIdentity(googleProfile) {
+  const { googleId, email, emailVerified, name, picture } = googleProfile;
+
+  const byGoogle = await pool.query(
+    `
+    SELECT id, role, google_id, email, auth_session_version
+    FROM users
+    WHERE google_id=$1
+    LIMIT 1
+    `,
+    [googleId]
+  );
+
+  if (byGoogle.rows.length) {
+    const user = byGoogle.rows[0];
+    const normalizedEmail = normalizeEmail(email);
+
+    await ensureEmailAvailable(pool, normalizedEmail, user.id);
+
+    const updated = await pool.query(
+      `
+      UPDATE users
+      SET email=$1,
+          email_verified=$2,
+          auth_provider='google',
+          profile_image=COALESCE(profile_image, $3)
+      WHERE id=$4
+      RETURNING id, role, auth_session_version
+      `,
+      [normalizedEmail, emailVerified, picture, user.id]
+    );
+
+    return {
+      isNewUser: false,
+      linkedExistingUser: false,
+      user: updated.rows[0],
+    };
+  }
+
+  const existingByEmail = await findUserByEmail(pool, email);
+
+  if (existingByEmail) {
+    const current = await pool.query(
+      `
+      SELECT id, role, google_id, auth_session_version
+      FROM users
+      WHERE id=$1
+      LIMIT 1
+      `,
+      [existingByEmail.id]
+    );
+    const row = current.rows[0];
+
+    if (isGoogleIdentityConflict(row, googleId)) {
+      const error = new Error("Email is already linked to another Google account");
+      error.statusCode = 409;
+      error.reason = "google_identity_conflict";
+      throw error;
+    }
+
+    const updated = await pool.query(
+      `
+      UPDATE users
+      SET google_id=$1,
+          email=$2,
+          email_verified=$3,
+          auth_provider='google',
+          profile_image=COALESCE(profile_image, $4)
+      WHERE id=$5
+      RETURNING id, role, auth_session_version
+      `,
+      [googleId, normalizeEmail(email), emailVerified, picture, row.id]
+    );
+
+    return {
+      isNewUser: false,
+      linkedExistingUser: true,
+      user: updated.rows[0],
+    };
+  }
+
+  const created = await pool.query(
+    `
+    INSERT INTO users (
+      google_id,
+      email,
+      email_verified,
+      auth_provider,
+      name,
+      profile_image,
+      role
+    )
+    VALUES ($1,$2,$3,'google',$4,$5,NULL)
+    RETURNING id, role, auth_session_version
+    `,
+    [
+      googleId,
+      normalizeEmail(email),
+      emailVerified,
+      name ? String(name).trim().slice(0, 100) : null,
+      picture || null,
+    ]
+  );
+
+  return {
+    isNewUser: true,
+    linkedExistingUser: false,
+    user: created.rows[0],
   };
 }
 
@@ -372,35 +542,8 @@ exports.verifyOTP = async (req, res) => {
     await ensureAuthHardeningSchema();
     const { user, isNewUser } = await findOrCreateUserByPhone(normalizedPhone);
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken();
-    const refreshTokenHash = hashRefreshToken(refreshToken);
-    const refreshTokenFamily = crypto.randomUUID();
-
-    const expiry = getRefreshExpiry();
-
-    await pool.query(
-      `
-      UPDATE users
-      SET refresh_token=$1,
-          refresh_token_expiry=$2,
-          refresh_token_family=$3,
-          refresh_token_device=$4,
-          refresh_token_last_used_at=NOW(),
-          last_auth_activity_at=NOW()
-      WHERE id=$5
-      `,
-      [
-        refreshTokenHash,
-        expiry,
-        refreshTokenFamily,
-        getSessionFingerprint(req),
-        user.id,
-      ]
-    );
-
     await recordOtpVerifySuccess({ phone: normalizedPhone, ip, deviceId });
-    setAuthCookies(res, { accessToken, refreshToken });
+    await createAuthenticatedSession(req, res, user);
 
     return res.json({
       success: true,
@@ -431,6 +574,50 @@ exports.verifyOTP = async (req, res) => {
     });
 
     return jsonError(res, safeError.status, safeError.message);
+  }
+};
+
+exports.googleLogin = async (req, res) => {
+  try {
+    const { credential } = req.body || {};
+
+    await ensureAuthHardeningSchema();
+    const googleProfile = await verifyGoogleIdToken(credential);
+    const {
+      user,
+      isNewUser,
+      linkedExistingUser,
+    } = await findOrCreateUserByGoogleIdentity(googleProfile);
+
+    await createAuthenticatedSession(req, res, user);
+
+    return res.json({
+      success: true,
+      message: linkedExistingUser
+        ? "Google account linked successfully"
+        : "Google login successful",
+      data: {
+        user,
+        isNewUser,
+        linkedExistingUser,
+      },
+    });
+  } catch (err) {
+    logger.warn("Google login failed", {
+      err,
+      reason: err.reason,
+      ip: getClientIp(req),
+    });
+
+    if (err.statusCode) {
+      return jsonError(res, err.statusCode, err.message, { code: err.reason });
+    }
+
+    if (isIdentityUniqueViolation(err)) {
+      return jsonError(res, 409, getIdentityConflictMessage(err));
+    }
+
+    return jsonError(res, 500, "Google login failed");
   }
 };
 
@@ -722,19 +909,19 @@ exports.completeProfile = async (req, res) => {
       longitude,
     } = req.body;
 
-    if (!isProvided(phone) || !isProvided(name) || !isProvided(email) || !isProvided(role)) {
+    if (
+      !isProvided(phone) ||
+      !isProvided(name) ||
+      !isProvided(email) ||
+      !isProvided(role) ||
+      !isProvided(address)
+    ) {
       return res.status(400).json({
-        error: "Phone, name, email, and role are required",
+        error: "Phone, name, email, role, and address are required",
       });
     }
 
-    const normalizedPhone = normalizePhoneNumber(phone);
-
-    if (!normalizedPhone) {
-      return res.status(400).json({
-        error: "Invalid phone",
-      });
-    }
+    const normalizedPhone = normalizeRequiredPhone(phone);
 
     if (!isValidEmail(email)) {
       return res.status(400).json({
@@ -767,7 +954,7 @@ exports.completeProfile = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const currentUserResult = await pool.query(
       `
-      SELECT id, phone
+      SELECT id, phone, email, google_id, auth_provider, email_verified
       FROM users
       WHERE id=$1
       `,
@@ -781,30 +968,46 @@ exports.completeProfile = async (req, res) => {
       });
     }
 
-    try {
-      assertProfilePhoneMatchesAuthenticatedUser({
-        submittedPhone: normalizedPhone,
-        authenticatedPhone: currentUser.phone,
-      });
-    } catch (err) {
-      logger.security("Blocked profile completion phone mismatch", {
-        reason: err.reason || "profile_phone_mismatch",
-        userId: authenticatedUserId,
-        ip: getClientIp(req),
-      });
+    if (currentUser.phone) {
+      try {
+        assertProfilePhoneMatchesAuthenticatedUser({
+          submittedPhone: normalizedPhone,
+          authenticatedPhone: currentUser.phone,
+        });
+      } catch (err) {
+        logger.security("Blocked profile completion phone mismatch", {
+          reason: err.reason || "profile_phone_mismatch",
+          userId: authenticatedUserId,
+          ip: getClientIp(req),
+        });
 
-      return res.status(err.statusCode || 403).json({
-        error: err.message || "Profile phone does not match authenticated user",
-      });
+        return res.status(err.statusCode || 403).json({
+          error: err.message || "Profile phone does not match authenticated user",
+        });
+      }
+    } else {
+      await ensurePhoneAvailable(
+        pool,
+        normalizedPhone,
+        authenticatedUserId,
+        getPhoneLookupValues(normalizedPhone)
+      );
     }
 
     await ensureEmailAvailable(pool, normalizedEmail, authenticatedUserId);
 
-    const normalizedName =
-      String(name).trim();
+    if (
+      currentUser.google_id &&
+      currentUser.email &&
+      normalizeEmail(currentUser.email) !== normalizedEmail
+    ) {
+      return res.status(400).json({
+        error: "Google account email cannot be changed during onboarding",
+      });
+    }
 
-    const normalizedAddress =
-      isProvided(address) ? String(address).trim() : null;
+    const normalizedName = normalizePersonName(name);
+    const normalizedAddress = normalizeRequiredAddress(address);
 
     const hasLatitude = isProvided(latitude);
     const hasLongitude = isProvided(longitude);
@@ -843,8 +1046,11 @@ exports.completeProfile = async (req, res) => {
         latitude = $5,
         longitude = $6,
         location = $7,
-        is_verified = true
-      WHERE id = $8
+        is_verified = true,
+        phone = $8,
+        auth_provider = COALESCE(auth_provider, $9),
+        email_verified = CASE WHEN google_id IS NOT NULL THEN email_verified ELSE false END
+      WHERE id = $10
       RETURNING
         id,
         name,
@@ -854,7 +1060,10 @@ exports.completeProfile = async (req, res) => {
         address,
         latitude,
         longitude,
-        auth_session_version
+        auth_session_version,
+        auth_provider,
+        email_verified,
+        phone_verified_at
       `,
       [
         normalizedName,
@@ -867,43 +1076,16 @@ exports.completeProfile = async (req, res) => {
         hasLocation
           ? `SRID=4326;POINT(${longitudeValue} ${latitudeValue})`
           : null,
+        normalizedPhone,
+        currentUser.auth_provider || "otp",
         authenticatedUserId,
       ]
     );
     const user = result.rows[0];
 
-    const accessToken =
-      generateAccessToken(user);
-
-    const refreshToken =
-      generateRefreshToken();
-    const refreshTokenHash = hashRefreshToken(refreshToken);
-
-    const expiry = getRefreshExpiry();
-
-    await pool.query(
-      `
-      UPDATE users
-      SET refresh_token=$1,
-          refresh_token_expiry=$2,
-          refresh_token_family=$3,
-          refresh_token_device=$4,
-          refresh_token_last_used_at=NOW(),
-          last_auth_activity_at=NOW()
-      WHERE id=$5
-      `,
-      [
-        refreshTokenHash,
-        expiry,
-        crypto.randomUUID(),
-        getSessionFingerprint(req),
-        user.id,
-      ]
-    );
+    await createAuthenticatedSession(req, res, user);
 
     // 🍪 SET COOKIES (FIX)
-    setAuthCookies(res, { accessToken, refreshToken });
-
     // ✅ SEND CLEAN RESPONSE
     res.json({
       user,
@@ -914,6 +1096,12 @@ exports.completeProfile = async (req, res) => {
 
     if (err.statusCode === 409) {
       return res.status(409).json({
+        error: err.message,
+      });
+    }
+
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
         error: err.message,
       });
     }
@@ -964,6 +1152,7 @@ exports.updateLocation = async (req, res) => {
 
     const latitudeValue = toNumber(latitude);
     const longitudeValue = toNumber(longitude);
+    const normalizedAddress = normalizeAddress(address);
 
     await client.query("BEGIN");
 
@@ -986,7 +1175,7 @@ exports.updateLocation = async (req, res) => {
         longitude
       `,
       [
-        address || null,
+        normalizedAddress,
         latitudeValue,
         longitudeValue,
         userId,
@@ -1058,6 +1247,9 @@ exports.getMe = async (req, res) => {
         u.name,
         u.email,
         u.phone,
+        u.email_verified,
+        u.auth_provider,
+        u.phone_verified_at,
         u.role,
         u.reliability_deposit_amount,
         u.requires_reliability_deposit,

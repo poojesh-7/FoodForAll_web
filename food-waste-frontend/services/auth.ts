@@ -7,6 +7,8 @@ import type {
   CompleteProfileRequest,
   CompleteProfileResponse,
   GetMeResponse,
+  GoogleLoginRequest,
+  GoogleLoginResponse,
   LogoutResponse,
   RefreshTokenResponse,
   SendOTPRequest,
@@ -31,6 +33,11 @@ export type SendOtpResult = SendOTPResponse;
 
 export type VerifyOtpPayload = VerifyOTPRequest;
 export type VerifyOtpResult = VerifyOTPResponse["data"] & {
+  message?: string;
+};
+
+export type GoogleLoginPayload = GoogleLoginRequest;
+export type GoogleLoginResult = GoogleLoginResponse["data"] & {
   message?: string;
 };
 
@@ -142,6 +149,24 @@ export async function verifyOtp(
   };
 }
 
+export async function googleLogin(
+  payload: GoogleLoginPayload
+): Promise<GoogleLoginResult> {
+  type LegacyGoogleLoginResponse = GoogleLoginResponse["data"] & {
+    message?: string;
+    success?: boolean;
+  };
+
+  const { data } = await api.post<
+    ApiBody<GoogleLoginResponse, LegacyGoogleLoginResponse>
+  >("/auth/google", payload);
+
+  return {
+    ...getEnvelopeData<GoogleLoginResponse["data"]>(data),
+    message: getResponseMessage(data),
+  };
+}
+
 export async function setRole(payload: SetRolePayload): Promise<SetRoleResult> {
   type LegacySetRoleResponse = SetRoleResponse["data"] & {
     message?: string;
@@ -209,6 +234,7 @@ export async function logout(): Promise<LogoutResponse> {
 export const authService = {
   sendOtp,
   verifyOtp,
+  googleLogin,
   setRole,
   refreshToken,
   completeProfile,

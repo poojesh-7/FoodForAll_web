@@ -10,7 +10,7 @@ import {
 export const metadata: Metadata = {
   title: "Privacy Policy | FoodForAll",
   description:
-    "Privacy Policy for FoodForAll, including OTP login, profile, location, reservation, notification, compliance, and account anonymization practices.",
+    "Privacy Policy for FoodForAll, including Google authentication, profile, phone contact, location, reservation, notification, compliance, and account anonymization practices.",
 };
 
 export default function PrivacyPage() {
@@ -33,7 +33,8 @@ export default function PrivacyPage() {
       <LegalSection title="Information We Collect">
         <SimpleList
           items={[
-            "Phone numbers used for OTP login, authentication, and account recovery.",
+            "Google authentication identifiers, Google account email addresses, and verified email status used for account login and identity protection.",
+            "Phone numbers collected for provider contact, NGO contact, volunteer coordination, reservation communication, support, compliance, account recovery, and future phone verification support.",
             "Name, email address, role, address, and profile information provided during onboarding or profile updates.",
             "Location data when users, NGOs, providers, or volunteers allow location access or register service areas.",
             "Provider registration details, including restaurant name, FSSAI number, FSSAI certificate, service radius, and provider location.",
@@ -50,7 +51,8 @@ export default function PrivacyPage() {
       <LegalSection title="How We Use Information">
         <SimpleList
           items={[
-            "To verify users through OTP and maintain secure authenticated sessions.",
+            "To authenticate users with Google and maintain secure authenticated sessions.",
+            "To preserve future phone verification and OTP login support without requiring phone verification in the current phase.",
             "To route each account through the correct user, NGO, provider, volunteer, or admin workflow.",
             "To show nearby food, NGO, provider, volunteer, reservation, pickup, and delivery activity.",
             "To create and update food listings, reservations, payment holds, cancellations, refunds, and impact metrics.",
@@ -86,6 +88,7 @@ export default function PrivacyPage() {
           items={[
             "Compliance requests are reviewed and executed through an admin-controlled workflow.",
             "Account deletion and anonymization requests revoke account access and anonymize contact fields such as name, phone, email, profile image, address, location, and refresh-token state.",
+            "Google authentication identifiers are removed during account anonymization where the request applies to the account.",
             "Provider and NGO identity fields may be anonymized where the request applies to those records.",
             "Financial records, trust replay records, audit records, moderation history, incident history, and compliance events are retained where needed for integrity, safety, reconciliation, investigations, or legal obligations.",
             "Notifications and evidence records may be archived instead of physically deleted so audit and moderation history remains verifiable.",

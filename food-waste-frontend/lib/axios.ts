@@ -6,6 +6,7 @@ export const AUTH_SESSION_EXPIRED_EVENT = "auth:session-expired";
 const PUBLIC_AUTH_PATHS = [
   "/auth/send-otp",
   "/auth/verify-otp",
+  "/auth/google",
   REFRESH_TOKEN_PATH,
   "/auth/logout",
 ];

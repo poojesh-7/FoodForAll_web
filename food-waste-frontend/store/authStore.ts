@@ -102,6 +102,9 @@ interface AuthState {
   verifyOtp: (
     params: authApi.VerifyOtpPayload
   ) => Promise<{ user: AuthStoreUser; isNewUser: boolean } | null>;
+  googleLogin: (
+    params: authApi.GoogleLoginPayload
+  ) => Promise<{ user: AuthStoreUser; isNewUser: boolean; linkedExistingUser: boolean } | null>;
   setRole: (role: authApi.SetRolePayload["role"]) => Promise<AuthStoreUser | null>;
   completeProfile: (
     params: authApi.CompleteProfilePayload
@@ -339,6 +342,68 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return {
         user,
         isNewUser: result.isNewUser,
+      };
+    } catch (error) {
+      if (!isCurrentAuthOperation(operationId)) {
+        return null;
+      }
+
+      set({
+        user: null,
+        isAuthenticated: false,
+        isOnboarded: false,
+        initialized: true,
+        authBootstrapped: true,
+        isInitializing: false,
+        authError: authApi.getErrorMessage(error),
+        authSuccess: null,
+      });
+
+      return null;
+    } finally {
+      if (isCurrentAuthOperation(operationId)) {
+        set({ loading: false });
+      }
+    }
+  },
+
+  googleLogin: async (params) => {
+    const operationId = claimAuthOperation();
+
+    try {
+      set({
+        loading: true,
+        isInitializing: true,
+        authError: null,
+        authSuccess: null,
+      });
+      const result = await authApi.googleLogin(params);
+      resetAuthRefreshFailure();
+      await delay(POST_LOGIN_COOKIE_SETTLE_DELAY_MS);
+      const user = await fetchMeWithRecovery({
+        attempts: AUTH_HYDRATION_ATTEMPTS,
+        retryUnauthorized: true,
+      });
+
+      if (!isCurrentAuthOperation(operationId)) {
+        return null;
+      }
+
+      set({
+        user,
+        isAuthenticated: true,
+        isOnboarded: isUserOnboarded(user),
+        initialized: true,
+        authBootstrapped: true,
+        isInitializing: false,
+        authError: null,
+        authSuccess: result.message || "Google login successful.",
+      });
+
+      return {
+        user,
+        isNewUser: result.isNewUser,
+        linkedExistingUser: result.linkedExistingUser,
       };
     } catch (error) {
       if (!isCurrentAuthOperation(operationId)) {

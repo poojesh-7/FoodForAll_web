@@ -7,6 +7,10 @@ const {
   normalizeEmail,
 } = require("../utils/identity");
 const { isProvided, isValidEmail, isValidId } = require("../utils/validation");
+const {
+  normalizePersonName,
+  normalizeProfileImageUrl,
+} = require("../utils/fieldValidation");
 
 // GET USER
 exports.getUser = async (req, res) => {
@@ -58,6 +62,28 @@ exports.updateUser = async (req, res) => {
   const normalizedEmail = normalizeEmail(email);
 
   try {
+    const currentUser = await pool.query(
+      "SELECT id, email, google_id FROM users WHERE id=$1",
+      [id],
+    );
+
+    if (!currentUser.rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (
+      currentUser.rows[0].google_id &&
+      normalizedEmail &&
+      normalizeEmail(currentUser.rows[0].email) !== normalizedEmail
+    ) {
+      return res.status(400).json({
+        error: "Google account email cannot be changed",
+      });
+    }
+
+    const normalizedName = isProvided(name) ? normalizePersonName(name) : null;
+    const normalizedProfileImage = normalizeProfileImageUrl(profile_image);
+
     await ensureEmailAvailable(pool, normalizedEmail, id);
 
     const result = await pool.query(
@@ -65,7 +91,7 @@ exports.updateUser = async (req, res) => {
        SET name=$1, email=$2, profile_image=$3
        WHERE id=$4
        RETURNING id, name, email, role, profile_image`,
-      [name, normalizedEmail, profile_image, id],
+      [normalizedName, normalizedEmail, normalizedProfileImage, id],
     );
 
     res.json(result.rows[0]);
@@ -74,6 +100,10 @@ exports.updateUser = async (req, res) => {
 
     if (err.statusCode === 409) {
       return res.status(409).json({ error: err.message });
+    }
+
+    if (err.statusCode === 400) {
+      return res.status(400).json({ error: err.message });
     }
 
     if (isIdentityUniqueViolation(err)) {

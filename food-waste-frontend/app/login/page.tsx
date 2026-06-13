@@ -1,30 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Script from "next/script";
 import { PublicFooter } from "@/components/public/PublicSite";
+import { getPublicGoogleClientId } from "@/lib/env";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
-type LoginFormValues = {
-  phone: string;
-  otp: string;
+type GoogleCredentialResponse = {
+  credential?: string;
 };
 
-const phonePattern = /^(?:[6-9]\d{9}|\+[1-9]\d{7,14}|91[6-9]\d{9})$/;
-const otpPattern = /^\d{4,6}$/;
-const resendCooldownSeconds = 45;
+type GoogleAccounts = {
+  accounts?: {
+    id?: {
+      initialize: (options: {
+        client_id: string;
+        callback: (response: GoogleCredentialResponse) => void;
+      }) => void;
+      renderButton: (
+        element: HTMLElement,
+        options: {
+          theme: "outline" | "filled_blue" | "filled_black";
+          size: "large" | "medium" | "small";
+          text: "continue_with" | "signin_with" | "signup_with";
+          shape: "rectangular" | "pill" | "circle" | "square";
+          width?: number;
+        }
+      ) => void;
+    };
+  };
+};
 
-function sanitizePhoneInput(value: string) {
-  const compact = value.replace(/[^\d+]/g, "");
-  const withoutExtraPlus = compact.startsWith("+")
-    ? `+${compact.slice(1).replace(/\+/g, "")}`
-    : compact.replace(/\+/g, "");
-
-  return withoutExtraPlus.startsWith("+")
-    ? withoutExtraPlus.slice(0, 16)
-    : withoutExtraPlus.slice(0, 15);
+declare global {
+  interface Window {
+    google?: GoogleAccounts;
+  }
 }
 
 function getSafeNextPath() {
@@ -45,37 +57,19 @@ function getInitialSessionNotice() {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [otpSent, setOtpSent] = useState(false);
+  const googleClientId = getPublicGoogleClientId();
   const [redirecting, setRedirecting] = useState(false);
-  const [phoneValue, setPhoneValue] = useState("");
-  const [otpValue, setOtpValue] = useState("");
-  const [resendSeconds, setResendSeconds] = useState(0);
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleScriptLoaded, setGoogleScriptLoaded] = useState(false);
   const [sessionNotice, setSessionNotice] = useState(getInitialSessionNotice);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
   const authError = useAuthStore((state) => state.authError);
   const authSuccess = useAuthStore((state) => state.authSuccess);
-  const sendOtp = useAuthStore((state) => state.sendOtp);
-  const verifyOtp = useAuthStore((state) => state.verifyOtp);
+  const googleLogin = useAuthStore((state) => state.googleLogin);
   const clearMessages = useAuthStore((state) => state.clearMessages);
-
-  const {
-    register,
-    handleSubmit,
-    trigger,
-    getValues,
-    setValue,
-    formState: { errors },
-  } = useForm<LoginFormValues>({
-    mode: "onTouched",
-    defaultValues: {
-      phone: "",
-      otp: "",
-    },
-  });
 
   useEffect(() => {
     clearMessages();
@@ -90,108 +84,76 @@ export default function LoginPage() {
     );
   }, [router, user]);
 
+  const finishAuthRedirect = useCallback(
+    (nextUser: NonNullable<typeof user>) => {
+      setRedirecting(true);
+      const redirectPath = getPostAuthRedirect(nextUser);
+      router.replace(
+        redirectPath === "/dashboard"
+          ? getSafeNextPath() ?? redirectPath
+          : redirectPath
+      );
+    },
+    [router]
+  );
+
+  const handleGoogleCredential = useCallback(
+    async (response: GoogleCredentialResponse) => {
+      if (!response.credential || googleLoading || redirecting) return;
+
+      clearMessages();
+      setSessionNotice("");
+      setGoogleLoading(true);
+
+      const result = await googleLogin({ credential: response.credential }).finally(
+        () => {
+          setGoogleLoading(false);
+        }
+      );
+
+      if (result?.user) {
+        finishAuthRedirect(result.user);
+      }
+    },
+    [
+      clearMessages,
+      finishAuthRedirect,
+      googleLoading,
+      googleLogin,
+      redirecting,
+    ]
+  );
+
   useEffect(() => {
-    if (resendSeconds <= 0) return;
+    const googleButtonElement = googleButtonRef.current;
+    if (!googleClientId || !googleScriptLoaded || !googleButtonElement) return;
+    if (!window.google?.accounts?.id) return;
 
-    const timer = window.setTimeout(() => {
-      setResendSeconds((seconds) => Math.max(seconds - 1, 0));
-    }, 1000);
-
-    return () => window.clearTimeout(timer);
-  }, [resendSeconds]);
-
-  const phoneInput = register("phone", {
-    required: "Phone number is required.",
-    pattern: {
-      value: phonePattern,
-      message: "Enter a valid Indian or E.164 phone number.",
-    },
-    onChange: (event) => {
-      const value = sanitizePhoneInput(event.target.value);
-      setValue("phone", value, { shouldDirty: true, shouldValidate: true });
-      setValue("otp", "", { shouldDirty: true, shouldValidate: false });
-      setPhoneValue(value);
-      setOtpValue("");
-      setOtpSent(false);
-      setResendSeconds(0);
-      setSessionNotice("");
-      clearMessages();
-    },
-  });
-
-  const otpInput = register("otp", {
-    required: "OTP is required.",
-    pattern: {
-      value: otpPattern,
-      message: "Enter the 4 to 6 digit OTP.",
-    },
-    onChange: (event) => {
-      const value = event.target.value.replace(/\D/g, "").slice(0, 6);
-      setValue("otp", value, { shouldDirty: true, shouldValidate: true });
-      setOtpValue(value);
-      setSessionNotice("");
-      clearMessages();
-    },
-  });
-
-  const handleSendOtp = async () => {
-    if (resendSeconds > 0) return;
-
-    clearMessages();
-    setSessionNotice("");
-    const isValid = await trigger("phone");
-
-    if (!isValid) return;
-
-    setSendingOtp(true);
-    const result = await sendOtp(getValues("phone")).finally(() => {
-      setSendingOtp(false);
+    googleButtonElement.replaceChildren();
+    window.google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: handleGoogleCredential,
     });
-
-    if (result.retryAfter && result.retryAfter > 0) {
-      setResendSeconds((seconds) => Math.max(seconds, result.retryAfter ?? 0));
-    }
-
-    if (result.sent) {
-      setOtpSent(true);
-      setResendSeconds(result.retryAfter ?? resendCooldownSeconds);
-      setValue("otp", "", { shouldDirty: false, shouldValidate: false });
-      setOtpValue("");
-    }
-  };
-
-  const handleVerifyOtp = async (values: LoginFormValues) => {
-    clearMessages();
-    setSessionNotice("");
-    setVerifyingOtp(true);
-    const result = await verifyOtp(values).finally(() => {
-      setVerifyingOtp(false);
+    window.google.accounts.id.renderButton(googleButtonElement, {
+      theme: "outline",
+      size: "large",
+      text: "continue_with",
+      shape: "rectangular",
+      width: 320,
     });
+  }, [googleClientId, googleScriptLoaded, handleGoogleCredential]);
 
-    if (!result) return;
-
-    setRedirecting(true);
-
-    const redirectPath = getPostAuthRedirect(result.user);
-    router.replace(
-      redirectPath === "/dashboard" ? getSafeNextPath() ?? redirectPath : redirectPath
-    );
-  };
-
-  const busy = loading || redirecting;
-  const sendDisabled =
-    busy || sendingOtp || resendSeconds > 0 || !phonePattern.test(phoneValue);
-  const verifyDisabled = busy || verifyingOtp || !otpPattern.test(otpValue);
-  const sendButtonText = sendingOtp
-    ? "Sending..."
-    : otpSent
-      ? resendSeconds > 0
-        ? `Resend OTP in ${resendSeconds}s`
-        : "Resend OTP"
-      : "Send OTP";
+  const busy = loading || redirecting || googleLoading;
 
   return (
     <>
+      {googleClientId && (
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+          onLoad={() => setGoogleScriptLoaded(true)}
+        />
+      )}
       <main className="min-h-screen bg-zinc-50 px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
           <section className="space-y-6">
@@ -221,108 +183,71 @@ export default function LoginPage() {
             </ul>
           </section>
 
-          <form
-            onSubmit={handleSubmit(handleVerifyOtp)}
-            className="w-full space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm"
-          >
+          <section className="w-full space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
             <div>
               <h2 className="text-2xl font-semibold text-zinc-950">
                 Sign in to FoodForAll
               </h2>
               <p className="mt-1 text-sm text-zinc-600">
-                Use your phone number to receive a secure OTP.
+                Continue with Google to access your account.
               </p>
             </div>
 
-        {(authError || authSuccess || sessionNotice) && (
-          <div aria-live="polite" className="space-y-2">
-            {sessionNotice && (
-              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                {sessionNotice}
-              </p>
+            {(authError || authSuccess || sessionNotice) && (
+              <div aria-live="polite" className="space-y-2">
+                {sessionNotice && (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {sessionNotice}
+                  </p>
+                )}
+
+                {authError && (
+                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {authError}
+                  </p>
+                )}
+
+                {authSuccess && (
+                  <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    {authSuccess}
+                  </p>
+                )}
+              </div>
             )}
 
-            {authError && (
-              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {authError}
-              </p>
-            )}
-
-            {authSuccess && (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                {authSuccess}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <label
-            htmlFor="phone"
-            className="block text-sm font-medium text-zinc-700"
-          >
-            Phone number
-          </label>
-          <input
-            {...phoneInput}
-            id="phone"
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            maxLength={16}
-            placeholder="9999999999 or +919999999999"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
-            disabled={busy}
-          />
-          {errors.phone && (
-            <p className="text-sm text-red-600">{errors.phone.message}</p>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={handleSendOtp}
-          disabled={sendDisabled}
-          className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {sendButtonText}
-        </button>
-
-        {otpSent && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label
-                htmlFor="otp"
-                className="block text-sm font-medium text-zinc-700"
+            {googleClientId ? (
+              <div
+                ref={googleButtonRef}
+                className={`flex min-h-11 justify-center ${
+                  busy ? "pointer-events-none opacity-60" : ""
+                }`}
+                aria-busy={googleLoading}
               >
-                OTP
-              </label>
-              <input
-                {...otpInput}
-                id="otp"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                placeholder="Enter OTP"
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
-                disabled={busy}
-              />
-              {errors.otp && (
-                <p className="text-sm text-red-600">{errors.otp.message}</p>
-              )}
-            </div>
+                {!googleScriptLoaded && (
+                  <div className="flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-600">
+                    Loading Google sign-in...
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled
+                  className="w-full rounded-md border border-zinc-300 bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-500"
+                >
+                  Continue with Google
+                </button>
+                <p className="text-sm text-red-700">
+                  Google sign-in is not configured for this environment.
+                </p>
+              </div>
+            )}
 
-            <button
-              type="submit"
-              disabled={verifyDisabled}
-              className="w-full rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {verifyingOtp || redirecting ? "Verifying..." : "Verify OTP"}
-            </button>
-          </div>
-        )}
-          </form>
+            <p className="text-sm leading-6 text-zinc-600">
+              You will add your contact phone number during profile setup.
+            </p>
+          </section>
         </div>
       </main>
       <PublicFooter />

@@ -73,7 +73,9 @@ export default function ContactPage() {
       <LegalSection title="What To Include">
         <SimpleList
           items={[
-            "For login issues: the phone number used for OTP login and a short description of the issue.",
+            "For login issues: the Google account email, account phone number if available, and a short description of the issue.",
+            "For Google account issues: the Google email shown on the account and whether the issue is sign-in, duplicate email, or account linking.",
+            "For account recovery: the Google email, phone number, role, and any recent reservation or onboarding reference.",
             "For reservations or refunds: reservation ID, order reference, payment status, and screenshots if available.",
             "For NGO onboarding: organization name, registration number, service area, and verification question.",
             "For provider onboarding: restaurant/provider name, FSSAI details, and verification question.",

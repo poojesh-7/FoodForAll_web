@@ -76,11 +76,17 @@ export default function AuthProvider({
   }, [expireSession]);
 
   useEffect(() => {
-    if (!isProtectedRoute) return;
+    if (!isProtectedRoute && !isGuestOnlyRoute) return;
     if (initialized || isInitializing) return;
 
     void bootstrapAuth();
-  }, [bootstrapAuth, initialized, isInitializing, isProtectedRoute]);
+  }, [
+    bootstrapAuth,
+    initialized,
+    isGuestOnlyRoute,
+    isInitializing,
+    isProtectedRoute,
+  ]);
 
   useEffect(() => {
     if (!isProtectedRoute || !authResolved) return;

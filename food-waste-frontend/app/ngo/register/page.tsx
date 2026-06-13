@@ -1,9 +1,15 @@
 "use client";
 
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getRegistrationRedirect } from "@/lib/onboarding";
+import {
+  validateBusinessName,
+  validateRegistrationNumber,
+  validateServiceRadius,
+} from "@/lib/validation";
 import { ngoService } from "@/services/ngo.service";
+import { useAuthStore } from "@/store/authStore";
 
 type NGOForm = {
   organization_name: string;
@@ -17,8 +23,14 @@ function getCurrentPosition() {
   });
 }
 
+function getUserPhone(user: ReturnType<typeof useAuthStore.getState>["user"]) {
+  return user && "phone" in user && user.phone ? String(user.phone) : "";
+}
+
 export default function NGORegisterPage() {
   const router = useRouter();
+  const user = useAuthStore((state) => state.user);
+  const contactPhone = getUserPhone(user);
 
   const submittingRef = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -29,13 +41,32 @@ export default function NGORegisterPage() {
     service_radius_km: "10",
   });
 
+  useEffect(() => {
+    if (user && !contactPhone) {
+      router.replace("/complete-profile");
+    }
+  }, [contactPhone, router, user]);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (submittingRef.current) return;
 
-    if (!form.organization_name.trim() || !form.registration_number.trim()) {
-      setError("Organization name and registration number are required.");
+    if (!contactPhone) {
+      setError("Complete profile with phone contact before NGO onboarding.");
+      router.replace("/complete-profile");
+      return;
+    }
+
+    const organizationError = validateBusinessName(
+      form.organization_name,
+      "Organization name"
+    );
+    const registrationError = validateRegistrationNumber(form.registration_number);
+    const radiusError = validateServiceRadius(form.service_radius_km);
+
+    if (organizationError || registrationError || radiusError) {
+      setError(organizationError || registrationError || radiusError);
       return;
     }
 
@@ -85,6 +116,21 @@ export default function NGORegisterPage() {
             {error}
           </p>
         )}
+
+        <div className="space-y-2">
+          <label
+            htmlFor="contact_phone"
+            className="block text-sm font-medium text-zinc-700"
+          >
+            Contact phone
+          </label>
+          <input
+            id="contact_phone"
+            value={contactPhone}
+            readOnly
+            className="w-full rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-zinc-950 outline-none"
+          />
+        </div>
 
         <div className="space-y-2">
           <label

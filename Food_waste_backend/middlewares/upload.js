@@ -6,6 +6,8 @@ const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024)
 
 const DEFAULT_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"];
 const DEFAULT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png"];
+const FSSAI_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg", "application/pdf"];
+const FSSAI_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".pdf"];
 const REPORT_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const REPORT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 
@@ -44,6 +46,12 @@ function createImageUpload({
 
 const upload = createImageUpload();
 
+upload.fssaiCertificate = createImageUpload({
+  allowedMimeTypes: FSSAI_ALLOWED_MIME_TYPES,
+  allowedExtensions: FSSAI_ALLOWED_EXTENSIONS,
+  errorMessage: "Only JPG, JPEG, PNG, or PDF FSSAI certificates allowed",
+});
+
 upload.providerReportAttachments = createImageUpload({
   allowedMimeTypes: REPORT_ALLOWED_MIME_TYPES,
   allowedExtensions: REPORT_ALLOWED_EXTENSIONS,
@@ -52,6 +60,7 @@ upload.providerReportAttachments = createImageUpload({
 });
 
 upload.MAX_UPLOAD_BYTES = MAX_UPLOAD_BYTES;
+upload.FSSAI_ALLOWED_MIME_TYPES = FSSAI_ALLOWED_MIME_TYPES;
 upload.REPORT_ALLOWED_MIME_TYPES = REPORT_ALLOWED_MIME_TYPES;
 
 module.exports = upload;

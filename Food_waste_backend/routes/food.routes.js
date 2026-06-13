@@ -20,7 +20,7 @@ router.post(
   authMiddleware,
   requireActiveAccount,
   registrationLimiter,
-  upload.single("fssai_certificate"),
+  upload.fssaiCertificate.single("fssai_certificate"),
   foodCtrl.registerRestaurant,
 );
 router.get("/me", authMiddleware, requireVerifiedProvider, foodCtrl.getMyRestaurant);

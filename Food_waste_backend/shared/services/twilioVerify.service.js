@@ -2,7 +2,39 @@ const twilio = require("twilio");
 
 let client;
 
+function isOtpEnabled() {
+  return ["1", "true", "yes", "on"].includes(
+    String(process.env.AUTH_ENABLE_OTP || "").trim().toLowerCase()
+  );
+}
+
+function isOtpConfigured() {
+  return isOtpEnabled() && Boolean(
+    String(process.env.TWILIO_ACCOUNT_SID || "").trim() &&
+      String(process.env.TWILIO_AUTH_TOKEN || "").trim() &&
+      String(process.env.TWILIO_VERIFY_SERVICE_SID || "").trim()
+  );
+}
+
+function assertOtpConfigured() {
+  if (!isOtpEnabled()) {
+    const error = new Error("Phone OTP login is not enabled");
+    error.statusCode = 503;
+    error.code = "otp_not_enabled";
+    throw error;
+  }
+
+  if (isOtpConfigured()) return;
+
+  const error = new Error("Phone OTP login is not configured");
+  error.statusCode = 503;
+  error.code = "otp_not_configured";
+  throw error;
+}
+
 function getClient() {
+  assertOtpConfigured();
+
   if (!client) {
     client = twilio(
       process.env.TWILIO_ACCOUNT_SID,
@@ -35,6 +67,17 @@ function getSafeTwilioError(err, fallbackMessage) {
   const code = String(err?.code || "");
   const statusCode = err?.status || err?.statusCode;
 
+  if (
+    code === "otp_not_enabled" ||
+    code === "otp_not_configured" ||
+    statusCode === 503
+  ) {
+    return {
+      status: 503,
+      message: "Phone OTP login is temporarily unavailable. Use Google login or contact support.",
+    };
+  }
+
   if (statusCode === 429 || code === "20429" || code === "60203") {
     return {
       status: 429,
@@ -65,5 +108,7 @@ function getSafeTwilioError(err, fallbackMessage) {
 module.exports = {
   checkVerification,
   getSafeTwilioError,
+  isOtpEnabled,
+  isOtpConfigured,
   sendVerification,
 };

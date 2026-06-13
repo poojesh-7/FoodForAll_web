@@ -517,12 +517,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     const operationId = claimAuthOperation();
+    let logoutError: string | null = null;
 
     try {
       set({ loading: true, authError: null, authSuccess: null });
       await authApi.logout();
     } catch (error) {
-      console.error(error);
+      logoutError = authApi.getErrorMessage(error);
+      console.error("Logout failed", error);
     } finally {
       if (isCurrentAuthOperation(operationId)) {
         set({
@@ -533,13 +535,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           authBootstrapped: true,
           isInitializing: false,
           loading: false,
-          authError: null,
+          authError: logoutError
+            ? `Signed out locally, but server session revocation failed: ${logoutError}`
+            : null,
           authSuccess: null,
+          authRetryAfter: null,
         });
       }
 
       if (typeof window !== "undefined") {
-        window.location.assign("/login");
+        window.location.assign(logoutError ? "/login?logout=partial" : "/login");
       }
     }
   },

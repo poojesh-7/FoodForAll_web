@@ -66,3 +66,10 @@ admin/
 # Misc
 # ======================
 *.pem
+
+# Codex temporary files
+.codex/
+
+# Browser verification artifacts
+chrome-*/
+browser-verify-*.mjs

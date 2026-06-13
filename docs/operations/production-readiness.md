@@ -28,7 +28,7 @@ Cashfree webhooks, static assets, and health checks. The production compose file
 keeps PostgreSQL, Redis, API, workers, and frontend on an internal Docker
 network; only Nginx publishes ports `80` and `443`.
 
-Use `PUBLIC_API_URL=https://<domain>/api/v1`,
+Use `NEXT_PUBLIC_API_URL=https://<domain>/api/v1`,
 `FRONTEND_URL=https://<domain>`, `TRUST_PROXY_HOPS=1`,
 `COOKIE_SECURE=true`, and `COOKIE_SAME_SITE=none` for the standard same-origin
 production deployment. Nginx overwrites forwarded IP headers at the edge so

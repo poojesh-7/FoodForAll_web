@@ -1404,12 +1404,20 @@ exports.logout = async (req, res) => {
     // 🍪 Always clear cookies
     clearAuthCookies(res);
 
-    return res.json({ success: true });
+    return res.json({
+      success: true,
+      message: "Logged out successfully",
+      data: null,
+    });
 
   } catch (err) {
     logger.error("Logout failed", { err, userId: req.user?.id });
+    clearAuthCookies(res);
     res.status(500).json({
+      success: false,
+      message: "Logout failed",
       error: "Logout failed",
+      data: null,
     });
   }
 };

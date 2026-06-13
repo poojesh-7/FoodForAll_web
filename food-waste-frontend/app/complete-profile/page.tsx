@@ -97,25 +97,16 @@ export default function CompleteProfilePage() {
   const userName = getUserStringField(user, "name");
   const userEmail = getUserStringField(user, "email");
 
-  const [form, setForm] = useState<CompleteProfileForm>({
+  const [form, setForm] = useState<CompleteProfileForm>(() => ({
     phone: userPhone,
     name: userName,
     email: userEmail,
     address: "",
     useCurrentLocation: true,
-  });
+  }));
   const [formError, setFormError] = useState("");
   const onboardingCopy = getProfileOnboardingCopy(user?.role);
   const emailLocked = Boolean(userEmail);
-
-  useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      phone: current.phone || userPhone,
-      name: current.name || userName,
-      email: userEmail || current.email,
-    }));
-  }, [user?.id, userEmail, userName, userPhone]);
 
   useEffect(() => {
     if (!user?.role) {

@@ -19,6 +19,7 @@ type GoogleAccounts = {
         client_id: string;
         callback: (response: GoogleCredentialResponse) => void;
       }) => void;
+      cancel?: () => void;
       renderButton: (
         element: HTMLElement,
         options: {
@@ -39,6 +40,25 @@ declare global {
   }
 }
 
+const GOOGLE_SDK_POLL_INTERVAL_MS = 100;
+const GOOGLE_SDK_READY_TIMEOUT_MS = 8000;
+const GOOGLE_SDK_LOAD_ERROR =
+  "Google sign-in could not load. Please refresh the page or try again later.";
+
+type GoogleSdkStatus = "loading" | "ready" | "failed";
+
+function isGoogleSdkReady() {
+  const googleAccountsId = window.google?.accounts?.id;
+  return Boolean(
+    googleAccountsId?.initialize && googleAccountsId?.renderButton
+  );
+}
+
+function getInitialGoogleSdkStatus(): GoogleSdkStatus {
+  if (typeof window === "undefined") return "loading";
+  return isGoogleSdkReady() ? "ready" : "loading";
+}
+
 function getSafeNextPath() {
   if (typeof window === "undefined") return null;
 
@@ -50,9 +70,15 @@ function getInitialSessionNotice() {
   if (typeof window === "undefined") return "";
 
   const params = new URLSearchParams(window.location.search);
-  return params.get("session") === "expired"
-    ? "Your session has expired. Please sign in again."
-    : "";
+  if (params.get("session") === "expired") {
+    return "Your session has expired. Please sign in again.";
+  }
+
+  if (params.get("logout") === "partial") {
+    return "You were signed out locally, but server session revocation could not be confirmed.";
+  }
+
+  return "";
 }
 
 export default function LoginPage() {
@@ -60,9 +86,14 @@ export default function LoginPage() {
   const googleClientId = getPublicGoogleClientId();
   const [redirecting, setRedirecting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [googleScriptLoaded, setGoogleScriptLoaded] = useState(false);
+  const [googleSdkStatus, setGoogleSdkStatus] = useState<GoogleSdkStatus>(
+    getInitialGoogleSdkStatus
+  );
+  const [googleSdkError, setGoogleSdkError] = useState("");
   const [sessionNotice, setSessionNotice] = useState(getInitialSessionNotice);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  const googleAuthBusyRef = useRef(false);
+  const redirectingRef = useRef(false);
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
@@ -86,6 +117,7 @@ export default function LoginPage() {
 
   const finishAuthRedirect = useCallback(
     (nextUser: NonNullable<typeof user>) => {
+      redirectingRef.current = true;
       setRedirecting(true);
       const redirectPath = getPostAuthRedirect(nextUser);
       router.replace(
@@ -99,14 +131,22 @@ export default function LoginPage() {
 
   const handleGoogleCredential = useCallback(
     async (response: GoogleCredentialResponse) => {
-      if (!response.credential || googleLoading || redirecting) return;
+      if (
+        !response.credential ||
+        googleAuthBusyRef.current ||
+        redirectingRef.current
+      ) {
+        return;
+      }
 
       clearMessages();
       setSessionNotice("");
+      googleAuthBusyRef.current = true;
       setGoogleLoading(true);
 
       const result = await googleLogin({ credential: response.credential }).finally(
         () => {
+          googleAuthBusyRef.current = false;
           setGoogleLoading(false);
         }
       );
@@ -118,32 +158,117 @@ export default function LoginPage() {
     [
       clearMessages,
       finishAuthRedirect,
-      googleLoading,
       googleLogin,
-      redirecting,
     ]
   );
 
+  const markGoogleSdkReady = useCallback(() => {
+    if (!isGoogleSdkReady()) return false;
+
+    setGoogleSdkError("");
+    setGoogleSdkStatus("ready");
+    return true;
+  }, []);
+
+  const markGoogleSdkFailed = useCallback(() => {
+    if (markGoogleSdkReady()) return;
+
+    setGoogleSdkStatus("failed");
+    setGoogleSdkError(GOOGLE_SDK_LOAD_ERROR);
+  }, [markGoogleSdkReady]);
+
+  useEffect(() => {
+    if (!googleClientId || googleSdkStatus !== "loading") return;
+
+    let settled = false;
+    const startedAt = Date.now();
+
+    const checkReady = () => {
+      if (settled) return;
+
+      if (markGoogleSdkReady()) {
+        settled = true;
+        return;
+      }
+
+      if (Date.now() - startedAt >= GOOGLE_SDK_READY_TIMEOUT_MS) {
+        settled = true;
+        markGoogleSdkFailed();
+      }
+    };
+
+    const initialCheck = window.setTimeout(checkReady, 0);
+    const readinessPoll = window.setInterval(
+      checkReady,
+      GOOGLE_SDK_POLL_INTERVAL_MS
+    );
+
+    return () => {
+      settled = true;
+      window.clearTimeout(initialCheck);
+      window.clearInterval(readinessPoll);
+    };
+  }, [
+    googleClientId,
+    googleSdkStatus,
+    markGoogleSdkFailed,
+    markGoogleSdkReady,
+  ]);
+
   useEffect(() => {
     const googleButtonElement = googleButtonRef.current;
-    if (!googleClientId || !googleScriptLoaded || !googleButtonElement) return;
-    if (!window.google?.accounts?.id) return;
+    if (!googleClientId || googleSdkStatus !== "ready" || !googleButtonElement) {
+      return;
+    }
 
-    googleButtonElement.replaceChildren();
-    window.google.accounts.id.initialize({
-      client_id: googleClientId,
-      callback: handleGoogleCredential,
-    });
-    window.google.accounts.id.renderButton(googleButtonElement, {
-      theme: "outline",
-      size: "large",
-      text: "continue_with",
-      shape: "rectangular",
-      width: 320,
-    });
-  }, [googleClientId, googleScriptLoaded, handleGoogleCredential]);
+    const googleAccountsId = window.google?.accounts?.id;
+    if (!googleAccountsId) return;
+
+    let failureTimer: number | null = null;
+
+    try {
+      googleButtonElement.replaceChildren();
+      googleAccountsId.initialize({
+        client_id: googleClientId,
+        callback: handleGoogleCredential,
+      });
+      googleAccountsId.renderButton(googleButtonElement, {
+        theme: "outline",
+        size: "large",
+        text: "continue_with",
+        shape: "rectangular",
+        width: 320,
+      });
+    } catch (error) {
+      console.error("Google sign-in render failed", error);
+      googleButtonElement.replaceChildren();
+      failureTimer = window.setTimeout(() => {
+        setGoogleSdkStatus("failed");
+        setGoogleSdkError(GOOGLE_SDK_LOAD_ERROR);
+      }, 0);
+    }
+
+    return () => {
+      if (failureTimer !== null) {
+        window.clearTimeout(failureTimer);
+      }
+
+      googleButtonElement.replaceChildren();
+    };
+  }, [googleClientId, googleSdkStatus, handleGoogleCredential]);
+
+  useEffect(() => {
+    const googleButtonElement = googleButtonRef.current;
+
+    return () => {
+      googleButtonElement?.replaceChildren();
+      window.google?.accounts?.id?.cancel?.();
+    };
+  }, []);
 
   const busy = loading || redirecting || googleLoading;
+  const googleSdkLoading = googleSdkStatus === "loading";
+  const googleSdkFailed = googleSdkStatus === "failed";
 
   return (
     <>
@@ -151,7 +276,15 @@ export default function LoginPage() {
         <Script
           src="https://accounts.google.com/gsi/client"
           strategy="afterInteractive"
-          onLoad={() => setGoogleScriptLoaded(true)}
+          onLoad={() => {
+            markGoogleSdkReady();
+          }}
+          onReady={() => {
+            markGoogleSdkReady();
+          }}
+          onError={() => {
+            markGoogleSdkFailed();
+          }}
         />
       )}
       <main className="min-h-screen bg-zinc-50 px-4 py-8 sm:px-6 lg:px-8">
@@ -221,12 +354,21 @@ export default function LoginPage() {
                 className={`flex min-h-11 justify-center ${
                   busy ? "pointer-events-none opacity-60" : ""
                 }`}
-                aria-busy={googleLoading}
+                aria-busy={googleLoading || googleSdkLoading}
               >
-                {!googleScriptLoaded && (
+                {googleSdkLoading && (
                   <div className="flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-600">
                     Loading Google sign-in...
                   </div>
+                )}
+                {googleSdkFailed && (
+                  <button
+                    type="button"
+                    disabled
+                    className="h-11 w-full rounded-md border border-zinc-300 bg-zinc-100 px-4 text-sm font-medium text-zinc-500"
+                  >
+                    Continue with Google
+                  </button>
                 )}
               </div>
             ) : (
@@ -242,6 +384,10 @@ export default function LoginPage() {
                   Google sign-in is not configured for this environment.
                 </p>
               </div>
+            )}
+
+            {googleClientId && googleSdkError && (
+              <p className="text-sm text-red-700">{googleSdkError}</p>
             )}
 
             <p className="text-sm leading-6 text-zinc-600">

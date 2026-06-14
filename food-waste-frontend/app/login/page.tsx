@@ -121,6 +121,11 @@ function initializeGoogleIdentity(
   initializedGoogleClientId = clientId;
 }
 
+function clearGoogleButtonContainer(element: HTMLElement | null) {
+  if (!element) return;
+  element.innerHTML = "";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const googleClientId = getPublicGoogleClientId();
@@ -294,11 +299,11 @@ export default function LoginPage() {
     let failureTimer: number | null = null;
 
     try {
-      googleButtonElement.replaceChildren();
+      clearGoogleButtonContainer(googleButtonElement);
       initializeGoogleIdentity(googleClientId, handleGoogleCredential);
     } catch (error) {
       console.error("Google sign-in initialization failed", error);
-      googleButtonElement.replaceChildren();
+      clearGoogleButtonContainer(googleButtonElement);
       failureTimer = window.setTimeout(() => {
         setGoogleSdkStatus("failed");
         setGoogleSdkError(GOOGLE_SDK_INIT_ERROR);
@@ -321,7 +326,7 @@ export default function LoginPage() {
       });
     } catch (error) {
       console.error("Google sign-in render failed", error);
-      googleButtonElement.replaceChildren();
+      clearGoogleButtonContainer(googleButtonElement);
       failureTimer = window.setTimeout(() => {
         setGoogleSdkStatus("failed");
         setGoogleSdkError(GOOGLE_BUTTON_RENDER_ERROR);
@@ -337,7 +342,7 @@ export default function LoginPage() {
         activeGoogleCredentialHandler = null;
       }
       clearPopupNoticeTimer();
-      googleButtonElement.replaceChildren();
+      clearGoogleButtonContainer(googleButtonElement);
     };
   }, [
     clearPopupNoticeTimer,
@@ -348,11 +353,8 @@ export default function LoginPage() {
   ]);
 
   useEffect(() => {
-    const googleButtonElement = googleButtonRef.current;
-
     return () => {
       clearPopupNoticeTimer();
-      googleButtonElement?.replaceChildren();
       window.google?.accounts?.id?.cancel?.();
     };
   }, [clearPopupNoticeTimer]);
@@ -441,12 +443,17 @@ export default function LoginPage() {
 
             {googleClientId ? (
               <div
-                ref={googleButtonRef}
                 className={`flex min-h-11 justify-center ${
                   busy ? "pointer-events-none opacity-60" : ""
                 }`}
                 aria-busy={googleLoading || googleSdkLoading}
               >
+                {googleSdkStatus === "ready" && (
+                  <div
+                    ref={googleButtonRef}
+                    className="flex min-h-11 w-full justify-center"
+                  />
+                )}
                 {googleSdkLoading && (
                   <div className="flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-600">
                     Loading Google sign-in...

@@ -3,7 +3,11 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AUTH_SESSION_EXPIRED_EVENT } from "@/lib/axios";
-import { getPostAuthRedirect, getRouteAccessRedirect } from "@/lib/onboarding";
+import {
+  getPostAuthRedirect,
+  getRouteAccessRedirect,
+  pendingVerificationRoute,
+} from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
 const protectedRoutes = [
@@ -59,10 +63,15 @@ export default function AuthProvider({
   const authResolved = initialized && !isInitializing;
   const isProtectedRoute = matchesRoute(pathname, protectedRoutes);
   const isGuestOnlyRoute = matchesRoute(pathname, guestOnlyRoutes);
+  const isPendingVerificationRoute = matchesRoute(pathname, [
+    pendingVerificationRoute,
+  ]);
   const routeAccessRedirect =
     authResolved && user ? getRouteAccessRedirect(user, pathname) : null;
   const guestRedirect =
     authResolved && isAuthenticated ? getPostAuthRedirect(user) : null;
+  const canRenderPendingVerification =
+    isPendingVerificationRoute && Boolean(user) && !loading;
 
   useEffect(() => {
     clearMessages();
@@ -137,7 +146,15 @@ export default function AuthProvider({
     );
   }
 
-  if (isProtectedRoute && (!authResolved || loading || routeAccessRedirect)) {
+  if (isProtectedRoute && routeAccessRedirect) {
+    return <FullscreenLoading />;
+  }
+
+  if (
+    isProtectedRoute &&
+    (!authResolved || loading) &&
+    !canRenderPendingVerification
+  ) {
     return <FullscreenLoading />;
   }
 

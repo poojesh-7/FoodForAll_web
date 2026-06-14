@@ -28,6 +28,12 @@ type SocketContextValue = {
 };
 
 const SocketContext = createContext<SocketContextValue | null>(null);
+const verificationDecisionNotificationTypes = new Set([
+  "ngo_verification_approved",
+  "ngo_verification_rejected",
+  "provider_verification_approved",
+  "provider_verification_rejected",
+]);
 
 const realtimeStatusRoutes = [
   "/dashboard",
@@ -56,6 +62,17 @@ function matchesRoute(pathname: string, routes: string[]) {
   return routes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
+function isVerificationDecisionNotification(notification: NotificationRow) {
+  return verificationDecisionNotificationTypes.has(String(notification.type || ""));
+}
+
+function getVerificationStatus(
+  user: ReturnType<typeof useAuthStore.getState>["user"]
+) {
+  if (!user || !("verification_status" in user)) return null;
+  return user.verification_status ?? null;
+}
+
 export function useSocket() {
   const context = useContext(SocketContext);
   if (!context) {
@@ -71,6 +88,14 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
   const initialized = useAuthStore((state) => state.initialized);
   const isInitializing = useAuthStore((state) => state.isInitializing);
   const isOnboarded = useAuthStore((state) => state.isOnboarded);
+  const verificationStatus = getVerificationStatus(user);
+  const canUseRealtime =
+    initialized &&
+    isAuthenticated &&
+    Boolean(user?.id) &&
+    (isOnboarded ||
+      verificationStatus === "pending" ||
+      verificationStatus === "rejected");
   const [connected, setConnected] = useState(socket.connected);
   const [reconnecting, setReconnecting] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -85,6 +110,11 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
       useNotificationStore.getState().receiveNotification;
     const handleNotification = (notification: NotificationRow) => {
       receiveNotification(notification);
+      if (isVerificationDecisionNotification(notification)) {
+        void useAuthStore
+          .getState()
+          .fetchMe({ allowStaleOnFailure: false });
+      }
       toast(
         notification.message
           ? `${notification.title || "New notification"}: ${notification.message}`
@@ -162,10 +192,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (
-      !initialized ||
-      isInitializing ||
-      !isAuthenticated ||
-      !isOnboarded ||
+      !canUseRealtime ||
       !user?.id
     ) {
       if (socket.connected) socket.disconnect();
@@ -181,7 +208,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     } else {
       socket.emit("join", user.id);
     }
-  }, [initialized, isAuthenticated, isInitializing, isOnboarded, user?.id]);
+  }, [canUseRealtime, user?.id]);
 
   const value = useMemo(
     () => ({ socket, connected, reconnecting, offline }),

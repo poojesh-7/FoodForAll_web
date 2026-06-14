@@ -9,6 +9,13 @@ type SendOtpOutcome = {
   sent: boolean;
   retryAfter?: number | null;
 };
+type FetchMeOptions = {
+  allowStaleOnFailure?: boolean;
+};
+type FetchMeRecoveryOptions = {
+  attempts?: number;
+  retryUnauthorized?: boolean;
+};
 
 const AUTH_HYDRATION_ATTEMPTS = 2;
 const AUTH_BOOTSTRAP_ATTEMPTS = 3;
@@ -16,7 +23,7 @@ const AUTH_HYDRATION_RETRY_DELAY_MS = 350;
 const POST_LOGIN_COOKIE_SETTLE_DELAY_MS = 100;
 
 let authOperationId = 0;
-let bootstrapPromise: Promise<AuthMeUser | null> | null = null;
+let authHydrationPromise: Promise<AuthMeUser> | null = null;
 
 function claimAuthOperation() {
   authOperationId += 1;
@@ -58,10 +65,7 @@ function getSessionRecoveryMessage(error: unknown) {
 async function fetchMeWithRecovery({
   attempts = 1,
   retryUnauthorized = false,
-}: {
-  attempts?: number;
-  retryUnauthorized?: boolean;
-} = {}) {
+}: FetchMeRecoveryOptions = {}) {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -83,6 +87,20 @@ async function fetchMeWithRecovery({
   throw lastError;
 }
 
+function getSharedAuthHydration(options: FetchMeRecoveryOptions) {
+  if (!authHydrationPromise) {
+    authHydrationPromise = fetchMeWithRecovery(options).finally(() => {
+      authHydrationPromise = null;
+    });
+  }
+
+  return authHydrationPromise;
+}
+
+function resetSharedAuthHydration() {
+  authHydrationPromise = null;
+}
+
 interface AuthState {
   user: AuthStoreUser | null;
   isAuthenticated: boolean;
@@ -98,7 +116,7 @@ interface AuthState {
   expireSession: () => void;
   clearMessages: () => void;
   bootstrapAuth: () => Promise<AuthMeUser | null>;
-  fetchMe: () => Promise<AuthMeUser | null>;
+  fetchMe: (options?: FetchMeOptions) => Promise<AuthMeUser | null>;
   sendOtp: (phone: string) => Promise<SendOtpOutcome>;
   verifyOtp: (
     params: authApi.VerifyOtpPayload
@@ -164,74 +182,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return state.user as AuthMeUser | null;
     }
 
-    if (bootstrapPromise) return bootstrapPromise;
-
     const operationId = claimAuthOperation();
 
-    bootstrapPromise = (async () => {
-      set({ isInitializing: true, authError: null, authSuccess: null });
-
-      try {
-        const user = await fetchMeWithRecovery({
-          attempts: AUTH_BOOTSTRAP_ATTEMPTS,
-          retryUnauthorized: true,
-        });
-
-        if (!isCurrentAuthOperation(operationId)) {
-          return null;
-        }
-
-        set({
-          user,
-          isAuthenticated: true,
-          isOnboarded: isUserOnboarded(user),
-          initialized: true,
-          authBootstrapped: true,
-          isInitializing: false,
-          authError: null,
-          authSuccess: null,
-        });
-
-        return user;
-      } catch (error) {
-        if (!isCurrentAuthOperation(operationId)) {
-          return null;
-        }
-
-        const currentUser = get().user;
-        const permanentFailure = isPermanentAuthFailure(error);
-
-        set({
-          user: permanentFailure ? null : currentUser,
-          isAuthenticated: permanentFailure ? false : Boolean(currentUser),
-          isOnboarded: permanentFailure ? false : isUserOnboarded(currentUser),
-          initialized: true,
-          authBootstrapped: permanentFailure,
-          isInitializing: false,
-          authError: permanentFailure ? null : getSessionRecoveryMessage(error),
-          authSuccess: null,
-        });
-
-        return permanentFailure ? null : (currentUser as AuthMeUser | null);
-      } finally {
-        if (isCurrentAuthOperation(operationId)) {
-          set({ isInitializing: false });
-        }
-
-        bootstrapPromise = null;
-      }
-    })();
-
-    return bootstrapPromise;
-  },
-
-  fetchMe: async () => {
-    const operationId = claimAuthOperation();
+    set({ isInitializing: true, authError: null, authSuccess: null });
 
     try {
-      set({ isInitializing: true, authError: null, authSuccess: null });
-      const user = await fetchMeWithRecovery({
-        attempts: AUTH_HYDRATION_ATTEMPTS,
+      const user = await getSharedAuthHydration({
+        attempts: AUTH_BOOTSTRAP_ATTEMPTS,
         retryUnauthorized: true,
       });
 
@@ -271,6 +228,62 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       return permanentFailure ? null : (currentUser as AuthMeUser | null);
+    } finally {
+      if (isCurrentAuthOperation(operationId)) {
+        set({ isInitializing: false });
+      }
+    }
+  },
+
+  fetchMe: async (options = {}) => {
+    const operationId = claimAuthOperation();
+    const allowStaleOnFailure = options.allowStaleOnFailure !== false;
+
+    try {
+      set({ isInitializing: true, authError: null, authSuccess: null });
+      const user = await getSharedAuthHydration({
+        attempts: AUTH_HYDRATION_ATTEMPTS,
+        retryUnauthorized: true,
+      });
+
+      if (!isCurrentAuthOperation(operationId)) {
+        return null;
+      }
+
+      set({
+        user,
+        isAuthenticated: true,
+        isOnboarded: isUserOnboarded(user),
+        initialized: true,
+        authBootstrapped: true,
+        isInitializing: false,
+        authError: null,
+        authSuccess: null,
+      });
+
+      return user;
+    } catch (error) {
+      if (!isCurrentAuthOperation(operationId)) {
+        return null;
+      }
+
+      const currentUser = get().user;
+      const permanentFailure = isPermanentAuthFailure(error);
+
+      set({
+        user: permanentFailure ? null : currentUser,
+        isAuthenticated: permanentFailure ? false : Boolean(currentUser),
+        isOnboarded: permanentFailure ? false : isUserOnboarded(currentUser),
+        initialized: true,
+        authBootstrapped: permanentFailure,
+        isInitializing: false,
+        authError: permanentFailure ? null : getSessionRecoveryMessage(error),
+        authSuccess: null,
+      });
+
+      return permanentFailure || !allowStaleOnFailure
+        ? null
+        : (currentUser as AuthMeUser | null);
     } finally {
       if (isCurrentAuthOperation(operationId)) {
         set({ isInitializing: false });
@@ -326,6 +339,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const result = await authApi.verifyOtp(params);
       resetAuthRefreshFailure();
       await delay(POST_LOGIN_COOKIE_SETTLE_DELAY_MS);
+      resetSharedAuthHydration();
       const user = await fetchMeWithRecovery({
         attempts: AUTH_HYDRATION_ATTEMPTS,
         retryUnauthorized: true,
@@ -387,6 +401,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const result = await authApi.googleLogin(params);
       resetAuthRefreshFailure();
       await delay(POST_LOGIN_COOKIE_SETTLE_DELAY_MS);
+      resetSharedAuthHydration();
       const user = await fetchMeWithRecovery({
         attempts: AUTH_HYDRATION_ATTEMPTS,
         retryUnauthorized: true,
@@ -442,6 +457,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ loading: true, authError: null, authSuccess: null });
       const result = await authApi.setRole({ role });
+      resetSharedAuthHydration();
       const me = await authApi.fetchMe().catch(() => null);
       const user = me ?? result.user;
 
@@ -485,6 +501,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ loading: true, authError: null, authSuccess: null });
       const result = await authApi.completeProfile(params);
+      resetSharedAuthHydration();
       const me = await authApi.fetchMe().catch(() => null);
       const user = me ?? result.user;
 

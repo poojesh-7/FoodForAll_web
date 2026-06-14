@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getRegistrationRedirect } from "@/lib/onboarding";
+import { getPostAuthRedirect, getRegistrationRedirect } from "@/lib/onboarding";
 import {
   validateBusinessName,
   validateRegistrationNumber,
@@ -30,6 +30,7 @@ function getUserPhone(user: ReturnType<typeof useAuthStore.getState>["user"]) {
 export default function NGORegisterPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const fetchMe = useAuthStore((state) => state.fetchMe);
   const contactPhone = getUserPhone(user);
 
   const submittingRef = useRef(false);
@@ -84,7 +85,12 @@ export default function NGORegisterPage() {
         longitude: position.coords.longitude,
       });
 
-      router.push(getRegistrationRedirect("ngo", result.ngo.is_verified));
+      const refreshedUser = await fetchMe({ allowStaleOnFailure: false });
+      router.push(
+        refreshedUser
+          ? getPostAuthRedirect(refreshedUser)
+          : getRegistrationRedirect("ngo", result.ngo.is_verified)
+      );
     } catch (err) {
       submittingRef.current = false;
       setLoading(false);

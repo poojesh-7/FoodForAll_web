@@ -1,39 +1,65 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getPostAuthRedirect, getRoleRegistrationRoute } from "@/lib/onboarding";
-import { authService } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
+
+type AuthStoreUser = ReturnType<typeof useAuthStore.getState>["user"];
+type RejectedRole = "provider" | "ngo";
+
+const refreshedPendingUsers = new Set<string>();
+
+function getVerificationRole(role: unknown): RejectedRole | null {
+  return role === "provider" || role === "ngo" ? role : null;
+}
+
+function getVerificationStatus(user: AuthStoreUser) {
+  if (!user) return null;
+  if ("verification_status" in user && user.verification_status) {
+    return user.verification_status;
+  }
+  if ("is_verified" in user && user.is_verified) return "approved";
+  return null;
+}
+
+function getRejectionReason(user: AuthStoreUser) {
+  if (!user || !("rejection_reason" in user)) return null;
+  return user.rejection_reason ?? null;
+}
 
 export default function PendingPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
-  const setUser = useAuthStore((state) => state.setUser);
-  const [rejectionReason, setRejectionReason] = useState<string | null>(null);
-  const [rejectedRole, setRejectedRole] = useState<"provider" | "ngo" | null>(
-    null
-  );
+  const fetchMe = useAuthStore((state) => state.fetchMe);
+  const verificationRole = getVerificationRole(user?.role);
+  const verificationStatus = getVerificationStatus(user);
+  const rejectedRole =
+    verificationRole && verificationStatus === "rejected"
+      ? verificationRole
+      : null;
+  const rejectionReason = rejectedRole ? getRejectionReason(user) : null;
+  const pendingRefreshKey = user?.id ? String(user.id) : null;
+  const shouldRefreshOnce =
+    Boolean(verificationRole && pendingRefreshKey) &&
+    (verificationStatus === "pending" ||
+      verificationStatus === "unregistered" ||
+      verificationStatus === null);
 
   useEffect(() => {
+    if (!shouldRefreshOnce || !pendingRefreshKey) return;
+    if (refreshedPendingUsers.has(pendingRefreshKey)) return;
+
+    refreshedPendingUsers.add(pendingRefreshKey);
     let active = true;
 
     async function refreshVerificationStatus() {
-      const refreshedUser = await authService.fetchMe().catch(() => null);
+      const refreshedUser = await fetchMe({ allowStaleOnFailure: false }).catch(
+        () => null
+      );
 
       if (!active) return;
       if (!refreshedUser) return;
-
-      setUser(refreshedUser);
-
-      if (
-        (refreshedUser?.role === "provider" || refreshedUser?.role === "ngo") &&
-        refreshedUser.verification_status === "rejected"
-      ) {
-        setRejectedRole(refreshedUser.role);
-        setRejectionReason(refreshedUser.rejection_reason ?? null);
-        return;
-      }
 
       const redirect = getPostAuthRedirect(refreshedUser);
       if (redirect !== "/pending-verification") {
@@ -46,7 +72,7 @@ export default function PendingPage() {
     return () => {
       active = false;
     };
-  }, [router, setUser]);
+  }, [fetchMe, pendingRefreshKey, router, shouldRefreshOnce]);
 
   if (rejectedRole) {
     return (
@@ -104,8 +130,13 @@ export default function PendingPage() {
             team before dashboard access is enabled.
           </p>
           <p>
-            Approval may take some time. You can safely return later and sign in
-            with Google to continue from your latest verification status.
+            Most reviews are completed within 1-2 business days. Keep your
+            Google account and contact phone available in case the review team
+            needs clarification.
+          </p>
+          <p>
+            You can safely return later and sign in with Google to continue from
+            your latest verification status.
           </p>
         </div>
       </section>

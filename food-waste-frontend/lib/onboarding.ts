@@ -136,13 +136,6 @@ export function getRouteAccessRedirect(
       return getRoleDashboard(user.role);
     }
 
-    if (
-      verificationStatus === "rejected" ||
-      verificationStatus === "unregistered"
-    ) {
-      return getRoleRegistrationRoute(user.role);
-    }
-
     return null;
   }
 
@@ -179,6 +172,13 @@ export function getRouteAccessRedirect(
       (verificationStatus === "approved" || user.is_verified)
     ) {
       return getRoleDashboard(user.role);
+    }
+
+    if (
+      pathname.startsWith("/restaurant/register") &&
+      verificationStatus === "pending"
+    ) {
+      return pendingVerificationRoute;
     }
   }
 
@@ -230,6 +230,13 @@ export function getRouteAccessRedirect(
       (verificationStatus === "approved" || user.is_verified)
     ) {
       return getRoleDashboard(user.role);
+    }
+
+    if (
+      pathname.startsWith("/ngo/register") &&
+      verificationStatus === "pending"
+    ) {
+      return pendingVerificationRoute;
     }
   }
 

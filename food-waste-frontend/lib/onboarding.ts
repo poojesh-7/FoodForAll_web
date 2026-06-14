@@ -125,6 +125,27 @@ export function getRouteAccessRedirect(
     return getPostAuthRedirect(user);
   }
 
+  if (pathname.startsWith(pendingVerificationRoute)) {
+    if (!isVerificationRole(user.role)) {
+      return getPostAuthRedirect(user);
+    }
+
+    const verificationStatus = getVerificationStatus(user);
+
+    if (verificationStatus === "approved" || user.is_verified) {
+      return getRoleDashboard(user.role);
+    }
+
+    if (
+      verificationStatus === "rejected" ||
+      verificationStatus === "unregistered"
+    ) {
+      return getRoleRegistrationRoute(user.role);
+    }
+
+    return null;
+  }
+
   if (
     pathname.startsWith("/admin") &&
     user?.role !== "admin"
@@ -210,14 +231,6 @@ export function getRouteAccessRedirect(
     ) {
       return getRoleDashboard(user.role);
     }
-  }
-
-  if (
-    pathname.startsWith(pendingVerificationRoute) &&
-    user.role !== "provider" &&
-    user.role !== "ngo"
-  ) {
-    return getPostAuthRedirect(user);
   }
 
   return null;

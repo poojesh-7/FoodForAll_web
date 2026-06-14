@@ -11,6 +11,7 @@ type SendOtpOutcome = {
 };
 
 const AUTH_HYDRATION_ATTEMPTS = 2;
+const AUTH_BOOTSTRAP_ATTEMPTS = 3;
 const AUTH_HYDRATION_RETRY_DELAY_MS = 350;
 const POST_LOGIN_COOKIE_SETTLE_DELAY_MS = 100;
 
@@ -171,7 +172,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ isInitializing: true, authError: null, authSuccess: null });
 
       try {
-        const user = await fetchMeWithRecovery();
+        const user = await fetchMeWithRecovery({
+          attempts: AUTH_BOOTSTRAP_ATTEMPTS,
+          retryUnauthorized: true,
+        });
 
         if (!isCurrentAuthOperation(operationId)) {
           return null;
@@ -226,7 +230,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     try {
       set({ isInitializing: true, authError: null, authSuccess: null });
-      const user = await fetchMeWithRecovery();
+      const user = await fetchMeWithRecovery({
+        attempts: AUTH_HYDRATION_ATTEMPTS,
+        retryUnauthorized: true,
+      });
 
       if (!isCurrentAuthOperation(operationId)) {
         return null;

@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getRoleDashboard, getRoleRegistrationRoute } from "@/lib/onboarding";
+import { getPostAuthRedirect, getRoleRegistrationRoute } from "@/lib/onboarding";
+import { authService } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
-
-const VERIFICATION_POLL_INTERVAL_MS = 20_000;
 
 export default function PendingPage() {
   const router = useRouter();
-  const fetchMe = useAuthStore((state) => state.fetchMe);
-  const [checking, setChecking] = useState(true);
+  const user = useAuthStore((state) => state.user);
+  const setUser = useAuthStore((state) => state.setUser);
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [rejectedRole, setRejectedRole] = useState<"provider" | "ngo" | null>(
     null
@@ -19,84 +18,97 @@ export default function PendingPage() {
   useEffect(() => {
     let active = true;
 
-    const checkVerification = async () => {
-      const user = await fetchMe();
+    async function refreshVerificationStatus() {
+      const refreshedUser = await authService.fetchMe().catch(() => null);
 
       if (!active) return;
+      if (!refreshedUser) return;
+
+      setUser(refreshedUser);
 
       if (
-        (user?.role === "provider" || user?.role === "ngo") &&
-        (user.is_verified || user.verification_status === "approved")
+        (refreshedUser?.role === "provider" || refreshedUser?.role === "ngo") &&
+        refreshedUser.verification_status === "rejected"
       ) {
-        router.replace(getRoleDashboard(user.role));
+        setRejectedRole(refreshedUser.role);
+        setRejectionReason(refreshedUser.rejection_reason ?? null);
         return;
       }
 
-      if (
-        (user?.role === "provider" || user?.role === "ngo") &&
-        user.verification_status === "rejected"
-      ) {
-        setRejectedRole(user.role);
-        setRejectionReason(user.rejection_reason ?? null);
-        setChecking(false);
-        if (interval) window.clearInterval(interval);
-        return;
+      const redirect = getPostAuthRedirect(refreshedUser);
+      if (redirect !== "/pending-verification") {
+        router.replace(redirect);
       }
+    }
 
-      if (
-        (user?.role === "provider" || user?.role === "ngo") &&
-        user.verification_status === "unregistered"
-      ) {
-        router.replace(getRoleRegistrationRoute(user.role));
-        return;
-      }
-
-      setChecking(false);
-    };
-
-    checkVerification();
-    const interval = window.setInterval(
-      checkVerification,
-      VERIFICATION_POLL_INTERVAL_MS
-    );
+    void refreshVerificationStatus();
 
     return () => {
       active = false;
-      window.clearInterval(interval);
     };
-  }, [fetchMe, router]);
+  }, [router, setUser]);
 
   if (rejectedRole) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center px-4 text-center">
-        <h1 className="text-xl font-semibold">Verification Rejected</h1>
-        <p className="mt-2 max-w-md text-gray-500">
-          {rejectionReason ||
-            "Please update your details and submit your verification again."}
-        </p>
-        <button
-          type="button"
-          onClick={() => router.push(getRoleRegistrationRoute(rejectedRole))}
-          className="mt-6 rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white"
-        >
-          Update and Resubmit
-        </button>
-      </div>
+      <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-10">
+        <section className="w-full max-w-lg rounded-lg border border-zinc-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-semibold text-red-700">
+            Verification status
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-950">
+            Verification Rejected
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-zinc-600">
+            {rejectionReason ||
+              "Please update your details and submit your verification again."}
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push(getRoleRegistrationRoute(rejectedRole))}
+            className="mt-6 rounded-md bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white"
+          >
+            Update and Resubmit
+          </button>
+        </section>
+      </main>
     );
   }
 
+  const roleLabel = user?.role === "ngo" ? "NGO" : "Provider";
+
   return (
-    <div className="h-screen flex flex-col items-center justify-center">
-      <h1 className="text-xl font-semibold">
-        Under Verification
-      </h1>
-      <p className="text-gray-500">
-        Please wait for admin approval
-      </p>
-      <p className="mt-4 flex items-center gap-2 text-sm text-gray-500">
-        <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" />
-        {checking ? "Checking verification status..." : "Checking verification status periodically..."}
-      </p>
-    </div>
+    <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-10">
+      <section className="w-full max-w-xl rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <p className="text-sm font-semibold text-emerald-700">
+          Verification status
+        </p>
+        <h1 className="mt-2 text-2xl font-semibold text-zinc-950">
+          Verification Under Review
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-zinc-600">
+          Your application has been submitted successfully.
+        </p>
+
+        <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+            Status
+          </p>
+          <p className="mt-1 text-base font-semibold text-amber-950">
+            Pending Verification
+          </p>
+        </div>
+
+        <div className="mt-5 space-y-3 text-sm leading-6 text-zinc-600">
+          <p>
+            {roleLabel} applications are manually reviewed by the FoodForAll
+            team before dashboard access is enabled.
+          </p>
+          <p>
+            Approval may take some time. You can safely return later and sign in
+            with Google to continue from your latest verification status.
+          </p>
+        </div>
+      </section>
+    </main>
   );
 }

@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import NGOSummaryCard from "@/components/ngo/NGOSummaryCard";
-import { formatFoodDate } from "@/lib/food";
+import {
+  formatDateTimeOrFallback,
+  formatVisibleDateTimes,
+} from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService, type MyNGOProfile } from "@/services/ngo.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -35,6 +38,10 @@ function hasActiveDate(value: unknown) {
   if (!value) return false;
   const time = new Date(String(value)).getTime();
   return Number.isFinite(time) && time > Date.now();
+}
+
+function displayRestrictionReason(value: unknown) {
+  return formatVisibleDateTimes(String(value || "Repeated missed rescue pickups"));
 }
 
 function shouldShowRestrictionAlert(ngo: MyNGOProfile | null) {
@@ -196,19 +203,20 @@ export default function NGODashboardPage() {
                       <p className="text-amber-800">Operational Status</p>
                       <p className="font-semibold text-zinc-950">
                         {hasActiveDate(ngo?.banned_until)
-                          ? `Restricted until ${formatFoodDate(ngo?.banned_until)}`
+                          ? `Restricted until ${formatDateTimeOrFallback(
+                              ngo?.banned_until ?? null
+                            )}`
                           : hasActiveDate(ngo?.cooldown_until)
-                            ? `Cooldown until ${formatFoodDate(ngo?.cooldown_until)}`
+                            ? `Cooldown until ${formatDateTimeOrFallback(
+                                ngo?.cooldown_until ?? null
+                              )}`
                             : "Deposit required"}
                       </p>
                     </div>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-amber-900">
                     Reason:{" "}
-                    {String(
-                      ngo?.restriction_reason ||
-                        "Repeated missed rescue pickups"
-                    )}
+                    {displayRestrictionReason(ngo?.restriction_reason)}
                   </p>
                   <p className="mt-1 text-xs leading-5 text-amber-900">
                     Successful rescues reduce future deposit requirements.

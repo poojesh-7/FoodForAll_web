@@ -1,5 +1,6 @@
 import { AxiosError } from "axios";
 import api from "@/lib/axios";
+import { formatVisibleDateTimes } from "@/lib/dateTime";
 import type {
   ApiErrorResponse,
   AuthMeUser,
@@ -66,11 +67,15 @@ function getResponseMessage(body: unknown): string | undefined {
   return undefined;
 }
 
+function displayErrorMessage(message: string) {
+  return formatVisibleDateTimes(message);
+}
+
 export function getErrorMessage(error: unknown): string {
-  if (typeof error === "string") return error;
+  if (typeof error === "string") return displayErrorMessage(error);
 
   if (error instanceof Error && !("isAxiosError" in error)) {
-    return error.message;
+    return displayErrorMessage(error.message);
   }
 
   const axiosError = error as AxiosError<BackendErrorResponse | string | unknown>;
@@ -80,32 +85,40 @@ export function getErrorMessage(error: unknown): string {
   if (typeof responseData === "string") {
     const trimmed = responseData.trim();
 
-    if (!trimmed) return axiosError.message || "Something went wrong. Please try again.";
-
-    if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
-      return axiosError.response?.status
-        ? `Server error (${axiosError.response.status}). Please try again.`
-        : "Server returned an unexpected HTML response.";
+    if (!trimmed) {
+      return displayErrorMessage(
+        axiosError.message || "Something went wrong. Please try again."
+      );
     }
 
-    return trimmed;
+    if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+      return displayErrorMessage(
+        axiosError.response?.status
+          ? `Server error (${axiosError.response.status}). Please try again.`
+          : "Server returned an unexpected HTML response."
+      );
+    }
+
+    return displayErrorMessage(trimmed);
   }
 
   if (responseData && typeof responseData === "object") {
     if ("message" in responseData && responseData.message) {
-      return String(responseData.message);
+      return displayErrorMessage(String(responseData.message));
     }
 
     if ("error" in responseData && responseData.error) {
-      return String(responseData.error);
+      return displayErrorMessage(String(responseData.error));
     }
 
     if ("details" in responseData && responseData.details) {
-      return String(responseData.details);
+      return displayErrorMessage(String(responseData.details));
     }
   }
 
-  return axiosError.message || "Something went wrong. Please try again.";
+  return displayErrorMessage(
+    axiosError.message || "Something went wrong. Please try again."
+  );
 }
 
 export function getRetryAfter(error: unknown): number | null {

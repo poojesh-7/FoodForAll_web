@@ -7,6 +7,9 @@ type FormatOptions = {
   fallback?: string;
 };
 
+const ISO_DATE_TIME_PATTERN =
+  /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g;
+
 function parseDate(value: DateInput) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -44,6 +47,30 @@ export function formatPlatformDateTime(
     },
     options
   );
+}
+
+export function formatDateTime(value: string | Date | null) {
+  const date = parseDate(value);
+  if (!date) return null;
+
+  return new Intl.DateTimeFormat(PLATFORM_LOCALE, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: PLATFORM_TIME_ZONE,
+  })
+    .format(date)
+    .replace(/\b(am|pm)\b/i, (period) => period.toUpperCase());
+}
+
+export function formatDateTimeOrFallback(
+  value: string | Date | null,
+  fallback = "-"
+) {
+  return formatDateTime(value) ?? fallback;
+}
+
+export function formatVisibleDateTimes(value: string) {
+  return value.replace(ISO_DATE_TIME_PATTERN, (match) => formatDateTime(match) ?? match);
 }
 
 export function formatPlatformDate(value: DateInput, options: FormatOptions = {}) {

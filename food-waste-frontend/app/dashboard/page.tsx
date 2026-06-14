@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ImpactMetricGrid from "@/components/analytics/ImpactMetricGrid";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
-import { formatPlatformDateTime } from "@/lib/dateTime";
+import { formatDateTime, formatVisibleDateTimes } from "@/lib/dateTime";
 import { getRoleDashboard } from "@/lib/onboarding";
 import { impactService } from "@/services/impact.service";
 import { ratingService } from "@/services/rating.service";
@@ -17,7 +17,13 @@ import { useRouter } from "next/navigation";
 function formatRestrictionDate(value: unknown) {
   if (!value) return null;
   const date = new Date(String(value));
-  return Number.isFinite(date.getTime()) ? formatPlatformDateTime(date) : null;
+  return Number.isFinite(date.getTime()) ? formatDateTime(date) : null;
+}
+
+function displayRestrictionReason(value: unknown) {
+  return formatVisibleDateTimes(
+    String(value || "Successful pickups gradually restore trust.")
+  );
 }
 
 export default function DashboardPage() {
@@ -101,9 +107,8 @@ export default function DashboardPage() {
               Restriction level {String("restriction_level" in user ? user.restriction_level : 0)}
             </p>
             <p className="mt-1">
-              {String(
-                ("restriction_reason" in user && user.restriction_reason) ||
-                  "Successful pickups gradually restore trust."
+              {displayRestrictionReason(
+                "restriction_reason" in user ? user.restriction_reason : null
               )}
             </p>
             {"requires_reliability_deposit" in user &&

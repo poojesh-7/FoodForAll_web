@@ -16,6 +16,10 @@ import {
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import {
+  formatDateTimeOrFallback,
+  formatVisibleDateTimes,
+} from "@/lib/dateTime";
+import {
   formatGovernanceDate,
   formatGovernanceStatus,
   getGovernanceEventPresentation,
@@ -52,7 +56,7 @@ function toCount(value: unknown) {
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
-  return String(value);
+  return formatVisibleDateTimes(String(value));
 }
 
 function formatMetric(value: unknown) {
@@ -276,7 +280,7 @@ function TrustActorRows({
             <span>Score {formatMetric(actor.trust_score)}</span>
             <span>Restriction {formatMetric(actor.restriction_level)}</span>
             <span>Deposit {formatMetric(actor.deposit_multiplier)}x</span>
-            <span>Cooldown {formatGovernanceDate(actor.cooldown_until)}</span>
+            <span>Cooldown {formatDateTimeOrFallback(actor.cooldown_until ?? null)}</span>
           </div>
         </li>
       ))}

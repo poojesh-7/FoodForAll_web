@@ -17,6 +17,10 @@ import {
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
+import {
+  formatDateTimeOrFallback,
+  formatVisibleDateTimes,
+} from "@/lib/dateTime";
 import { formatGovernanceDate } from "@/lib/governanceFormatting";
 import { adminService } from "@/services/admin.service";
 import type {
@@ -62,7 +66,7 @@ const ACTION_OPTIONS: Array<{
 
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
-  return String(value);
+  return formatVisibleDateTimes(String(value));
 }
 
 function formatMetric(value: unknown) {
@@ -131,7 +135,9 @@ function ExplanationBlock({
         </span>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-zinc-950">{title}</p>
-          <p className="mt-1 text-sm text-zinc-700">{section.reason}</p>
+          <p className="mt-1 text-sm text-zinc-700">
+            {displayValue(section.reason)}
+          </p>
           {section.current !== undefined && (
             <p className="mt-2 text-xs font-medium uppercase text-zinc-500">
               Current: {displayValue(section.current)}
@@ -151,7 +157,7 @@ function ExplanationBlock({
                 </span>
               </div>
               <p className="mt-1 text-xs text-zinc-600">
-                {event.impact.join(" | ")}
+                {event.impact.map(displayValue).join(" | ")}
               </p>
             </li>
           ))}
@@ -377,7 +383,7 @@ export default function AdminTrustPage() {
             <AdminMetricCard
               label="Cooldown"
               value={state.cooldownUntil ? "Active" : "None"}
-              detail={formatGovernanceDate(state.cooldownUntil)}
+              detail={formatDateTimeOrFallback(state.cooldownUntil ?? null)}
             />
             <AdminMetricCard
               label="Deposit"
@@ -443,7 +449,7 @@ export default function AdminTrustPage() {
                         </span>
                       </div>
                       <p className="mt-2 text-sm text-zinc-700">
-                        {event.impact.join(" | ")}
+                        {event.impact.map(displayValue).join(" | ")}
                       </p>
                     </li>
                   ))}
@@ -626,7 +632,7 @@ export default function AdminTrustPage() {
                             {action.action_label || label(action.action_type)}
                           </span>
                           <p className="mt-2 text-sm text-zinc-700">
-                            {action.reason}
+                            {displayValue(action.reason)}
                           </p>
                         </div>
                         <span className="text-xs text-zinc-500">

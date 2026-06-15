@@ -310,6 +310,58 @@ exports.getMyRestaurant = async (req, res) => {
 const expiryQueue = require("../queues/expiry.queue");
 const alertQueue = require("../queues/expiryAlert.queue");
 
+function expiryJobId(listingId) {
+  return `expiry-${listingId}`;
+}
+
+function expiryAlertJobId(listingId) {
+  return `alert-${listingId}`;
+}
+
+function expiryDelayFromEndTime(endTimeMs) {
+  return Math.max(endTimeMs - Date.now(), 0);
+}
+
+function expiryAlertDelayFromEndTime(endTimeMs) {
+  return Math.max(
+    endTimeMs - operationalPolicy.food.expiryAlertLeadMs - Date.now(),
+    0
+  );
+}
+
+async function removeExpiryJobs(listingId) {
+  await Promise.all([
+    expiryQueue.remove(expiryJobId(listingId)),
+    alertQueue.remove(expiryAlertJobId(listingId)),
+  ]);
+}
+
+async function scheduleExpiryJobs(listingId, endTimeMs) {
+  await Promise.all([
+    expiryQueue.add(
+      "expire-food",
+      { listingId },
+      jobOptions("critical", {
+        delay: expiryDelayFromEndTime(endTimeMs),
+        jobId: expiryJobId(listingId),
+      })
+    ),
+    alertQueue.add(
+      "expiry-alert",
+      { listingId },
+      jobOptions("critical", {
+        delay: expiryAlertDelayFromEndTime(endTimeMs),
+        jobId: expiryAlertJobId(listingId),
+      })
+    ),
+  ]);
+}
+
+async function rescheduleExpiryJobs(listingId, endTimeMs) {
+  await removeExpiryJobs(listingId);
+  await scheduleExpiryJobs(listingId, endTimeMs);
+}
+
 exports.createFood = async (req, res) => {
   const client = await pool.connect();
 
@@ -491,24 +543,7 @@ exports.createFood = async (req, res) => {
     ========================
     */
 
-    const expiryDelay = Math.max(endTime - Date.now(), 0);
-
-    await expiryQueue.add(
-      "expire-food",
-      { listingId: listing.id },
-      jobOptions("critical", { delay: expiryDelay, jobId: `expiry-${listing.id}` })
-    );
-
-    const alertDelay = Math.max(
-      endTime - operationalPolicy.food.expiryAlertLeadMs - Date.now(),
-      0
-    );
-
-    await alertQueue.add(
-      "expiry-alert",
-      { listingId: listing.id },
-      jobOptions("critical", { delay: alertDelay, jobId: `alert-${listing.id}` })
-    );
+    await scheduleExpiryJobs(listing.id, endTime);
 
     await client.query("COMMIT");
 
@@ -699,6 +734,14 @@ exports.updateFood = async (req, res) => {
       ],
     );
 
+    const expiryTimingChanged =
+      new Date(current.pickup_end_time).getTime() !==
+      new Date(result.rows[0].pickup_end_time).getTime();
+
+    if (expiryTimingChanged) {
+      await rescheduleExpiryJobs(id, endTime);
+    }
+
     await client.query("COMMIT");
 
     await publishListingUpdated(id, {
@@ -777,6 +820,8 @@ exports.deleteFood = async (req, res) => {
       `,
       [id],
     );
+
+    await removeExpiryJobs(id);
 
     await client.query("COMMIT");
 

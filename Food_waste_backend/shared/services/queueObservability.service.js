@@ -19,6 +19,9 @@ const { heartbeatStatus } = require("../utils/heartbeatStatus");
 
 const STALE_HEARTBEAT_MS = Number(process.env.WORKER_STALE_HEARTBEAT_MS || 90000);
 const STUCK_ACTIVE_MS = Number(process.env.QUEUE_STUCK_ACTIVE_MS || 15 * 60 * 1000);
+const DEAD_LETTER_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const DEAD_LETTER_CLEAN_LIMIT = 1000;
+const DEAD_LETTER_CLEAN_MAX_PASSES = 100;
 
 const monitoredQueueConfigs = [
   { queue: expiryQueue, workerRequired: true },
@@ -35,6 +38,18 @@ const monitoredQueueConfigs = [
 
 const monitoredQueues = monitoredQueueConfigs.map(({ queue }) => queue);
 const queuesByName = new Map(monitoredQueues.map((queue) => [queue.name, queue]));
+
+async function cleanQueueState(queue, graceMs, limit, state) {
+  let removed = 0;
+
+  for (let pass = 0; pass < DEAD_LETTER_CLEAN_MAX_PASSES; pass += 1) {
+    const jobs = await queue.clean(graceMs, limit, state);
+    removed += jobs.length;
+    if (jobs.length < limit) break;
+  }
+
+  return removed;
+}
 
 async function serializeJob(queueName, job) {
   if (!job) return null;
@@ -228,11 +243,20 @@ async function cleanupQueues() {
   const results = [];
   for (const { queue, deadLetter } of monitoredQueueConfigs) {
     if (deadLetter) {
+      const [waiting, delayed, failed, completed] = await Promise.all([
+        cleanQueueState(queue, DEAD_LETTER_RETENTION_MS, DEAD_LETTER_CLEAN_LIMIT, "wait"),
+        cleanQueueState(queue, DEAD_LETTER_RETENTION_MS, DEAD_LETTER_CLEAN_LIMIT, "delayed"),
+        cleanQueueState(queue, DEAD_LETTER_RETENTION_MS, DEAD_LETTER_CLEAN_LIMIT, "failed"),
+        cleanQueueState(queue, DEAD_LETTER_RETENTION_MS, DEAD_LETTER_CLEAN_LIMIT, "completed"),
+      ]);
+
       results.push({
         queue: queue.name,
-        completed: 0,
-        failed: 0,
-        skipped: true,
+        waiting,
+        delayed,
+        completed,
+        failed,
+        deadLetterRetentionDays: 30,
       });
       continue;
     }

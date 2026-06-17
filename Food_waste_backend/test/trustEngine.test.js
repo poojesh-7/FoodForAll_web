@@ -24,6 +24,7 @@ const {
   buildPaymentTrustEvents,
   buildReservationTrustEvents,
   emitBuiltEvents,
+  findPaymentInitializationFailureTrustEvents,
 } = require("../shared/services/trustLifecycleEvent.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
@@ -1764,6 +1765,110 @@ test("payment timeout flow derives user and system events from final reservation
     events.find((event) => event.eventType === "user_payment_timeout").eventPayload.timeout_delta,
     1
   );
+});
+
+test("payment failure without lifecycle evidence does not derive user trust penalties", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "payment_failed",
+    task_status: "self_pickup",
+    payment_status: "failed",
+    payment_context: {
+      payment_initialization_failed_at: "2026-01-01T00:00:00.000Z",
+      stock_restore_reason: "payment_initialization_failed",
+    },
+  });
+
+  assert.deepEqual(events, []);
+});
+
+test("payment failure with a payment row still derives payment timeout penalties", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "payment_failed",
+    task_status: "self_pickup",
+    payment_status: "failed",
+    payment_id: PAYMENT_ID,
+    payment_row_status: "failed",
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType).sort(),
+    ["payment_timeout", "user_payment_timeout"]
+  );
+});
+
+test("recovered payment session without a payment row still counts as user payment lifecycle", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "payment_failed",
+    task_status: "self_pickup",
+    payment_status: "failed",
+    payment_attempt_order_id: "order_test",
+    payment_attempt_session_id: "session_test",
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType).sort(),
+    ["payment_timeout", "user_payment_timeout"]
+  );
+});
+
+test("payment expired status without lifecycle evidence is ignored by trust derivation", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "reserved",
+    task_status: "self_pickup",
+    payment_status: "expired",
+  });
+
+  assert.deepEqual(events, []);
+});
+
+test("payment initialization failure audit helper finds legacy user payment events", async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      return {
+        rows: [
+          {
+            trust_event_id: EVENT_ID,
+            event_type: "user_payment_timeout",
+            reservation_id: RESERVATION_ID,
+          },
+        ],
+      };
+    },
+  };
+
+  const rows = await findPaymentInitializationFailureTrustEvents({
+    db,
+    limit: 25,
+  });
+
+  assert.equal(rows.length, 1);
+  assert.deepEqual(calls[0].params, [
+    ["user_payment_timeout", "user_payment_failed"],
+    25,
+  ]);
+  assert.match(calls[0].sql, /payment_initialization_failed_at/);
+  assert.match(calls[0].sql, /stock_restore_reason/);
+  assert.match(calls[0].sql, /p\.id IS NULL/);
+  assert.match(calls[0].sql, /payment_expires_at IS NULL/);
+  assert.match(calls[0].sql, /payment_attempt_session_id/);
 });
 
 test("reservation cancellation derives passive cancellation events only", () => {

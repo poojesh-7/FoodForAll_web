@@ -284,22 +284,35 @@ async function loadReservationTrustRow(client, reservationId) {
     `
     SELECT r.id, r.user_id, r.listing_id, r.pickup_type, r.status, r.task_status,
            r.assigned_volunteer_id, r.completed_at, r.picked_up_at,
-           r.payment_status, r.payment_expires_at, r.reserved_at,
+           r.payment_status, r.payment_expires_at, r.payment_context, r.reserved_at,
            f.provider_id, f.is_free, f.price,
            p.id AS payment_id,
+           p.order_id AS payment_order_id,
+           p.payment_session_id,
            p.food_amount,
            p.total_amount,
            p.status AS payment_row_status,
-           p.refund_status
+           p.refund_status,
+           poa.order_id AS payment_attempt_order_id,
+           poa.payment_session_id AS payment_attempt_session_id,
+           poa.status AS payment_attempt_status
     FROM reservations r
     JOIN food_listings f ON f.id=r.listing_id
     LEFT JOIN LATERAL (
-      SELECT id, status, refund_status, food_amount, total_amount
+      SELECT id, order_id, payment_session_id, status, refund_status, food_amount, total_amount
       FROM payments
       WHERE reservation_id=r.id
       ORDER BY updated_at DESC NULLS LAST, id DESC
       LIMIT 1
     ) p ON true
+    LEFT JOIN LATERAL (
+      SELECT order_id, payment_session_id, status
+      FROM payment_order_attempts
+      WHERE r.id = ANY(reservation_ids)
+      OR order_id = r.payment_context->>'recovered_order_id'
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    ) poa ON true
     WHERE r.id=$1
     `,
     [reservationId]

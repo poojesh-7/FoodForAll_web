@@ -43,10 +43,74 @@ function normalizeStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function paymentContextFor(row) {
+  return parseJsonObject(row.payment_context);
+}
+
+function paymentLifecycleEvidence(row) {
+  const context = paymentContextFor(row);
+
+  return {
+    paymentRow: hasValue(row.payment_id) || (hasValue(row.reservation_id) && hasValue(row.id)),
+    paymentSession: [
+      row.payment_session_id,
+      row.payment_attempt_session_id,
+      context.payment_session_id,
+    ].some(hasValue),
+    paymentExpiry: hasValue(row.payment_expires_at || context.payment_expires_at),
+    paymentInitialized: hasValue(context.payment_initialized_at),
+  };
+}
+
+function hasPaymentLifecycleEvidence(row) {
+  const evidence = paymentLifecycleEvidence(row);
+  return evidence.paymentRow || evidence.paymentSession || evidence.paymentExpiry;
+}
+
+function isPaymentInitializationFailureReservation(row) {
+  const context = paymentContextFor(row);
+  const stockRestoreReason = normalizeStatus(
+    row.stock_restore_reason || context.stock_restore_reason
+  );
+  const terminalSource = normalizeStatus(
+    row.payment_terminal_source || context.payment_terminal_source
+  );
+
+  return (
+    hasValue(context.payment_initialization_failed_at) ||
+    context.payment_initialization_failed === true ||
+    stockRestoreReason === "payment_initialization_failed" ||
+    terminalSource === "payment_initialization_failed" ||
+    terminalSource === "payment_order_creation_crash"
+  );
+}
+
 function sourceMetadata(row, extra = {}) {
   return {
     reservation_id: row.reservation_id || (row.pickup_type || row.task_status ? row.id : null),
     payment_id: row.payment_id || (row.reservation_id ? row.id : null),
+    payment_order_id: row.payment_order_id || row.order_id || null,
+    payment_session_id: row.payment_session_id || null,
+    payment_attempt_order_id: row.payment_attempt_order_id || null,
+    payment_attempt_session_id: row.payment_attempt_session_id || null,
     listing_id: row.listing_id || null,
     provider_id: row.provider_id || null,
     is_free: row.is_free ?? row.listing_is_free ?? null,
@@ -58,6 +122,10 @@ function sourceMetadata(row, extra = {}) {
     task_status: row.task_status || null,
     payment_status: row.payment_status || null,
     payment_row_status: row.payment_row_status || row.status || null,
+    payment_expires_at: row.payment_expires_at || null,
+    payment_initialization_failure_marker:
+      isPaymentInitializationFailureReservation(row) || undefined,
+    payment_lifecycle_evidence: paymentLifecycleEvidence(row),
     source_lineage: extra.sourceLineage,
     ...extra,
   };
@@ -115,9 +183,12 @@ function isCancelledReservation(row) {
 
 function isPaymentTimeoutReservation(row) {
   return (
-    ["expired_payment", "payment_failed"].includes(normalizeStatus(row.status)) ||
-    normalizeStatus(row.payment_status) === "expired" ||
-    normalizeStatus(row.payment_row_status) === "expired"
+    hasPaymentLifecycleEvidence(row) &&
+    (
+      ["expired_payment", "payment_failed"].includes(normalizeStatus(row.status)) ||
+      normalizeStatus(row.payment_status) === "expired" ||
+      normalizeStatus(row.payment_row_status) === "expired"
+    )
   );
 }
 
@@ -466,22 +537,35 @@ async function deriveReservationEvents(options = {}) {
     `
     SELECT r.id, r.user_id, r.listing_id, r.pickup_type, r.status, r.task_status,
            r.assigned_volunteer_id, r.completed_at, r.picked_up_at,
-           r.payment_status, r.payment_expires_at, r.reserved_at,
+           r.payment_status, r.payment_expires_at, r.payment_context, r.reserved_at,
            f.provider_id, f.is_free, f.price,
            p.id AS payment_id,
+           p.order_id AS payment_order_id,
+           p.payment_session_id,
            p.food_amount,
            p.total_amount,
            p.status AS payment_row_status,
-           p.refund_status
+           p.refund_status,
+           poa.order_id AS payment_attempt_order_id,
+           poa.payment_session_id AS payment_attempt_session_id,
+           poa.status AS payment_attempt_status
     FROM reservations r
     JOIN food_listings f ON f.id=r.listing_id
     LEFT JOIN LATERAL (
-      SELECT id, status, refund_status, food_amount, total_amount
+      SELECT id, order_id, payment_session_id, status, refund_status, food_amount, total_amount
       FROM payments
       WHERE reservation_id=r.id
       ORDER BY updated_at DESC NULLS LAST, id DESC
       LIMIT 1
     ) p ON true
+    LEFT JOIN LATERAL (
+      SELECT order_id, payment_session_id, status
+      FROM payment_order_attempts
+      WHERE r.id = ANY(reservation_ids)
+      OR order_id = r.payment_context->>'recovered_order_id'
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    ) poa ON true
     WHERE r.reserved_at >= NOW() - ($2::int * INTERVAL '1 day')
     AND (
       r.completed_at IS NOT NULL
@@ -498,6 +582,73 @@ async function deriveReservationEvents(options = {}) {
   );
 
   return emitBuiltEvents(rows.flatMap(buildReservationTrustEvents), options);
+}
+
+async function findPaymentInitializationFailureTrustEvents(options = {}) {
+  const db = options.db || pool;
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
+  const eventTypes = (options.eventTypes || [
+    "user_payment_timeout",
+    "user_payment_failed",
+  ]).map(String);
+  const result = await db.query(
+    `
+    SELECT te.id AS trust_event_id,
+           te.event_key,
+           te.event_type,
+           te.subject_type,
+           te.subject_id,
+           te.reservation_id,
+           te.payment_id AS trust_payment_id,
+           te.event_payload->'metadata'->>'source_lineage' AS source_lineage,
+           te.created_at AS trust_event_created_at,
+           r.status AS reservation_status,
+           r.payment_status AS reservation_payment_status,
+           r.payment_expires_at,
+           r.payment_context,
+           p.id AS payment_id,
+           p.status AS payment_row_status,
+           p.payment_session_id,
+           poa.order_id AS payment_attempt_order_id,
+           poa.status AS payment_attempt_status,
+           poa.payment_session_id AS payment_attempt_session_id
+    FROM trust_events te
+    JOIN reservations r ON r.id=te.reservation_id
+    LEFT JOIN LATERAL (
+      SELECT id, status, payment_session_id
+      FROM payments
+      WHERE reservation_id=r.id
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    ) p ON true
+    LEFT JOIN LATERAL (
+      SELECT order_id, status, payment_session_id
+      FROM payment_order_attempts
+      WHERE r.id = ANY(reservation_ids)
+      OR order_id = r.payment_context->>'recovered_order_id'
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    ) poa ON true
+    WHERE te.event_type = ANY($1::text[])
+    AND (
+      COALESCE(r.payment_context, '{}'::jsonb) ? 'payment_initialization_failed_at'
+      OR COALESCE(r.payment_context, '{}'::jsonb) ? 'payment_initialization_failed'
+      OR COALESCE(r.payment_context->>'stock_restore_reason', '') = 'payment_initialization_failed'
+      OR COALESCE(r.payment_context->>'payment_terminal_source', '') IN (
+        'payment_initialization_failed',
+        'payment_order_creation_crash'
+      )
+    )
+    AND p.id IS NULL
+    AND r.payment_expires_at IS NULL
+    AND NULLIF(COALESCE(p.payment_session_id, poa.payment_session_id, ''), '') IS NULL
+    ORDER BY te.created_at DESC, te.id DESC
+    LIMIT $2
+    `,
+    [eventTypes, limit]
+  );
+
+  return result.rows;
 }
 
 async function derivePaymentEvents(options = {}) {
@@ -615,4 +766,5 @@ module.exports = {
   buildReservationTrustEvents,
   deriveLifecycleTrustEvents,
   emitBuiltEvents,
+  findPaymentInitializationFailureTrustEvents,
 };

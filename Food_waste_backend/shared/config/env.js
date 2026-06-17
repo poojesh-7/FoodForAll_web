@@ -97,6 +97,16 @@ const integerFromEnv = (name, { min, max, fallback }) =>
       .max(max, `${name} must be at most ${max}`)
   );
 
+const booleanFromEnv = (name, fallback) =>
+  z.preprocess(
+    (value) => String(value ?? fallback).trim().toLowerCase(),
+    z
+      .enum(["true", "false", "1", "0", "yes", "no", "on", "off"], {
+        invalid_type_error: `${name} must be a boolean flag`,
+      })
+      .transform((value) => ["true", "1", "yes", "on"].includes(value))
+  );
+
 const envSchema = z.object({
   APP_ENV: requiredString("APP_ENV")
     .transform((value) =>
@@ -271,6 +281,53 @@ const envSchema = z.object({
       max: 100,
       fallback: "8",
     }
+  ),
+  USER_MAX_ACTIVE_RESERVATIONS: integerFromEnv("USER_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "5",
+  }),
+  USER_RL1_MAX_ACTIVE_RESERVATIONS: integerFromEnv("USER_RL1_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "3",
+  }),
+  USER_RL2_MAX_ACTIVE_RESERVATIONS: integerFromEnv("USER_RL2_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "2",
+  }),
+  USER_RL3_MAX_ACTIVE_RESERVATIONS: integerFromEnv("USER_RL3_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "1",
+  }),
+  NGO_MAX_ACTIVE_RESERVATIONS: integerFromEnv("NGO_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "8",
+  }),
+  NGO_RL1_MAX_ACTIVE_RESERVATIONS: integerFromEnv("NGO_RL1_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "5",
+  }),
+  NGO_RL2_MAX_ACTIVE_RESERVATIONS: integerFromEnv("NGO_RL2_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "2",
+  }),
+  NGO_RL3_MAX_ACTIVE_RESERVATIONS: integerFromEnv("NGO_RL3_MAX_ACTIVE_RESERVATIONS", {
+    min: 0,
+    max: 100,
+    fallback: "1",
+  }),
+  NGO_RL1_BULK_ENABLED: booleanFromEnv("NGO_RL1_BULK_ENABLED", "true"),
+  NGO_RL2_BULK_ENABLED: booleanFromEnv("NGO_RL2_BULK_ENABLED", "false"),
+  NGO_RL3_BULK_ENABLED: booleanFromEnv("NGO_RL3_BULK_ENABLED", "false"),
+  DEPOSIT_ENFORCEMENT_DISABLE_BULK: booleanFromEnv(
+    "DEPOSIT_ENFORCEMENT_DISABLE_BULK",
+    "true"
   ),
 });
 
@@ -594,6 +651,32 @@ function applyNormalizedEnv(env) {
   process.env.REPEATED_ABANDONMENT_THRESHOLD = String(env.REPEATED_ABANDONMENT_THRESHOLD);
   process.env.TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD = String(
     env.TRUST_RAPID_GROWTH_DIAGNOSTIC_THRESHOLD
+  );
+  process.env.USER_MAX_ACTIVE_RESERVATIONS = String(env.USER_MAX_ACTIVE_RESERVATIONS);
+  process.env.USER_RL1_MAX_ACTIVE_RESERVATIONS = String(
+    env.USER_RL1_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.USER_RL2_MAX_ACTIVE_RESERVATIONS = String(
+    env.USER_RL2_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.USER_RL3_MAX_ACTIVE_RESERVATIONS = String(
+    env.USER_RL3_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.NGO_MAX_ACTIVE_RESERVATIONS = String(env.NGO_MAX_ACTIVE_RESERVATIONS);
+  process.env.NGO_RL1_MAX_ACTIVE_RESERVATIONS = String(
+    env.NGO_RL1_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.NGO_RL2_MAX_ACTIVE_RESERVATIONS = String(
+    env.NGO_RL2_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.NGO_RL3_MAX_ACTIVE_RESERVATIONS = String(
+    env.NGO_RL3_MAX_ACTIVE_RESERVATIONS
+  );
+  process.env.NGO_RL1_BULK_ENABLED = String(env.NGO_RL1_BULK_ENABLED);
+  process.env.NGO_RL2_BULK_ENABLED = String(env.NGO_RL2_BULK_ENABLED);
+  process.env.NGO_RL3_BULK_ENABLED = String(env.NGO_RL3_BULK_ENABLED);
+  process.env.DEPOSIT_ENFORCEMENT_DISABLE_BULK = String(
+    env.DEPOSIT_ENFORCEMENT_DISABLE_BULK
   );
 
   if (!process.env.JSON_BODY_LIMIT) {

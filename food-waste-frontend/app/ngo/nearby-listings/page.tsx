@@ -150,10 +150,16 @@ export default function NGONearbyListingsPage() {
       ngoService
         .previewBulkReserve({ reservations: selectedReservations })
         .then((preview) => {
-          if (active) setPricingPreview(preview);
+          if (active) {
+            setPricingPreview(preview);
+            setError("");
+          }
         })
-        .catch(() => {
-          if (active) setPricingPreview(null);
+        .catch((err) => {
+          if (active) {
+            setPricingPreview(null);
+            setError(ngoService.getErrorMessage(err));
+          }
         })
         .finally(() => {
           if (active) setPricingLoading(false);
@@ -405,6 +411,7 @@ export default function NGONearbyListingsPage() {
                 depositAmount={pricingPreview?.depositAmount ?? 0}
                 totalAmount={pricingPreview?.totalAmount ?? 0}
                 requiresDeposit={pricingPreview?.requiresDeposit}
+                reservationCapacity={pricingPreview?.reservationCapacity}
                 loading={pricingLoading}
               />
             )}

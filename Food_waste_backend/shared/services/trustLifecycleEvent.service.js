@@ -476,7 +476,7 @@ async function deriveReservationEvents(options = {}) {
     FROM reservations r
     JOIN food_listings f ON f.id=r.listing_id
     LEFT JOIN LATERAL (
-      SELECT id, status, refund_status
+      SELECT id, status, refund_status, food_amount, total_amount
       FROM payments
       WHERE reservation_id=r.id
       ORDER BY updated_at DESC NULLS LAST, id DESC

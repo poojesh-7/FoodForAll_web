@@ -17,6 +17,9 @@ const {
   recordReservationLifecycleTrustEvents,
 } = require("../shared/services/trustEnforcement.service");
 const {
+  enforceReservationCapacity,
+} = require("../shared/services/reservationCapacity.service");
+const {
   reserveListingStock,
 } = require("../shared/services/inventory.service");
 const {
@@ -259,8 +262,18 @@ exports.createReservation = async (req, res) => {
           foodCost: foodAmount,
         });
 
+        const reservationCapacity = await enforceReservationCapacity({
+          client,
+          userId: req.user.id,
+          role: req.user.role,
+          trustPolicy: policy,
+          requestedReservationCount: 1,
+        });
+
         if (!policy.canReserve) {
-          throw withStatus(policy.restrictionReason || "Reservation restricted", 403);
+          const error = withStatus(policy.restrictionReason || "Reservation restricted", 403);
+          error.capacity = reservationCapacity;
+          throw error;
         }
 
         await reserveListingStock(client, {
@@ -296,6 +309,7 @@ exports.createReservation = async (req, res) => {
           foodAmount,
           depositAmount,
           policy,
+          reservationCapacity,
           abuseGuard,
         };
       },
@@ -453,6 +467,7 @@ exports.createReservation = async (req, res) => {
         depositAmount: hold.depositAmount,
         requiresDeposit: hold.depositAmount > 0,
       },
+      reservationCapacity: hold.reservationCapacity,
     });
   } catch (err) {
     if (
@@ -474,6 +489,7 @@ exports.createReservation = async (req, res) => {
 
     res.status(err.statusCode || 400).json({
       error: err.message || "Reservation failed",
+      reservationCapacity: err.capacity,
     });
   }
 };
@@ -1437,12 +1453,19 @@ exports.previewReservation = async (req, res) => {
       foodCost: foodAmount,
     });
     const depositAmount = policy.requiresDeposit ? Number(policy.depositAmount || 0) : 0;
+    const reservationCapacity = await enforceReservationCapacity({
+      userId: req.user.id,
+      role: req.user.role,
+      trustPolicy: policy,
+      requestedReservationCount: 1,
+    });
 
     res.json({
       foodAmount,
       depositAmount,
       totalAmount: foodAmount + depositAmount,
       requiresDeposit: depositAmount > 0,
+      reservationCapacity,
       policy: {
         ...policy,
         depositAmount,
@@ -1451,7 +1474,10 @@ exports.previewReservation = async (req, res) => {
     });
   } catch (err) {
     logger.error("Reservation preview failed", { err, userId: req.user?.id, listingId: listing_id });
-    res.status(500).json({ error: "Reservation preview failed" });
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : "Reservation preview failed",
+      reservationCapacity: err.capacity,
+    });
   }
 };
 

@@ -140,7 +140,11 @@ export default function NGOIncomingRequestsPage() {
             reservationId,
           });
 
-          setSuccess("Complete payment to confirm this rescue.");
+          setSuccess(
+            result.reservationCapacity?.depositRequired
+              ? "Reservations currently require a refundable reliability deposit. Reserve and complete listings one at a time until restrictions are lifted."
+              : "Complete payment to confirm this rescue."
+          );
           const checkoutResult = await openCashfreeCheckout({
             paymentSessionId: result.payment.payment_session_id,
           });

@@ -231,10 +231,16 @@ export default function FoodDetailPage() {
           quantity: quantityValue,
         })
         .then((preview) => {
-          if (active) setPricingPreview(preview);
+          if (active) {
+            setPricingPreview(preview);
+            setError("");
+          }
         })
-        .catch(() => {
-          if (active) setPricingPreview(null);
+        .catch((err) => {
+          if (active) {
+            setPricingPreview(null);
+            setError(reservationService.getErrorMessage(err));
+          }
         })
         .finally(() => {
           if (active) setPricingLoading(false);
@@ -540,6 +546,7 @@ export default function FoodDetailPage() {
                         depositAmount={depositAmount}
                         totalAmount={totalAmount}
                         requiresDeposit={pricingPreview?.requiresDeposit}
+                        reservationCapacity={pricingPreview?.reservationCapacity}
                         loading={pricingLoading}
                       />
                     )}

@@ -263,11 +263,21 @@ export interface RestrictionPolicy {
   trustScore?: number;
 }
 
+export interface ReservationCapacity {
+  activeReservations: number;
+  maxActiveReservations: number;
+  remainingCapacity: number;
+  bulkReservationEnabled: boolean;
+  depositRequired: boolean;
+  reservationBlocked: boolean;
+}
+
 export interface ReservationWithPaymentData {
   reservation: ReservationRow;
   payment: PaymentCreateResult;
   policy?: RestrictionPolicy;
   pricing?: ReservationPricingPreview;
+  reservationCapacity?: ReservationCapacity;
 }
 
 export interface BulkReserveData {
@@ -275,6 +285,7 @@ export interface BulkReserveData {
   payment: PaymentCreateResult | null;
   policy?: RestrictionPolicy;
   pricing?: ReservationPricingPreview;
+  reservationCapacity?: ReservationCapacity;
 }
 
 export interface ReservationPricingPreview {
@@ -283,6 +294,7 @@ export interface ReservationPricingPreview {
   totalAmount: number;
   requiresDeposit: boolean;
   totalQuantity?: number;
+  reservationCapacity?: ReservationCapacity;
   policy?: RestrictionPolicy;
 }
 
@@ -740,6 +752,7 @@ export interface AcceptNGORequestData {
   reservation: ReservationRow;
   payment: PaymentCreateResult | null;
   policy?: RestrictionPolicy;
+  reservationCapacity?: ReservationCapacity;
 }
 export type AcceptNGORequestResponse = ApiResponse<AcceptNGORequestData>;
 export type RejectNGORequestResponse = ApiResponse<EmptyData>;

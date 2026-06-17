@@ -13,6 +13,9 @@ const { createReservationPayment } = require("../shared/services/payment.service
 const {
   getTrustEnforcementPolicy,
 } = require("../shared/services/trustEnforcement.service");
+const {
+  enforceReservationCapacity,
+} = require("../shared/services/reservationCapacity.service");
 const { reserveListingStock } = require("../shared/services/inventory.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
@@ -460,8 +463,18 @@ exports.bulkReserve = async (req, res) => {
       role: "ngo",
     });
 
+    const reservationCapacity = await enforceReservationCapacity({
+      client,
+      userId: req.user.id,
+      role: "ngo",
+      trustPolicy: policy,
+      requestedReservationCount: reservations.length,
+    });
+
     if (!policy.canReserve) {
-      throw withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+      const error = withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+      error.capacity = reservationCapacity;
+      throw error;
     }
 
     const created = [];
@@ -643,6 +656,7 @@ exports.bulkReserve = async (req, res) => {
         totalQuantity,
       },
       policy,
+      reservationCapacity,
     });
 
   } catch (err) {
@@ -662,7 +676,10 @@ exports.bulkReserve = async (req, res) => {
       reservationCount: Array.isArray(reservations) ? reservations.length : 0,
     });
 
-    res.status(err.statusCode || 400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({
+      error: err.message,
+      reservationCapacity: err.capacity,
+    });
   } finally {
     client.release();
   }
@@ -732,9 +749,17 @@ exports.previewBulkReserve = async (req, res) => {
       role: "ngo",
     });
 
+    const reservationCapacity = await enforceReservationCapacity({
+      userId: req.user.id,
+      role: "ngo",
+      trustPolicy: policy,
+      requestedReservationCount: reservations.length,
+    });
+
     if (!policy.canReserve) {
       return res.status(403).json({
         error: policy.restrictionReason || "NGO reservation restricted",
+        reservationCapacity,
       });
     }
 
@@ -786,6 +811,7 @@ exports.previewBulkReserve = async (req, res) => {
       totalAmount: depositAmount,
       requiresDeposit: depositAmount > 0,
       totalQuantity,
+      reservationCapacity,
       policy: {
         ...policy,
         depositAmount,
@@ -794,7 +820,10 @@ exports.previewBulkReserve = async (req, res) => {
     });
   } catch (err) {
     logger.error("NGO bulk reservation preview failed", { err, userId: req.user?.id });
-    res.status(500).json({ error: "Reservation preview failed" });
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : "Reservation preview failed",
+      reservationCapacity: err.capacity,
+    });
   }
 };
 
@@ -1313,8 +1342,18 @@ exports.acceptNGORequest = async (req, res) => {
       role: "ngo",
     });
 
+    const reservationCapacity = await enforceReservationCapacity({
+      client,
+      userId: req.user.id,
+      role: "ngo",
+      trustPolicy: policy,
+      requestedReservationCount: 1,
+    });
+
     if (!policy.canReserve) {
-      throw withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+      const error = withStatus(policy.restrictionReason || "NGO reservation restricted", 403);
+      error.capacity = reservationCapacity;
+      throw error;
     }
 
     // 2️⃣ Get request
@@ -1534,7 +1573,13 @@ exports.acceptNGORequest = async (req, res) => {
       });
     }
 
-    res.json({ message: "Request accepted successfully", reservation: createdReservation, payment, policy });
+    res.json({
+      message: "Request accepted successfully",
+      reservation: createdReservation,
+      payment,
+      policy,
+      reservationCapacity,
+    });
 
   } catch (err) {
     await client.query("ROLLBACK");
@@ -1553,7 +1598,10 @@ exports.acceptNGORequest = async (req, res) => {
       reason: err.reason,
     });
 
-    res.status(err.statusCode || 400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({
+      error: err.message,
+      reservationCapacity: err.capacity,
+    });
   } finally {
     client.release();
   }

@@ -5,53 +5,22 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
-import { openCashfreeCheckout } from "@/lib/cashfree";
 import {
   formatDistanceKm,
   getRescueRadiusKm,
   getRestaurantDisplayName,
   isOutsideRescueRadius,
 } from "@/lib/food";
-import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
+import { getPaymentSessionFromReservation } from "@/lib/payment-flow";
+import { openReservationPaymentCheckout } from "@/lib/reservation-payment-checkout";
 import { ngoService } from "@/services/ngo.service";
-import { reservationService } from "@/services/reservation.service";
-import type { DbId, NGOIncomingRequest } from "@shared/contracts/api-contracts";
+import type {
+  AcceptNGORequestData,
+  DbId,
+  NGOIncomingRequest,
+  PaymentCreateResult,
+} from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
-
-const PAYMENT_POLL_ATTEMPTS = 8;
-const PAYMENT_POLL_DELAY_MS = 1500;
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function pollNGOPayment(reservationId: DbId) {
-  for (let attempt = 0; attempt < PAYMENT_POLL_ATTEMPTS; attempt += 1) {
-    const reservations = await ngoService.getReservations();
-    const latest = reservations.find(
-      (reservation) => String(reservation.id) === String(reservationId)
-    );
-
-    if (!latest) {
-      await delay(PAYMENT_POLL_DELAY_MS);
-      continue;
-    }
-
-    const state = getReservationPaymentState(latest);
-    if (state === "paid" || state === "failed" || state === "expired") {
-      return latest;
-    }
-
-    await delay(PAYMENT_POLL_DELAY_MS);
-  }
-
-  const reservations = await ngoService.getReservations();
-  return (
-    reservations.find(
-      (reservation) => String(reservation.id) === String(reservationId)
-    ) ?? null
-  );
-}
 
 function isProcessedConflict(message: string) {
   const normalized = message.toLowerCase();
@@ -87,6 +56,45 @@ function isNearExpiry(value?: string | null) {
 
 function formatRadiusKm(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function hasPaymentSession(
+  payment?: PaymentCreateResult | null
+): payment is PaymentCreateResult {
+  return Boolean(payment?.order_id && payment.payment_session_id);
+}
+
+function isPaymentRequired(result: AcceptNGORequestData) {
+  return (
+    hasPaymentSession(result.payment) ||
+    result.reservation?.status === "payment_pending" ||
+    result.reservation?.payment_status === "pending" ||
+    Boolean(result.policy?.requiresDeposit) ||
+    Boolean(result.reservationCapacity?.depositRequired)
+  );
+}
+
+async function getAcceptedRequestPaymentSession(result: AcceptNGORequestData) {
+  const reservationId = result.reservation?.id;
+  if (!reservationId) return null;
+
+  if (hasPaymentSession(result.payment)) {
+    return {
+      orderId: result.payment.order_id,
+      paymentSessionId: result.payment.payment_session_id,
+      reservationId,
+      listingId: result.reservation.listing_id,
+    };
+  }
+
+  if (!isPaymentRequired(result)) return null;
+
+  const reservations = await ngoService.getReservations();
+  const latestReservation = reservations.find(
+    (reservation) => String(reservation.id) === String(reservationId)
+  );
+
+  return getPaymentSessionFromReservation(latestReservation);
 }
 
 export default function NGOIncomingRequestsPage() {
@@ -140,44 +148,18 @@ export default function NGOIncomingRequestsPage() {
     try {
       if (action === "accept") {
         const result = await ngoService.acceptRequest(request.request_id);
+        const paymentSession = await getAcceptedRequestPaymentSession(result);
 
-        if (result.payment && result.reservation?.id) {
-          const reservationId = result.reservation.id;
-          savePaymentSession({
-            orderId: result.payment.order_id,
-            paymentSessionId: result.payment.payment_session_id,
-            reservationId,
-          });
+        if (paymentSession) {
+          setSuccess("Opening secure Cashfree checkout...");
+          const checkoutResult = await openReservationPaymentCheckout(paymentSession);
 
           setSuccess(
-            result.reservationCapacity?.depositRequired
-              ? "Reservations currently require a refundable reliability deposit. Reserve and complete listings one at a time until restrictions are lifted."
-              : "Complete payment to confirm this rescue."
+            checkoutResult?.error?.message
+              ? `${checkoutResult.error.message} The reservation remains payable from Reservations.`
+              : "Payment is processing. You can resume or verify it from Reservations."
           );
-          const checkoutResult = await openCashfreeCheckout({
-            paymentSessionId: result.payment.payment_session_id,
-          });
-
-          if (checkoutResult?.error?.message) {
-            setSuccess("");
-            await reservationService.cancelReservation(reservationId).catch(() => undefined);
-            setError("Payment was not completed. Reservation was not created.");
-            setRequests(previousRequests);
-            return;
-          }
-
-          setSuccess("Verifying payment status...");
-          const verifiedReservation = await pollNGOPayment(reservationId);
-          const paymentState = verifiedReservation
-            ? getReservationPaymentState(verifiedReservation)
-            : "failed";
-
-          if (paymentState !== "paid") {
-            setSuccess("");
-            setError("Payment was not completed. Reservation was not created.");
-            setRequests(previousRequests);
-            return;
-          }
+          return;
         }
       } else {
         await ngoService.rejectRequest(request.request_id);

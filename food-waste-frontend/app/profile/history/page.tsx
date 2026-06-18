@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { formatQuantityWithUnit } from "@/lib/food";
 import { userService } from "@/services/user";
 import { useAuthStore } from "@/store/authStore";
 import type { UserHistoryItem } from "@shared/contracts/api-contracts";
@@ -16,6 +17,14 @@ function getHistoryTitle(item: UserHistoryItem) {
   if ("title" in item && item.title) return String(item.title);
   if ("id" in item && item.id) return `Record ${String(item.id)}`;
   return "History record";
+}
+
+function formatHistoryValue(key: string, value: unknown, item: UserHistoryItem) {
+  if (["quantity", "remaining_quantity", "quantity_reserved"].includes(key)) {
+    return formatQuantityWithUnit(value, item);
+  }
+
+  return displayValue(value);
 }
 
 export default function UserHistoryPage() {
@@ -91,7 +100,14 @@ export default function UserHistoryPage() {
                 </h2>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {Object.entries(item)
-                    .filter(([key]) => !["title"].includes(key))
+                    .filter(
+                      ([key]) =>
+                        ![
+                          "title",
+                          "quantity_unit",
+                          "custom_quantity_unit",
+                        ].includes(key)
+                    )
                     .slice(0, 8)
                     .map(([key, value]) => (
                       <div key={key}>
@@ -99,7 +115,7 @@ export default function UserHistoryPage() {
                           {key.replace(/_/g, " ")}
                         </p>
                         <p className="break-words text-sm text-zinc-950">
-                          {displayValue(value)}
+                          {formatHistoryValue(key, value, item)}
                         </p>
                       </div>
                     ))}

@@ -1,5 +1,10 @@
 import type { FoodListingRow, NearbyFoodListing } from "@shared/contracts/api-contracts";
 import { formatPlatformDateTime } from "./dateTime";
+import {
+  fallbackQuantityUnit,
+  formatQuantityWithUnit,
+  normalizeQuantityUnit,
+} from "./quantityUnits";
 import { sanitizeTextInput } from "./sanitize";
 
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;
@@ -10,6 +15,8 @@ export type FoodFormValues = {
   title: string;
   description: string;
   quantity: string;
+  quantity_unit: string;
+  custom_quantity_unit: string;
   price: string;
   is_free: boolean;
   pickup_start_time: string;
@@ -30,6 +37,8 @@ export function getFoodValidationError(
   const includePickupStart =
     typeof options === "boolean" ? options : options.includePickupStart ?? true;
   const title = values.title.trim();
+  const quantityUnit = values.quantity_unit.trim();
+  const customQuantityUnit = values.custom_quantity_unit.trim();
   const quantity = Number(values.quantity);
   const price = Number(values.price);
   const now = Date.now();
@@ -44,6 +53,22 @@ export function getFoodValidationError(
 
   if (includeQuantity && (!Number.isFinite(quantity) || quantity <= 0)) {
     return "Quantity must be greater than 0.";
+  }
+
+  if (!quantityUnit) {
+    return "Quantity unit is required.";
+  }
+
+  if (normalizeQuantityUnit(quantityUnit) !== quantityUnit) {
+    return "Select a valid quantity unit.";
+  }
+
+  if (quantityUnit === "Other" && !customQuantityUnit) {
+    return "Custom quantity unit is required when Other is selected.";
+  }
+
+  if (quantityUnit !== "Other" && customQuantityUnit) {
+    return "Custom quantity unit is only allowed when quantity unit is Other.";
   }
 
   if ((includePickupStart && !Number.isFinite(startTime)) || !Number.isFinite(endTime)) {
@@ -85,6 +110,11 @@ export function sanitizeFoodFormValues(values: FoodFormValues): FoodFormValues {
       maxLength: 2000,
       preserveNewlines: true,
     }),
+    quantity_unit: normalizeQuantityUnit(values.quantity_unit || fallbackQuantityUnit),
+    custom_quantity_unit:
+      values.quantity_unit === "Other"
+        ? sanitizeTextInput(values.custom_quantity_unit, { maxLength: 80 })
+        : "",
   };
 }
 
@@ -164,6 +194,8 @@ export function getListingPrice(listing: FoodCardListing) {
   if (listing.is_free) return "Free";
   return `Rs. ${String("price" in listing ? listing.price ?? 0 : 0)}`;
 }
+
+export { formatQuantityWithUnit };
 
 function isUsableRestaurantName(value: unknown) {
   const text = String(value ?? "").trim();

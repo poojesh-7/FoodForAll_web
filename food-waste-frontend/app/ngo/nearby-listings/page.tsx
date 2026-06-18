@@ -7,6 +7,7 @@ import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import {
   formatDistanceKm,
   formatFoodDate,
+  formatQuantityWithUnit,
   getRescueRadiusKm,
   getRestaurantDisplayName,
   isOutsideRescueRadius,
@@ -410,7 +411,7 @@ export default function NGONearbyListingsPage() {
               {selectedReservations.length} listings selected
             </p>
             <p className="mt-1 text-sm text-zinc-600">
-              {totalSelected} total items selected for NGO rescue.
+              {totalSelected} total quantity selected for NGO rescue.
             </p>
           </div>
           <div className="space-y-3">
@@ -493,7 +494,9 @@ export default function NGONearbyListingsPage() {
                       <p className="text-xs font-medium uppercase text-zinc-500">
                         Remaining
                       </p>
-                      <p className="mt-1 text-zinc-950">{maxQuantity}</p>
+                      <p className="mt-1 text-zinc-950">
+                        {formatQuantityWithUnit(maxQuantity, listing)}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs font-medium uppercase text-zinc-500">

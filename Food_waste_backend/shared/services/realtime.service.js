@@ -105,6 +105,8 @@ async function getReservationSnapshot(reservationId, client = pool) {
            f.pickup_end_time,
            f.is_free,
            f.price,
+           f.quantity_unit,
+           f.custom_quantity_unit,
            requester.id AS requester_id,
            CASE
              WHEN r.pickup_type = 'ngo'

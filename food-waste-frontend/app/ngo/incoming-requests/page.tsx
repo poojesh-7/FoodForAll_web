@@ -7,6 +7,7 @@ import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTi
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
   formatDistanceKm,
+  formatQuantityWithUnit,
   getRescueRadiusKm,
   getRestaurantDisplayName,
   isOutsideRescueRadius,
@@ -247,7 +248,7 @@ export default function NGOIncomingRequestsPage() {
                     </p>
                   </div>
                   <span className="w-fit shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                    {String(request.remaining_quantity)} items
+                    {formatQuantityWithUnit(request.remaining_quantity, request)}
                   </span>
                 </div>
 

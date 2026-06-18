@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Clock3, MapPin, Package, Store } from "lucide-react";
 import {
   formatFoodDate,
+  formatQuantityWithUnit,
   formatDistanceKm,
   getListingId,
   getListingPrice,
@@ -15,11 +16,6 @@ type FoodCardProps = {
   href?: string;
   actions?: ReactNode;
 };
-
-function displayValue(value: unknown) {
-  if (value === null || value === undefined || value === "") return "-";
-  return String(value);
-}
 
 function getRemainingQuantity(listing: FoodCardListing) {
   return (
@@ -89,7 +85,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
               Remaining
             </div>
             <p className="mt-1 font-semibold text-zinc-950">
-              {displayValue(getRemainingQuantity(listing))}
+              {formatQuantityWithUnit(getRemainingQuantity(listing), listing)}
             </p>
           </div>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 sm:col-span-2">

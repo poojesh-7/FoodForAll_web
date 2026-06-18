@@ -8,6 +8,18 @@ export type DbRow = Record<string, unknown>;
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "ALL";
 export type UserRole = "user" | "volunteer" | "ngo" | "provider" | "admin";
 export type VolunteerRequestAction = "accepted" | "rejected";
+export type QuantityUnit =
+  | "Meal Box"
+  | "Food Packet"
+  | "Plate"
+  | "Container"
+  | "Tray"
+  | "Loaf"
+  | "Bottle"
+  | "Liter"
+  | "Kilogram"
+  | "Piece"
+  | "Other";
 
 export interface ApiResponse<TData> {
   success: boolean;
@@ -178,6 +190,8 @@ export interface FoodListingRow extends DbRow {
   description?: string | null;
   quantity?: number | string;
   remaining_quantity?: number | string;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   price?: number | string;
   is_free?: boolean;
   pickup_start_time?: ISODateString | null;
@@ -202,6 +216,8 @@ export interface NearbyFoodListing {
   title: string;
   description?: string | null;
   remaining_quantity: number | string;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   pickup_end_time?: ISODateString | null;
   status?: string;
   is_free?: boolean;
@@ -224,6 +240,8 @@ export interface ReservationRow extends DbRow {
   user_id?: DbId;
   assigned_volunteer_id?: DbId | null;
   quantity_reserved?: number | string;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   pickup_type?: string;
   task_status?: string;
   status?: string;
@@ -374,6 +392,8 @@ export interface VolunteerMembershipRow extends DbRow {
 export interface VolunteerTask {
   reservation_id: DbId;
   quantity_reserved: number | string;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   pickup_type?: string;
   status?: string;
   task_status: string;
@@ -443,6 +463,8 @@ export interface NGOIncomingRequest {
   listing_id: DbId;
   title: string;
   remaining_quantity: number | string;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   provider_name: string | null;
   restaurant_name?: string | null;
   provider_id?: DbId;
@@ -681,6 +703,8 @@ export interface CreateFoodRequest {
   title: string;
   description?: string | null;
   quantity: number | string;
+  quantity_unit: QuantityUnit | string;
+  custom_quantity_unit?: string | null;
   price?: number | string;
   is_free?: boolean | "true" | "false";
   pickup_start_time?: ISODateString;
@@ -695,6 +719,8 @@ export interface UpdateFoodRequest {
   title?: string | null;
   description?: string | null;
   quantity?: number | string | null;
+  quantity_unit?: QuantityUnit | string | null;
+  custom_quantity_unit?: string | null;
   price?: number | string | null;
   is_free?: boolean | "true" | "false" | null;
   pickup_start_time?: ISODateString | null;

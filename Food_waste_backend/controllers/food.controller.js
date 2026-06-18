@@ -15,6 +15,9 @@ const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
+  normalizeQuantityUnitFields,
+} = require("../shared/services/quantityUnit.service");
+const {
   sanitizeOptionalText,
 } = require("../shared/utils/sanitize");
 const {
@@ -380,12 +383,16 @@ exports.createFood = async (req, res) => {
       return res.status(404).json({ error: "Restaurant profile not found" });
     }
 
+    await ensureFoodListingSoftDeleteSchema(client);
+
     const { latitude, longitude } = restaurantResult.rows[0];
 
     let {
       title,
       description,
       quantity,
+      quantity_unit,
+      custom_quantity_unit,
       price,
       is_free,
       pickup_start_time,
@@ -408,6 +415,10 @@ exports.createFood = async (req, res) => {
     quantity = Number(quantity);
     price = Number(price) || 0;
     is_free = is_free === true || is_free === "true";
+    const quantityMetadata = normalizeQuantityUnitFields({
+      quantity_unit,
+      custom_quantity_unit,
+    });
 
     const now = Date.now();
     const startTime = new Date(pickup_start_time).getTime();
@@ -489,6 +500,8 @@ exports.createFood = async (req, res) => {
         description,
         quantity,
         remaining_quantity,
+        quantity_unit,
+        custom_quantity_unit,
         price,
         is_free,
         pickup_start_time,
@@ -508,12 +521,14 @@ exports.createFood = async (req, res) => {
         $6,
         $7,
         $8,
-        $9::double precision,
-        $10::double precision,
+        $9,
+        $10,
+        $11::double precision,
+        $12::double precision,
         ST_SetSRID(
           ST_MakePoint(
-            $10::double precision,
-            $9::double precision
+            $12::double precision,
+            $11::double precision
           ),
           4326
         )::geography,
@@ -526,6 +541,8 @@ exports.createFood = async (req, res) => {
         title,
         description,
         quantity,
+        quantityMetadata.quantityUnit,
+        quantityMetadata.customQuantityUnit,
         price,
         is_free,
         pickup_start_time,
@@ -620,8 +637,27 @@ exports.updateFood = async (req, res) => {
       return res.status(409).json({ error: "Archived listings cannot be edited" });
     }
 
-    const { title, description, price, is_free, quantity, pickup_end_time } =
+    const {
+      title,
+      description,
+      price,
+      is_free,
+      quantity,
+      quantity_unit,
+      custom_quantity_unit,
+      pickup_end_time,
+    } =
       req.body;
+    const quantityMetadata = normalizeQuantityUnitFields(
+      {
+        quantity_unit,
+        custom_quantity_unit:
+          custom_quantity_unit !== undefined
+            ? custom_quantity_unit
+            : current.custom_quantity_unit,
+      },
+      current.quantity_unit || "Piece"
+    );
     const sanitizedTitle = normalizeRequiredText(title, {
       field: "Food title",
       minLength: 3,
@@ -717,16 +753,20 @@ exports.updateFood = async (req, res) => {
            description=$2,
            quantity=$3,
            remaining_quantity=$4,
-           price=$5,
-           is_free=$6,
-           pickup_end_time=$7
-       WHERE id=$8
+           quantity_unit=$5,
+           custom_quantity_unit=$6,
+           price=$7,
+           is_free=$8,
+           pickup_end_time=$9
+       WHERE id=$10
        RETURNING *`,
       [
         sanitizedTitle,
         sanitizedDescription,
         nextQuantity,
         nextRemaining,
+        quantityMetadata.quantityUnit,
+        quantityMetadata.customQuantityUnit,
         nextPrice,
         requestedFree,
         pickup_end_time,
@@ -1025,6 +1065,8 @@ exports.getNearbyFood = async (req, res) => {
            f.title,
            f.description,
            f.remaining_quantity,
+           f.quantity_unit,
+           f.custom_quantity_unit,
            f.pickup_end_time,
            f.status,
            f.is_free,

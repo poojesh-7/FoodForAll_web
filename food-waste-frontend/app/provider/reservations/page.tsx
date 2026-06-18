@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ShieldAlert } from "lucide-react";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
-import { formatFoodDate } from "@/lib/food";
+import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
   getReservationPaymentState,
@@ -418,7 +418,7 @@ export default function ProviderReservationsPage() {
                 Quantity
               </p>
               <p className="mt-1 text-zinc-950">
-                {displayValue(reservation.quantity_reserved)}
+                {formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
               </p>
             </div>
             <div>

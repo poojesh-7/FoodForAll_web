@@ -144,7 +144,7 @@ exports.getUserHistory = async (req, res) => {
     );
   } else {
     history = await pool.query(
-      `SELECT r.*, f.title, f.pickup_end_time
+      `SELECT r.*, f.title, f.pickup_end_time, f.quantity_unit, f.custom_quantity_unit
        FROM reservations r
        JOIN food_listings f ON r.listing_id = f.id
        WHERE r.user_id=$1

@@ -1,6 +1,7 @@
 "use client";
 
 import type { FoodFormValues } from "@/lib/food";
+import { quantityUnits } from "@/lib/quantityUnits";
 
 type FoodListingFormProps = {
   values: FoodFormValues;
@@ -40,13 +41,41 @@ export default function FoodListingForm({
         onChange={(event) => update({ description: event.target.value })}
       />
 
-      <input
-        value={values.quantity}
-        inputMode="numeric"
-        placeholder="Quantity"
-        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-        onChange={(event) => update({ quantity: event.target.value })}
-      />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <input
+          value={values.quantity}
+          inputMode="numeric"
+          placeholder="Quantity"
+          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+          onChange={(event) => update({ quantity: event.target.value })}
+        />
+        <select
+          value={values.quantity_unit}
+          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+          onChange={(event) =>
+            update({
+              quantity_unit: event.target.value,
+              custom_quantity_unit:
+                event.target.value === "Other" ? values.custom_quantity_unit : "",
+            })
+          }
+        >
+          {quantityUnits.map((unit) => (
+            <option key={unit} value={unit}>
+              {unit}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {values.quantity_unit === "Other" && (
+        <input
+          value={values.custom_quantity_unit}
+          placeholder="Custom quantity unit"
+          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+          onChange={(event) => update({ custom_quantity_unit: event.target.value })}
+        />
+      )}
 
       <label className="flex items-center gap-2 text-sm text-zinc-700">
         <input

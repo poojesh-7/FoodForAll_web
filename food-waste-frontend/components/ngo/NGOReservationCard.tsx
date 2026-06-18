@@ -2,7 +2,11 @@
 
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
-import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
+import {
+  formatFoodDate,
+  formatQuantityWithUnit,
+  getRestaurantDisplayName,
+} from "@/lib/food";
 import {
   formatPaymentCountdown,
   getPaymentRemainingMs,
@@ -308,7 +312,7 @@ export default function NGOReservationCard({
           <DetailItem
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
-            value={displayValue(reservation.quantity_reserved)}
+            value={formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
           />
           <DetailItem
             icon={<Truck className="h-3.5 w-3.5" aria-hidden="true" />}

@@ -18,6 +18,7 @@ import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import {
   formatDistanceKm,
   formatFoodDate,
+  formatQuantityWithUnit,
   getRestaurantDisplayName,
 } from "@/lib/food";
 import {
@@ -327,7 +328,7 @@ export default function ReservationCard({
           <DetailItem
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
-            value={displayValue(reservation.quantity_reserved)}
+            value={formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
           />
           <DetailItem
             icon={<Clock3 className="h-3.5 w-3.5" aria-hidden="true" />}

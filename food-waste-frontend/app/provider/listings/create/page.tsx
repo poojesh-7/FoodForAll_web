@@ -15,6 +15,8 @@ const initialValues: FoodFormValues = {
   title: "",
   description: "",
   quantity: "",
+  quantity_unit: "Piece",
+  custom_quantity_unit: "",
   price: "",
   is_free: true,
   pickup_start_time: "",
@@ -46,6 +48,11 @@ export default function CreateProviderListingPage() {
         title: sanitizedValues.title,
         description: sanitizedValues.description || null,
         quantity: Number(sanitizedValues.quantity),
+        quantity_unit: sanitizedValues.quantity_unit,
+        custom_quantity_unit:
+          sanitizedValues.quantity_unit === "Other"
+            ? sanitizedValues.custom_quantity_unit
+            : null,
         price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
         is_free: sanitizedValues.is_free,
         pickup_start_time: new Date(sanitizedValues.pickup_start_time).toISOString(),

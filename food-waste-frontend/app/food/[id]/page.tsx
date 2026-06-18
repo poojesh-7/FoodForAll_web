@@ -25,7 +25,12 @@ import { impactService } from "@/services/impact.service";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import { formatFoodDate, getListingPrice, getRestaurantDisplayName } from "@/lib/food";
+import {
+  formatFoodDate,
+  formatQuantityWithUnit,
+  getListingPrice,
+  getRestaurantDisplayName,
+} from "@/lib/food";
 import {
   getReservationPaymentState,
   savePaymentSession,
@@ -287,7 +292,9 @@ export default function FoodDetailPage() {
     }
 
     if (quantityValue > maxQuantity) {
-      setError(`You can reserve up to ${maxQuantity} item${maxQuantity === 1 ? "" : "s"}.`);
+      setError(
+        `You can reserve up to ${formatQuantityWithUnit(maxQuantity, listing)}.`
+      );
       return;
     }
 
@@ -448,7 +455,10 @@ export default function FoodDetailPage() {
                   <DetailPill
                     icon={<Package className="h-4 w-4" aria-hidden="true" />}
                     label="Available"
-                    value={`${remainingQuantity} of ${displayValue(listing.quantity)}`}
+                    value={`${formatQuantityWithUnit(
+                      remainingQuantity,
+                      listing
+                    )} of ${formatQuantityWithUnit(listing.quantity, listing)}`}
                   />
                   <DetailPill
                     icon={<Clock3 className="h-4 w-4" aria-hidden="true" />}
@@ -533,8 +543,9 @@ export default function FoodDetailPage() {
                       </button>
                     </div>
                     <p className="text-xs text-zinc-500">
-                      Reserve up to {maxReservableQuantity || 0} item
-                      {maxReservableQuantity === 1 ? "" : "s"} from this listing.
+                      Reserve up to{" "}
+                      {formatQuantityWithUnit(maxReservableQuantity || 0, listing)} from
+                      this listing.
                     </p>
                   </div>
 

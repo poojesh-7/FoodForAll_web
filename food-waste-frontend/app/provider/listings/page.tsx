@@ -7,7 +7,12 @@ import { Plus, ShieldAlert } from "lucide-react";
 import toast from "react-hot-toast";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatPlatformDate } from "@/lib/dateTime";
-import { formatFoodDate, getListingPrice, isFreeRescueListing } from "@/lib/food";
+import {
+  formatFoodDate,
+  formatQuantityWithUnit,
+  getListingPrice,
+  isFreeRescueListing,
+} from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -591,7 +596,10 @@ export default function ProviderListingsPage() {
                             Remaining
                           </p>
                           <p className="mt-1 text-zinc-950">
-                            {String(listing.remaining_quantity ?? listing.quantity ?? "-")}
+                            {formatQuantityWithUnit(
+                              listing.remaining_quantity ?? listing.quantity,
+                              listing
+                            )}
                           </p>
                         </div>
                         <div>
@@ -599,7 +607,7 @@ export default function ProviderListingsPage() {
                             Quantity
                           </p>
                           <p className="mt-1 text-zinc-950">
-                            {String(listing.quantity ?? "-")}
+                            {formatQuantityWithUnit(listing.quantity, listing)}
                           </p>
                         </div>
                         <div>

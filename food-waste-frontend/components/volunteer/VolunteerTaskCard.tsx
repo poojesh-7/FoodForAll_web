@@ -1,5 +1,5 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
-import { formatFoodDate } from "@/lib/food";
+import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import {
   Clock3,
   MapPin,
@@ -168,7 +168,7 @@ export default function VolunteerTaskCard({
           <DetailItem
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
-            value={displayValue(task.quantity_reserved)}
+            value={formatQuantityWithUnit(task.quantity_reserved, task)}
           />
           <DetailItem
             icon={<Truck className="h-3.5 w-3.5" aria-hidden="true" />}

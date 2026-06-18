@@ -501,6 +501,8 @@ CREATE TABLE public.food_listings (
     description text,
     quantity integer NOT NULL,
     remaining_quantity integer NOT NULL,
+    quantity_unit text DEFAULT 'Piece'::text NOT NULL,
+    custom_quantity_unit text,
     price numeric(10,2) DEFAULT 0,
     is_free boolean DEFAULT true,
     pickup_start_time timestamp with time zone NOT NULL,
@@ -515,7 +517,9 @@ CREATE TABLE public.food_listings (
     location public.geography(Point,4326),
     is_deleted boolean DEFAULT false NOT NULL,
     deleted_at timestamp without time zone,
-    CONSTRAINT check_price_vs_free CHECK ((((is_free = true) AND (price = (0)::numeric)) OR ((is_free = false) AND (price > (0)::numeric))))
+    CONSTRAINT check_price_vs_free CHECK ((((is_free = true) AND (price = (0)::numeric)) OR ((is_free = false) AND (price > (0)::numeric)))),
+    CONSTRAINT food_listings_custom_quantity_unit_valid CHECK (((quantity_unit = 'Other'::text) AND (custom_quantity_unit IS NOT NULL) AND (length(TRIM(BOTH FROM custom_quantity_unit)) > 0)) OR ((quantity_unit <> 'Other'::text) AND (custom_quantity_unit IS NULL))),
+    CONSTRAINT food_listings_quantity_unit_valid CHECK ((quantity_unit = ANY (ARRAY['Meal Box'::text, 'Food Packet'::text, 'Plate'::text, 'Container'::text, 'Tray'::text, 'Loaf'::text, 'Bottle'::text, 'Liter'::text, 'Kilogram'::text, 'Piece'::text, 'Other'::text])))
 );
 
 
@@ -4221,4 +4225,3 @@ ALTER TABLE ONLY public.volunteers
 --
 
 \unrestrict 7aDl5l7x0XjWHVPyX3dIEsClIWw4c1kGWmW9kxa3jGu2E2pVDFTmFVUgTOL2LZw
-

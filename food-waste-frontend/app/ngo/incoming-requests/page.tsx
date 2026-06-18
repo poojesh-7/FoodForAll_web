@@ -102,6 +102,7 @@ export default function NGOIncomingRequestsPage() {
   const [requests, setRequests] = useState<NGOIncomingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const [processingMessages, setProcessingMessages] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -139,15 +140,20 @@ export default function NGOIncomingRequestsPage() {
     const previousRequests = requests;
 
     setProcessingIds((current) => new Set(current).add(requestId));
-    setRequests((current) =>
-      current.filter((item) => String(item.request_id) !== requestId)
-    );
+    setProcessingMessages((current) => ({
+      ...current,
+      [requestId]: action === "accept" ? "Creating reservation..." : "Updating request...",
+    }));
     setError("");
     setSuccess("");
 
     try {
       if (action === "accept") {
         const result = await ngoService.acceptRequest(request.request_id);
+        setProcessingMessages((current) => ({
+          ...current,
+          [requestId]: "Preparing payment...",
+        }));
         const paymentSession = await getAcceptedRequestPaymentSession(result);
 
         if (paymentSession) {
@@ -159,11 +165,17 @@ export default function NGOIncomingRequestsPage() {
               ? `${checkoutResult.error.message} The reservation remains payable from Reservations.`
               : "Payment is processing. You can resume or verify it from Reservations."
           );
+          setRequests((current) =>
+            current.filter((item) => String(item.request_id) !== requestId)
+          );
           return;
         }
       } else {
         await ngoService.rejectRequest(request.request_id);
       }
+      setRequests((current) =>
+        current.filter((item) => String(item.request_id) !== requestId)
+      );
       setSuccess(
         action === "accept"
           ? "Request accepted and reservation created."
@@ -184,6 +196,11 @@ export default function NGOIncomingRequestsPage() {
       setProcessingIds((current) => {
         const next = new Set(current);
         next.delete(requestId);
+        return next;
+      });
+      setProcessingMessages((current) => {
+        const next = { ...current };
+        delete next[requestId];
         return next;
       });
     }
@@ -209,6 +226,7 @@ export default function NGOIncomingRequestsPage() {
           {requests.map((request) => {
             const requestId: DbId = request.request_id;
             const processing = processingIds.has(String(requestId));
+            const processingMessage = processingMessages[String(requestId)];
             const nearExpiry = isNearExpiry(request.pickup_end_time);
             const distance = formatDistanceKm(request);
             const rescueRadiusKm = getRescueRadiusKm(request);
@@ -295,13 +313,19 @@ export default function NGOIncomingRequestsPage() {
                   </div>
                 )}
 
+                {processingMessage && (
+                  <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800">
+                    {processingMessage}
+                  </div>
+                )}
+
                 <div className="grid gap-2 sm:flex sm:flex-wrap">
                   <button
                     onClick={() => handleRequest(request, "accept")}
                     disabled={processing}
                     className="min-h-10 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    Accept
+                    {processing ? processingMessage || "Processing..." : "Accept"}
                   </button>
                   <button
                     onClick={() => handleRequest(request, "reject")}

@@ -4,13 +4,46 @@ import { useEffect, useState } from "react";
 import FoodCard from "@/components/FoodCard";
 import { isNormalUserPaidListing } from "@/lib/food";
 import { mergeListingRows } from "@/lib/realtimeMerge";
+import { authService } from "@/services/auth";
 import { foodService } from "@/services/food.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
-import type { FoodListingRow } from "@shared/contracts/api-contracts";
+import type {
+  FoodListingRow,
+  FoodListingWithDistance,
+} from "@shared/contracts/api-contracts";
 import Link from "next/link";
 
+type MarketplaceListing = FoodListingRow | FoodListingWithDistance;
+
+function getProfileCoordinates(user: {
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+}) {
+  const latitude = Number(user.latitude);
+  const longitude = Number(user.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  return { lat: latitude, lng: longitude };
+}
+
+async function getMarketplaceListings() {
+  try {
+    const user = await authService.fetchMe();
+    const coordinates = getProfileCoordinates(user);
+
+    if (coordinates) {
+      return foodService.getActiveFood(coordinates);
+    }
+  } catch {
+    // Public marketplace remains available when no signed-in location is present.
+  }
+
+  return foodService.getActiveFood();
+}
+
 export default function FoodMarketplacePage() {
-  const [listings, setListings] = useState<FoodListingRow[]>([]);
+  const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const listingVersion = useRealtimeStore((state) => state.listingVersion);
@@ -19,13 +52,12 @@ export default function FoodMarketplacePage() {
   useEffect(() => {
     let active = true;
 
-    foodService
-      .getActiveFood()
+    getMarketplaceListings()
       .then((result) => {
         if (active) {
           const realtimeListings = useRealtimeStore.getState().listings;
           setListings(
-            mergeListingRows<FoodListingRow>(
+            mergeListingRows<MarketplaceListing>(
               result.filter(isNormalUserPaidListing),
               realtimeListings
             ).filter(
@@ -52,7 +84,7 @@ export default function FoodMarketplacePage() {
     if (!listingVersion) return;
     queueMicrotask(() =>
       setListings((current) =>
-        mergeListingRows<FoodListingRow>(current, listingsById).filter(
+        mergeListingRows<MarketplaceListing>(current, listingsById).filter(
           (listing) =>
             isNormalUserPaidListing(listing) &&
             Number(listing.remaining_quantity ?? 0) > 0

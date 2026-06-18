@@ -6,7 +6,12 @@ import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { openCashfreeCheckout } from "@/lib/cashfree";
-import { getRestaurantDisplayName } from "@/lib/food";
+import {
+  formatDistanceKm,
+  getRescueRadiusKm,
+  getRestaurantDisplayName,
+  isOutsideRescueRadius,
+} from "@/lib/food";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { ngoService } from "@/services/ngo.service";
 import { reservationService } from "@/services/reservation.service";
@@ -78,6 +83,10 @@ function isNearExpiry(value?: string | null) {
   if (Number.isNaN(time)) return false;
   const remainingMs = time - Date.now();
   return remainingMs > 0 && remainingMs <= 60 * 60 * 1000;
+}
+
+function formatRadiusKm(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 export default function NGOIncomingRequestsPage() {
@@ -219,6 +228,9 @@ export default function NGOIncomingRequestsPage() {
             const requestId: DbId = request.request_id;
             const processing = processingIds.has(String(requestId));
             const nearExpiry = isNearExpiry(request.pickup_end_time);
+            const distance = formatDistanceKm(request);
+            const rescueRadiusKm = getRescueRadiusKm(request);
+            const outsideRadius = isOutsideRescueRadius(request);
 
             return (
               <article
@@ -237,6 +249,19 @@ export default function NGOIncomingRequestsPage() {
                   <span className="w-fit shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
                     {String(request.remaining_quantity)} items
                   </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  {distance && (
+                    <span className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-sky-700">
+                      {distance}
+                    </span>
+                  )}
+                  {outsideRadius && rescueRadiusKm !== null && (
+                    <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">
+                      ⚠ Outside your rescue radius ({formatRadiusKm(rescueRadiusKm)} km)
+                    </span>
+                  )}
                 </div>
 
                 <div className="grid gap-3 text-sm sm:grid-cols-2">

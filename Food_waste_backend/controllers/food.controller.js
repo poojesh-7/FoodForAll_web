@@ -925,7 +925,13 @@ exports.getActiveFood = async (req, res) => {
     ST_Distance(
       f.location,
       ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
-    ) AS distance
+    ) AS distance,
+    (
+      ST_Distance(
+        f.location,
+        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+      ) / 1000.0
+    )::double precision AS "distanceKm"
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
     LEFT JOIN LATERAL (
@@ -1024,7 +1030,13 @@ exports.getNearbyFood = async (req, res) => {
            f.is_free,
            f.price,
            u.name AS provider_name,
-           restaurant.restaurant_name
+           restaurant.restaurant_name,
+           (
+             ST_Distance(
+               f.location,
+               ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+             ) / 1000.0
+           )::double precision AS "distanceKm"
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
     LEFT JOIN LATERAL (

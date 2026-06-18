@@ -6,6 +6,7 @@ import type {
   DeleteFoodResponse,
   FoodListingData,
   FoodListingRow,
+  FoodListingWithDistance,
   FoodNGOOption,
   GetActiveFoodResponse,
   GetAllFoodResponse,
@@ -118,12 +119,14 @@ export async function getActiveFood(params?: {
   lat?: string | number;
   lng?: string | number;
   radius?: string | number;
-}): Promise<FoodListingRow[]> {
-  const { data } = await api.get<GetActiveFoodResponse | FoodListingRow[]>(
+}): Promise<Array<FoodListingRow | FoodListingWithDistance>> {
+  const { data } = await api.get<
+    GetActiveFoodResponse | Array<FoodListingRow | FoodListingWithDistance>
+  >(
     "/food/active",
     { params }
   );
-  return getEnvelopeData<FoodListingRow[]>(data);
+  return getEnvelopeData<Array<FoodListingRow | FoodListingWithDistance>>(data);
 }
 
 export async function getNearbyFood(params: {

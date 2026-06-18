@@ -96,6 +96,8 @@ export interface UserLocationResult {
 
 export interface AuthMeUser extends UserProfile {
   is_verified: boolean;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   verification_status?: "unregistered" | "pending" | "approved" | "rejected";
   rejection_reason?: string | null;
   reliability_deposit_amount?: number | string;
@@ -191,7 +193,8 @@ export interface FoodListingRow extends DbRow {
 }
 
 export interface FoodListingWithDistance extends FoodListingRow {
-  distance: number | string;
+  distance?: number | string;
+  distanceKm?: number | string | null;
 }
 
 export interface NearbyFoodListing {
@@ -205,6 +208,8 @@ export interface NearbyFoodListing {
   price?: number | string | null;
   provider_name?: string | null;
   restaurant_name?: string | null;
+  distanceKm?: number | string | null;
+  ngoServiceRadiusKm?: number | string | null;
 }
 
 export interface FoodNGOOption {
@@ -319,6 +324,7 @@ export interface ReservationDetails extends ReservationRow {
   review_id?: DbId | null;
   review_rating?: number | string | null;
   review_text?: string | null;
+  distanceKm?: number | string | null;
 }
 
 export interface ReservationHistoryRow extends ReservationRow {
@@ -337,6 +343,7 @@ export interface ReservationHistoryRow extends ReservationRow {
   provider_longitude?: number | string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
+  distanceKm?: number | string | null;
 }
 
 export type UserHistoryItem = FoodListingRow | ReservationHistoryRow;
@@ -444,6 +451,8 @@ export interface NGOIncomingRequest {
   requested_at?: ISODateString | null;
   trust_score?: number | string | null;
   restriction_level?: number | string | null;
+  distanceKm?: number | string | null;
+  ngoServiceRadiusKm?: number | string | null;
 }
 
 export interface NGOReservationHistoryRow extends ReservationRow {

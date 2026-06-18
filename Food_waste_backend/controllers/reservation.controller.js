@@ -535,6 +535,14 @@ exports.getReservationById = async (req, res) => {
             provider.address AS provider_address,
             f.latitude AS provider_latitude,
             f.longitude AS provider_longitude,
+            CASE
+              WHEN requester.location IS NOT NULL
+              AND f.location IS NOT NULL
+              THEN (
+                ST_Distance(f.location, requester.location) / 1000.0
+              )::double precision
+              ELSE NULL
+            END AS "distanceKm",
             requester.name AS requester_name,
             requester.phone AS requester_phone,
             volunteer.name AS assigned_volunteer_name,

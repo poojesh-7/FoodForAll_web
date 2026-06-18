@@ -4,7 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
-import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
+import {
+  formatDistanceKm,
+  formatFoodDate,
+  getRescueRadiusKm,
+  getRestaurantDisplayName,
+  isOutsideRescueRadius,
+} from "@/lib/food";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { mergeListingRows } from "@/lib/realtimeMerge";
@@ -62,6 +68,10 @@ function getLocationStatus(form: LocationForm, searched: boolean) {
   if (!form.lat || !form.lng) return "No rescue location selected";
   if (searched) return "Nearby free listings loaded for this location";
   return "Rescue location ready";
+}
+
+function formatRadiusKm(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 async function pollNGOPayment(reservationId: DbId) {
@@ -442,6 +452,9 @@ export default function NGONearbyListingsPage() {
           {listings.map((listing) => {
             const id = String(listing.id);
             const maxQuantity = getListingQuantity(listing);
+            const distance = formatDistanceKm(listing);
+            const rescueRadiusKm = getRescueRadiusKm(listing);
+            const outsideRadius = isOutsideRescueRadius(listing);
 
             return (
               <article
@@ -461,6 +474,11 @@ export default function NGONearbyListingsPage() {
                         <span className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
                           Active
                         </span>
+                        {distance && (
+                          <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+                            {distance}
+                          </span>
+                        )}
                       </div>
                       {listing.description && (
                         <p className="mt-2 line-clamp-2 text-sm text-zinc-600">
@@ -494,6 +512,12 @@ export default function NGONearbyListingsPage() {
                       </p>
                     </div>
                   </div>
+
+                  {outsideRadius && rescueRadiusKm !== null && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+                      ⚠ Outside your rescue radius ({formatRadiusKm(rescueRadiusKm)} km)
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col justify-between gap-3 border-t border-zinc-100 bg-zinc-50 p-4 sm:flex-row sm:items-center">

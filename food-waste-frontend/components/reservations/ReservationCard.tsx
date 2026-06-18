@@ -15,7 +15,11 @@ import {
 } from "lucide-react";
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
-import { formatFoodDate, getRestaurantDisplayName } from "@/lib/food";
+import {
+  formatDistanceKm,
+  formatFoodDate,
+  getRestaurantDisplayName,
+} from "@/lib/food";
 import {
   formatPaymentCountdown,
   getPaymentRemainingMs,
@@ -279,6 +283,7 @@ export default function ReservationCard({
   const foodAmount = toMoney(reservation.food_amount);
   const showDeposit = depositAmount > 0;
   const restaurantName = getRestaurantDisplayName(reservation);
+  const distance = formatDistanceKm(reservation);
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -364,6 +369,13 @@ export default function ReservationCard({
               icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
               label="Food Price"
               value={formatMoney(foodAmount)}
+            />
+          )}
+          {distance && (
+            <DetailItem
+              icon={<MapPin className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Distance"
+              value={distance}
             />
           )}
         </div>

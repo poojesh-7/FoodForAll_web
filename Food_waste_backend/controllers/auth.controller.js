@@ -1251,6 +1251,8 @@ exports.getMe = async (req, res) => {
         u.auth_provider,
         u.phone_verified_at,
         u.role,
+        u.latitude,
+        u.longitude,
         u.reliability_deposit_amount,
         u.requires_reliability_deposit,
         u.restriction_level,

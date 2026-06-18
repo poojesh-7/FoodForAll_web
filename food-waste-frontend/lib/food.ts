@@ -105,6 +105,52 @@ export function formatFoodDate(value?: string | number | null) {
   return Number.isNaN(date.getTime()) ? "-" : formatPlatformDateTime(date);
 }
 
+function toFiniteNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getField(source: object, key: string) {
+  return (source as Record<string, unknown>)[key];
+}
+
+export function getDistanceKm(source: object) {
+  const explicitDistanceKm =
+    toFiniteNumber(getField(source, "distanceKm")) ??
+    toFiniteNumber(getField(source, "distance_km"));
+
+  if (explicitDistanceKm !== null) return explicitDistanceKm;
+
+  const legacyDistance = toFiniteNumber(getField(source, "distance"));
+  if (legacyDistance === null) return null;
+
+  return legacyDistance > 100 ? legacyDistance / 1000 : legacyDistance;
+}
+
+export function formatDistanceKm(source: object) {
+  const distanceKm = getDistanceKm(source);
+  return distanceKm === null ? null : `${distanceKm.toFixed(1)} km`;
+}
+
+export function getRescueRadiusKm(source: object) {
+  return (
+    toFiniteNumber(getField(source, "ngoServiceRadiusKm")) ??
+    toFiniteNumber(getField(source, "ngo_service_radius_km")) ??
+    toFiniteNumber(getField(source, "service_radius_km"))
+  );
+}
+
+export function isOutsideRescueRadius(source: object) {
+  const distanceKm = getDistanceKm(source);
+  const rescueRadiusKm = getRescueRadiusKm(source);
+
+  return (
+    distanceKm !== null &&
+    rescueRadiusKm !== null &&
+    distanceKm > rescueRadiusKm
+  );
+}
+
 export function isNormalUserPaidListing(listing: FoodCardListing) {
   return listing.status === "active" && listing.is_free === false;
 }

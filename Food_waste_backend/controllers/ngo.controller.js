@@ -382,7 +382,14 @@ exports.getNearbyListings = async (req, res) => {
       f.status,
       f.is_free,
       ${providerDisplaySelect("restaurant", "u")} AS provider_name,
-      restaurant.restaurant_name
+      restaurant.restaurant_name,
+      (
+        ST_Distance(
+          f.location,
+          ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
+        ) / 1000.0
+      )::double precision AS "distanceKm",
+      $3::double precision AS "ngoServiceRadiusKm"
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id
     LEFT JOIN LATERAL (
@@ -405,14 +412,14 @@ exports.getNearbyListings = async (req, res) => {
     AND ST_DWithin(
         f.location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
-        $3
+        $3 * 1000
     )
     ORDER BY ST_Distance(
         f.location,
         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
     );
     `,
-    [toNumber(lng), toNumber(lat), radius * 1000],
+    [toNumber(lng), toNumber(lat), toNumber(radius)],
   );
 
   res.json(result.rows);
@@ -1285,8 +1292,16 @@ exports.viewIncomingRequests = async (req, res) => {
            ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
            provider.phone AS provider_phone,
            provider.trust_score,
-           provider.restriction_level
+           provider.restriction_level,
+           CASE
+             WHEN f.location IS NOT NULL
+             AND n.location IS NOT NULL
+             THEN (ST_Distance(f.location, n.location) / 1000.0)::double precision
+             ELSE NULL
+           END AS "distanceKm",
+           n.service_radius_km AS "ngoServiceRadiusKm"
     FROM ngo_requests nr
+    JOIN ngos n ON n.id=nr.ngo_id
     JOIN food_listings f ON f.id=nr.listing_id
     JOIN users provider ON provider.id=f.provider_id
     LEFT JOIN LATERAL (

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Clock3, MapPin, Package, Store } from "lucide-react";
 import {
   formatFoodDate,
+  formatDistanceKm,
   getListingId,
   getListingPrice,
   getRestaurantDisplayName,
@@ -43,6 +44,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
   const status = String(listing.status ?? "active").toLowerCase();
   const price = getListingPrice(listing);
   const providerName = getRestaurantDisplayName(listing);
+  const distance = formatDistanceKm(listing);
   const content = (
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md">
       <div className="flex flex-1 flex-col gap-4 p-5">
@@ -72,10 +74,10 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
           >
             {status.replace(/_/g, " ")}
           </span>
-          {"distance" in listing && listing.distance !== undefined && (
+          {distance && (
             <span className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
               <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
-              {Number(listing.distance).toFixed(2)} km
+              {distance}
             </span>
           )}
         </div>

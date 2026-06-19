@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ArrowRight, Clock3, MapPin, Package, Store } from "lucide-react";
+import { ArrowRight, Clock3, MapPin, Package } from "lucide-react";
 import FoodImage from "@/components/FoodImage";
+import IdentityAvatar from "@/components/identity/IdentityAvatar";
 import {
   formatFoodDate,
   formatQuantityWithUnit,
@@ -104,9 +105,14 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
         </div>
 
         <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white text-sm text-zinc-600">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center border-r border-zinc-200 text-zinc-500">
-            <Store className="h-4 w-4" aria-hidden="true" />
-          </div>
+          <IdentityAvatar
+            src={listing.provider_profile_image_url}
+            name={providerName}
+            role="provider"
+            label="Provider avatar"
+            size="md"
+            className="ml-2"
+          />
           <div className="min-w-0 py-2 pr-3">
             <p className="truncate font-medium text-zinc-950">{providerName}</p>
             <p className="text-xs text-zinc-500">Restaurant</p>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import IdentityChip from "@/components/identity/IdentityChip";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService } from "@/services/ngo.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -108,6 +109,7 @@ export default function NGOVolunteersPage() {
           {
             id: request.volunteer_id,
             name: request.volunteer_name,
+            profile_image_url: request.volunteer_profile_image_url,
             status: "active",
           },
           ...current,
@@ -169,9 +171,15 @@ export default function NGOVolunteersPage() {
                       className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
                     >
                       <div>
-                        <h3 className="text-sm font-semibold text-zinc-950">
-                          {request.volunteer_name ?? "Unnamed volunteer"}
-                        </h3>
+                        <IdentityChip
+                          src={request.volunteer_profile_image_url}
+                          name={request.volunteer_name ?? "Unnamed volunteer"}
+                          role="volunteer"
+                          label="Volunteer avatar"
+                          caption={
+                            request.is_available ? "Available" : "Availability unknown"
+                          }
+                        />
                         <p className="mt-1 text-sm text-zinc-600">
                           {request.is_available ? "Available" : "Availability unknown"}
                         </p>
@@ -231,12 +239,13 @@ export default function NGOVolunteersPage() {
                     key={String(volunteer.id)}
                     className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
                   >
-                    <div>
-                      <h3 className="text-sm font-semibold text-zinc-950">
-                        {volunteer.name ?? "Unnamed volunteer"}
-                      </h3>
-                      <p className="text-sm text-zinc-600">{volunteer.status}</p>
-                    </div>
+                    <IdentityChip
+                      src={volunteer.profile_image_url}
+                      name={volunteer.name ?? "Unnamed volunteer"}
+                      role="volunteer"
+                      label="Volunteer avatar"
+                      caption={volunteer.status}
+                    />
                     <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
                       Active
                     </span>
@@ -273,14 +282,15 @@ export default function NGOVolunteersPage() {
                       key={volunteerId}
                       className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center"
                     >
-                      <div>
-                        <h3 className="text-sm font-semibold text-zinc-950">
-                          {volunteer.name ?? "Unnamed volunteer"}
-                        </h3>
-                        <p className="text-sm text-zinc-600">
-                          {volunteer.is_available ? "Available" : "Availability unknown"}
-                        </p>
-                      </div>
+                      <IdentityChip
+                        src={volunteer.profile_image_url}
+                        name={volunteer.name ?? "Unnamed volunteer"}
+                        role="volunteer"
+                        label="Volunteer avatar"
+                        caption={
+                          volunteer.is_available ? "Available" : "Availability unknown"
+                        }
+                      />
                       <button
                         onClick={() => sendRequest(volunteer)}
                         disabled={requesting || requested}

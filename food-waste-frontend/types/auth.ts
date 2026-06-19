@@ -14,4 +14,7 @@ export interface User {
   auth_provider?: "otp" | "google" | string;
   phone_verified_at?: string | null;
   role: Role;
+  profile_image_url?: string | null;
+  profile_image_public_id?: string | null;
+  profile_image?: string | null;
 }

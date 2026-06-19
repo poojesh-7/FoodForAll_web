@@ -17,6 +17,7 @@ import {
   Utensils,
 } from "lucide-react";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
+import IdentityChip from "@/components/identity/IdentityChip";
 import ReviewList from "@/components/ratings/ReviewList";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import { FoodImageCarousel } from "@/components/FoodImage";
@@ -478,7 +479,15 @@ export default function FoodDetailPage() {
                   <DetailPill
                     icon={<Store className="h-4 w-4" aria-hidden="true" />}
                     label="Restaurant"
-                    value={providerName}
+                    value={
+                      <IdentityChip
+                        src={listing.provider_profile_image_url}
+                        name={providerName}
+                        role="provider"
+                        label="Provider avatar"
+                        caption="Provider"
+                      />
+                    }
                   />
                   <DetailPill
                     icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}

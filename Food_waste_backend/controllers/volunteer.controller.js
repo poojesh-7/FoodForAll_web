@@ -49,11 +49,13 @@ exports.viewAvailableNGOs = async (req, res) => {
     `
     SELECT n.id,
            n.organization_name,
+           ngo_user.profile_image_url AS ngo_profile_image_url,
            n.urgent_flag,
            COUNT(DISTINCT f.id) FILTER (WHERE f.status='active') AS active_listings,
            COUNT(DISTINCT v.user_id) FILTER (WHERE v.status='active') AS total_volunteers,
            COALESCE(MAX(vself.status), MAX(vrself.status)) AS volunteer_status
     FROM ngos n
+    JOIN users ngo_user ON ngo_user.id=n.user_id
     LEFT JOIN food_listings f ON f.ngo_id=n.id
     LEFT JOIN volunteers v ON v.ngo_id=n.id
     LEFT JOIN volunteers vself
@@ -95,12 +97,14 @@ exports.getDashboard = async (req, res) => {
         `
         SELECT n.id,
                n.organization_name,
+               ngo_user.profile_image_url AS ngo_profile_image_url,
                n.urgent_flag,
                v.status AS volunteer_status,
                COUNT(DISTINCT f.id) FILTER (WHERE f.status='active') AS active_listings,
                COUNT(DISTINCT active_v.user_id) FILTER (WHERE active_v.status='active') AS total_volunteers
         FROM volunteers v
         JOIN ngos n ON n.id=v.ngo_id
+        JOIN users ngo_user ON ngo_user.id=n.user_id
         LEFT JOIN food_listings f ON f.ngo_id=n.id
         LEFT JOIN volunteers active_v ON active_v.ngo_id=n.id
         WHERE v.user_id=$1
@@ -136,9 +140,11 @@ exports.getDashboard = async (req, res) => {
           ${listingImagesSelect("f")},
           u.id AS provider_id,
           u.name AS provider_name,
+          u.profile_image_url AS provider_profile_image_url,
           restaurant.restaurant_name,
           u.phone AS provider_phone,
           n.organization_name AS ngo_name,
+          ngo_user.profile_image_url AS ngo_profile_image_url,
           n.latitude AS ngo_latitude,
           n.longitude AS ngo_longitude
         FROM reservations r
@@ -152,6 +158,7 @@ exports.getDashboard = async (req, res) => {
           LIMIT 1
         ) restaurant ON true
         JOIN ngos n ON n.user_id=r.user_id
+        JOIN users ngo_user ON ngo_user.id=n.user_id
         WHERE r.assigned_volunteer_id=$1
         AND r.task_status IN ('in_progress','picked_from_provider')
         ORDER BY r.assigned_at DESC
@@ -169,9 +176,10 @@ exports.getDashboard = async (req, res) => {
       ),
       pool.query(
         `
-        SELECT vr.*, n.organization_name
+        SELECT vr.*, n.organization_name, ngo_user.profile_image_url AS ngo_profile_image_url
         FROM volunteer_requests vr
         JOIN ngos n ON vr.ngo_id=n.id
+        JOIN users ngo_user ON ngo_user.id=n.user_id
         WHERE vr.volunteer_id=$1
         AND vr.status='pending'
         AND vr.request_type='ngo_invite'
@@ -207,9 +215,10 @@ exports.viewRequests = async (req, res) => {
 
   const result = await pool.query(
     `
-    SELECT vr.*, n.organization_name
+    SELECT vr.*, n.organization_name, ngo_user.profile_image_url AS ngo_profile_image_url
     FROM volunteer_requests vr
     JOIN ngos n ON vr.ngo_id=n.id
+    JOIN users ngo_user ON ngo_user.id=n.user_id
     WHERE vr.volunteer_id=$1
     AND vr.status='pending'
     AND vr.request_type='ngo_invite'
@@ -715,9 +724,11 @@ exports.getTasks = async (req, res) => {
         ${listingImagesSelect("f")},
         u.id AS provider_id,
         u.name AS provider_name,
+        u.profile_image_url AS provider_profile_image_url,
         restaurant.restaurant_name,
         u.phone AS provider_phone,
         n.organization_name AS ngo_name,
+        ngo_user.profile_image_url AS ngo_profile_image_url,
         n.latitude AS ngo_latitude,
         n.longitude AS ngo_longitude,
         ST_Distance(
@@ -735,6 +746,7 @@ exports.getTasks = async (req, res) => {
         LIMIT 1
       ) restaurant ON true
       JOIN ngos n ON n.user_id = r.user_id
+      JOIN users ngo_user ON ngo_user.id=n.user_id
       WHERE r.user_id = $3
       AND r.pickup_type = 'ngo'
       AND r.status = 'reserved'

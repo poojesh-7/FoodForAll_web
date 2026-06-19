@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { LogOut, Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import IdentityAvatar from "@/components/identity/IdentityAvatar";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import { getRoleDashboard } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
@@ -99,6 +100,7 @@ export default function AppNavigation() {
     { href: "/profile", label: "Profile" },
   ];
   const drawerTabIndex = drawerOpen ? undefined : -1;
+  const userName = "name" in user ? user.name : null;
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -232,6 +234,19 @@ export default function AppNavigation() {
 
           <div className="flex items-center gap-2">
             <NotificationBell />
+            <Link
+              href="/profile"
+              aria-label="Open profile"
+              className="inline-flex rounded-full focus:outline-none focus:ring-2 focus:ring-zinc-950 focus:ring-offset-2"
+            >
+              <IdentityAvatar
+                src={user.profile_image_url ?? user.profile_image}
+                name={userName}
+                role={user.role}
+                label="User avatar"
+                size="md"
+              />
+            </Link>
             <button
               type="button"
               onClick={() => void handleLogout()}

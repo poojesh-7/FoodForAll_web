@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
+import IdentityChip from "@/components/identity/IdentityChip";
 import { volunteerService } from "@/services/volunteer.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type { DbId, VolunteerAvailableNGO } from "@shared/contracts/api-contracts";
@@ -112,9 +113,13 @@ export default function VolunteerNGOsPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-semibold text-zinc-950">
-                      {ngo.organization_name}
-                    </h2>
+                    <IdentityChip
+                      src={ngo.ngo_profile_image_url}
+                      name={ngo.organization_name}
+                      role="ngo"
+                      label="NGO avatar"
+                      caption="NGO"
+                    />
                     <p className="mt-1 text-sm text-zinc-600">
                       {ngo.active_listings} active listings, {ngo.total_volunteers} volunteers
                     </p>

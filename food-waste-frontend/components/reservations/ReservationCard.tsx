@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import FoodImage from "@/components/FoodImage";
+import IdentityChip from "@/components/identity/IdentityChip";
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,9 +11,7 @@ import {
   Navigation,
   Package,
   ShieldCheck,
-  Store,
   Ticket,
-  UserRound,
 } from "lucide-react";
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
@@ -388,40 +387,34 @@ export default function ReservationCard({
         </div>
 
         <div className="grid gap-3 text-sm md:grid-cols-2">
-          <div className="rounded-md border border-zinc-200 bg-white p-3">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
-              {providerView ? (
-                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
-              ) : (
-                <Store className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              {providerView ? "Requester" : "Restaurant"}
-            </div>
-            <p className="mt-2 font-semibold text-zinc-950">
-              {providerView && "requester_name" in reservation
-                ? displayValue(reservation.requester_name)
-                : restaurantName}
-            </p>
-            <p className="mt-1 text-zinc-600">
-              {providerView && "requester_phone" in reservation
-                ? displayValue(reservation.requester_phone)
-                : displayValue(reservation.provider_phone)}
-            </p>
-          </div>
+          <IdentityChip
+            src={
+              providerView && "requester_profile_image_url" in reservation
+                ? String(reservation.requester_profile_image_url ?? "")
+                : reservation.provider_profile_image_url
+            }
+            name={
+              providerView && "requester_name" in reservation
+                ? String(displayValue(reservation.requester_name))
+                : restaurantName
+            }
+            role={providerView ? (reservation.pickup_type === "ngo" ? "ngo" : "user") : "provider"}
+            label={providerView ? "User avatar" : "Provider avatar"}
+            caption={
+              providerView && "requester_phone" in reservation
+                ? `Requester - ${displayValue(reservation.requester_phone)}`
+                : `Provider - ${displayValue(reservation.provider_phone)}`
+            }
+          />
 
           {showVolunteer && (
-            <div className="rounded-md border border-zinc-200 bg-white p-3">
-              <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
-                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
-                Volunteer
-              </div>
-              <p className="mt-2 font-semibold text-zinc-950">
-                {displayValue(reservation.assigned_volunteer_name)}
-              </p>
-              <p className="mt-1 text-zinc-600">
-                {displayValue(reservation.assigned_volunteer_phone)}
-              </p>
-            </div>
+            <IdentityChip
+              src={reservation.assigned_volunteer_profile_image_url}
+              name={String(displayValue(reservation.assigned_volunteer_name))}
+              role="volunteer"
+              label="Volunteer avatar"
+              caption={`Volunteer - ${displayValue(reservation.assigned_volunteer_phone)}`}
+            />
           )}
         </div>
       </div>

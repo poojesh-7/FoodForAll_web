@@ -958,6 +958,7 @@ exports.getActiveFood = async (req, res) => {
       `SELECT f.*,
               ${listingImagesSelect("f")},
               u.name AS provider_name,
+              u.profile_image_url AS provider_profile_image_url,
               restaurant.restaurant_name
        FROM food_listings f
        JOIN users u ON u.id = f.provider_id
@@ -998,6 +999,7 @@ exports.getActiveFood = async (req, res) => {
     SELECT f.*,
     ${listingImagesSelect("f")},
     u.name AS provider_name,
+    u.profile_image_url AS provider_profile_image_url,
     restaurant.restaurant_name,
     ST_Distance(
       f.location,
@@ -1050,6 +1052,7 @@ exports.getFoodById = async (req, res) => {
     SELECT f.*,
            ${listingImagesSelect("f")},
            u.name AS provider_name,
+           u.profile_image_url AS provider_profile_image_url,
            restaurant.restaurant_name,
            (
              SELECT COUNT(*)::int
@@ -1111,6 +1114,7 @@ exports.getNearbyFood = async (req, res) => {
            f.price,
            ${listingImagesSelect("f")},
            u.name AS provider_name,
+           u.profile_image_url AS provider_profile_image_url,
            restaurant.restaurant_name,
            (
              ST_Distance(
@@ -1179,6 +1183,7 @@ exports.requestNGO = async (req, res) => {
     `
     SELECT f.*,
            u.name AS provider_name,
+           u.profile_image_url AS provider_profile_image_url,
            restaurant.restaurant_name
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id

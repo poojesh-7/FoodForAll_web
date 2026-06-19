@@ -1085,6 +1085,8 @@ async function executeAccountAnonymization({ client, request, adminId }) {
         auth_provider='otp',
         phone_verified_at=NULL,
         profile_image=NULL,
+        profile_image_url=NULL,
+        profile_image_public_id=NULL,
         fcm_token=NULL,
         address=NULL,
         latitude=NULL,

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
+import IdentityChip from "@/components/identity/IdentityChip";
 import { volunteerService } from "@/services/volunteer.service";
 import type {
   VolunteerRequestAction,
@@ -101,9 +102,13 @@ export default function VolunteerRequestsPage() {
                 className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
               >
                 <div>
-                  <h2 className="text-base font-semibold text-zinc-950">
-                    {request.organization_name}
-                  </h2>
+                  <IdentityChip
+                    src={request.ngo_profile_image_url}
+                    name={request.organization_name}
+                    role="ngo"
+                    label="NGO avatar"
+                    caption="NGO invitation"
+                  />
                   <p className="mt-1 text-sm text-zinc-600">
                     Status: {request.status ?? "pending"}
                   </p>

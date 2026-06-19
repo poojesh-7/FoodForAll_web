@@ -92,6 +92,8 @@ async function ensureAuthHardeningSchema() {
       ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'otp',
       ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS profile_image_url TEXT NULL,
+      ADD COLUMN IF NOT EXISTS profile_image_public_id TEXT NULL,
       ALTER COLUMN phone DROP NOT NULL;
 
       CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique_idx
@@ -366,6 +368,7 @@ async function findOrCreateUserByGoogleIdentity(googleProfile) {
       SET email=$1,
           email_verified=$2,
           auth_provider='google',
+          profile_image_url=COALESCE(profile_image_url, $3),
           profile_image=COALESCE(profile_image, $3)
       WHERE id=$4
       RETURNING id, role, auth_session_version
@@ -408,6 +411,7 @@ async function findOrCreateUserByGoogleIdentity(googleProfile) {
           email=$2,
           email_verified=$3,
           auth_provider='google',
+          profile_image_url=COALESCE(profile_image_url, $4),
           profile_image=COALESCE(profile_image, $4)
       WHERE id=$5
       RETURNING id, role, auth_session_version
@@ -431,9 +435,10 @@ async function findOrCreateUserByGoogleIdentity(googleProfile) {
       auth_provider,
       name,
       profile_image,
+      profile_image_url,
       role
     )
-    VALUES ($1,$2,$3,'google',$4,$5,NULL)
+    VALUES ($1,$2,$3,'google',$4,$5,$5,NULL)
     RETURNING id, role, auth_session_version
     `,
     [
@@ -1063,7 +1068,9 @@ exports.completeProfile = async (req, res) => {
         auth_session_version,
         auth_provider,
         email_verified,
-        phone_verified_at
+        phone_verified_at,
+        profile_image_url,
+        profile_image_public_id
       `,
       [
         normalizedName,
@@ -1251,6 +1258,9 @@ exports.getMe = async (req, res) => {
         u.auth_provider,
         u.phone_verified_at,
         u.role,
+        u.profile_image_url,
+        u.profile_image_public_id,
+        COALESCE(u.profile_image_url, u.profile_image) AS profile_image,
         u.latitude,
         u.longitude,
         u.reliability_deposit_amount,

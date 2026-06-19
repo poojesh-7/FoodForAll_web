@@ -389,6 +389,7 @@ exports.getNearbyListings = async (req, res) => {
       f.is_free,
       ${listingImagesSelect("f")},
       ${providerDisplaySelect("restaurant", "u")} AS provider_name,
+      u.profile_image_url AS provider_profile_image_url,
       restaurant.restaurant_name,
       (
         ST_Distance(
@@ -713,7 +714,7 @@ exports.viewVolunteers = async (req, res) => {
 
   const result = await pool.query(
     `
-    SELECT u.id, u.name, u.phone, u.is_available, v.status
+    SELECT u.id, u.name, u.phone, u.is_available, u.profile_image_url, v.status
     FROM volunteers v
     JOIN users u ON u.id=v.user_id
     WHERE v.ngo_id=$1 AND v.status='active'
@@ -844,7 +845,7 @@ exports.previewBulkReserve = async (req, res) => {
 // 👤 View unassigned volunteers
 exports.viewUnassignedVolunteers = async (req, res) => {
   const result = await pool.query(`
-    SELECT u.id, u.name, u.is_available 
+    SELECT u.id, u.name, u.is_available, u.profile_image_url
     FROM users u
     WHERE u.role='volunteer'
     AND NOT EXISTS (
@@ -913,6 +914,7 @@ exports.getMyReservations = async (req, res) => {
 
         u.id AS provider_id,
         ${providerDisplaySelect("restaurant", "u")} AS provider_name,
+        u.profile_image_url AS provider_profile_image_url,
         restaurant.restaurant_name,
         u.phone AS provider_phone,
         u.address AS provider_address,
@@ -921,6 +923,7 @@ exports.getMyReservations = async (req, res) => {
 
         volunteer.name AS assigned_volunteer_name,
         volunteer.phone AS assigned_volunteer_phone,
+        volunteer.profile_image_url AS assigned_volunteer_profile_image_url,
 
         rating.id AS review_id,
         rating.rating AS review_rating,
@@ -1091,6 +1094,7 @@ exports.viewVolunteerJoinRequests = async (req, res) => {
            u.name AS volunteer_name,
            u.phone AS volunteer_phone,
            u.email AS volunteer_email,
+           u.profile_image_url AS volunteer_profile_image_url,
            u.is_available
     FROM volunteer_requests vr
     JOIN users u ON u.id=vr.volunteer_id
@@ -1303,6 +1307,7 @@ exports.viewIncomingRequests = async (req, res) => {
            nr.requested_at,
            provider.id AS provider_id,
            ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+           provider.profile_image_url AS provider_profile_image_url,
            provider.phone AS provider_phone,
            provider.trust_score,
            provider.restriction_level,

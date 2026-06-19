@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { authService } from "@/services/auth";
+import ProfileImageManager from "@/components/identity/ProfileImageManager";
 import { foodService } from "@/services/food.service";
 import { ngoService } from "@/services/ngo.service";
 import { userService } from "@/services/user";
@@ -22,7 +23,6 @@ import type {
 type ProfileForm = {
   name: string;
   email: string;
-  profile_image: string;
   address: string;
 };
 
@@ -94,7 +94,6 @@ export default function ProfilePage() {
   const [form, setForm] = useState<ProfileForm>({
     name: "",
     email: "",
-    profile_image: "",
     address: "",
   });
   const [loading, setLoading] = useState(true);
@@ -133,7 +132,6 @@ export default function ProfilePage() {
         setForm({
           name: accountProfile.name ?? "",
           email: accountProfile.email ?? "",
-          profile_image: "",
           address: "",
         });
       })
@@ -175,7 +173,6 @@ export default function ProfilePage() {
       const updated = await userService.updateUser(authUser.id, {
         name: form.name.trim(),
         email: form.email.trim(),
-        profile_image: form.profile_image.trim() || null,
       });
 
       setProfile((current) =>
@@ -185,6 +182,9 @@ export default function ProfilePage() {
               name: updated.name,
               email: updated.email,
               role: updated.role,
+              profile_image_url: updated.profile_image_url,
+              profile_image_public_id: updated.profile_image_public_id,
+              profile_image: updated.profile_image,
             }
           : current
       );
@@ -286,6 +286,34 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {authUser?.id && (
+            <ProfileImageManager
+              userId={authUser.id}
+              imageUrl={profile?.profile_image_url ?? profile?.profile_image}
+              name={profile?.name}
+              role={profile?.role}
+              onChange={(updated) => {
+                setProfile((current) =>
+                  current
+                    ? {
+                        ...current,
+                        profile_image_url: updated.profile_image_url,
+                        profile_image_public_id: updated.profile_image_public_id,
+                        profile_image: updated.profile_image,
+                      }
+                    : current
+                );
+                setUser({ ...authUser, ...updated });
+                setSuccess(
+                  updated.profile_image_url
+                    ? "Profile image updated successfully."
+                    : "Profile image removed successfully."
+                );
+                setError("");
+              }}
+            />
+          )}
+
           <input
             value={form.name}
             placeholder="Name"
@@ -300,15 +328,6 @@ export default function ProfilePage() {
             readOnly={emailLocked}
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 read-only:bg-zinc-100"
             onChange={(event) => setForm({ ...form, email: event.target.value })}
-          />
-
-          <input
-            value={form.profile_image}
-            placeholder="Profile image URL"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
-            onChange={(event) =>
-              setForm({ ...form, profile_image: event.target.value })
-            }
           />
 
           <button

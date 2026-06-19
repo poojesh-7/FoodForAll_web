@@ -2,6 +2,7 @@
 
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import FoodImage from "@/components/FoodImage";
+import IdentityChip from "@/components/identity/IdentityChip";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import {
   formatFoodDate,
@@ -20,10 +21,8 @@ import {
   Navigation,
   Package,
   ShieldCheck,
-  Store,
   Ticket,
   Truck,
-  UserRound,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { NGOReservationHistoryRow } from "@/services/ngo.service";
@@ -374,35 +373,25 @@ export default function NGOReservationCard({
         )}
 
         <div className="grid gap-3 text-sm md:grid-cols-2">
-          <div className="rounded-md border border-zinc-200 bg-white p-3">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
-              <Store className="h-3.5 w-3.5" aria-hidden="true" />
-              Restaurant
-            </div>
-            <p className="mt-2 font-semibold text-zinc-950">
-              {restaurantName}
-            </p>
-            <p className="mt-1 text-zinc-600">
-              {displayValue(reservation.provider_phone)}
-            </p>
-          </div>
+          <IdentityChip
+            src={reservation.provider_profile_image_url}
+            name={restaurantName}
+            role="provider"
+            label="Provider avatar"
+            caption={`Provider - ${displayValue(reservation.provider_phone)}`}
+          />
 
           {showVolunteer && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-              <div className="flex items-center gap-2 text-xs font-medium uppercase text-amber-700">
-                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
-                Volunteer
-              </div>
-              <p className="mt-2 font-semibold text-zinc-950">
-                {displayValue(reservation.assigned_volunteer_name)}
-              </p>
-              <p className="mt-1 text-zinc-700">
-                {displayValue(reservation.assigned_volunteer_phone)}
-              </p>
-              <p className="mt-2 text-xs font-medium text-amber-800">
-                {getVolunteerState(reservation, status)}
-              </p>
-            </div>
+            <IdentityChip
+              src={reservation.assigned_volunteer_profile_image_url}
+              name={displayValue(reservation.assigned_volunteer_name)}
+              role="volunteer"
+              label="Volunteer avatar"
+              caption={`${getVolunteerState(reservation, status)} - ${displayValue(
+                reservation.assigned_volunteer_phone
+              )}`}
+              tone="amber"
+            />
           )}
         </div>
       </div>

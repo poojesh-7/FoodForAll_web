@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import FoodImage from "@/components/FoodImage";
+import IdentityChip from "@/components/identity/IdentityChip";
 import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
@@ -273,9 +274,15 @@ export default function NGOIncomingRequestsPage() {
                     <p className="text-xs font-medium uppercase text-zinc-500">
                       Restaurant
                     </p>
-                    <p className="mt-1 truncate font-semibold text-zinc-950">
-                      {getRestaurantDisplayName(request)}
-                    </p>
+                    <div className="mt-2">
+                      <IdentityChip
+                        src={request.provider_profile_image_url}
+                        name={getRestaurantDisplayName(request)}
+                        role="provider"
+                        label="Provider avatar"
+                        caption="Provider"
+                      />
+                    </div>
                     {request.provider_phone && (
                       <p className="mt-1 truncate text-zinc-600">
                         {request.provider_phone}

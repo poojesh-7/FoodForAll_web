@@ -537,6 +537,7 @@ exports.getReservationById = async (req, res) => {
               ELSE NULL
             END AS payment_session_id,
             ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+            provider.profile_image_url AS provider_profile_image_url,
             restaurant.restaurant_name,
             provider.phone AS provider_phone,
             provider.address AS provider_address,
@@ -551,9 +552,11 @@ exports.getReservationById = async (req, res) => {
               ELSE NULL
             END AS "distanceKm",
             requester.name AS requester_name,
+            requester.profile_image_url AS requester_profile_image_url,
             requester.phone AS requester_phone,
             volunteer.name AS assigned_volunteer_name,
             volunteer.phone AS assigned_volunteer_phone,
+            volunteer.profile_image_url AS assigned_volunteer_profile_image_url,
             rating.id AS review_id,
             rating.rating AS review_rating,
             rating.review AS review_text
@@ -637,6 +640,7 @@ exports.getMyReservations = async (req, res) => {
             ELSE NULL
           END AS payment_session_id,
           ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
+          provider.profile_image_url AS provider_profile_image_url,
           restaurant.restaurant_name,
           provider.phone AS provider_phone,
           provider.address AS provider_address,
@@ -644,9 +648,11 @@ exports.getMyReservations = async (req, res) => {
           f.longitude AS provider_longitude,
           requester.id AS requester_id,
           requester.name AS requester_name,
+          requester.profile_image_url AS requester_profile_image_url,
           requester.phone AS requester_phone,
           volunteer.name AS assigned_volunteer_name,
           volunteer.phone AS assigned_volunteer_phone,
+          volunteer.profile_image_url AS assigned_volunteer_profile_image_url,
           CASE
             WHEN r.pickup_type = 'ngo' THEN 'ngo'
             ELSE 'self_pickup'
@@ -719,9 +725,11 @@ exports.getProviderReservations = async (req, res) => {
                ELSE requester.name
              END AS requester_name,
              requester_ngo.organization_name AS requester_organization_name,
+             requester.profile_image_url AS requester_profile_image_url,
              requester.phone AS requester_phone,
              volunteer.name AS assigned_volunteer_name,
              volunteer.phone AS assigned_volunteer_phone,
+             volunteer.profile_image_url AS assigned_volunteer_profile_image_url,
              CASE
                WHEN r.pickup_type = 'ngo' THEN 'ngo'
                ELSE 'self_pickup'

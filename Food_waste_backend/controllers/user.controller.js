@@ -1,6 +1,10 @@
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 const {
+  deleteProfileImage,
+  uploadProfileImage: uploadProfileImageAsset,
+} = require("../shared/services/profileMedia.service");
+const {
   ensureEmailAvailable,
   getIdentityConflictMessage,
   isIdentityUniqueViolation,
@@ -9,7 +13,6 @@ const {
 const { isProvided, isValidEmail, isValidId } = require("../utils/validation");
 const {
   normalizePersonName,
-  normalizeProfileImageUrl,
 } = require("../utils/fieldValidation");
 
 // GET USER
@@ -32,7 +35,19 @@ exports.getUser = async (req, res) => {
   }
 
   const result = await pool.query(
-    "SELECT id, name, phone, email, role, created_at FROM users WHERE id=$1",
+    `
+    SELECT id,
+           name,
+           phone,
+           email,
+           role,
+           profile_image_url,
+           profile_image_public_id,
+           COALESCE(profile_image_url, profile_image) AS profile_image,
+           created_at
+    FROM users
+    WHERE id=$1
+    `,
     [id],
   );
 
@@ -45,7 +60,7 @@ exports.getUser = async (req, res) => {
 // UPDATE USER
 exports.updateUser = async (req, res) => {
   const { id } = req.params;
-  const { name, email, profile_image } = req.body;
+  const { name, email } = req.body;
 
   if (!isValidId(id)) {
     return res.status(400).json({ error: "User id is required" });
@@ -82,16 +97,21 @@ exports.updateUser = async (req, res) => {
     }
 
     const normalizedName = isProvided(name) ? normalizePersonName(name) : null;
-    const normalizedProfileImage = normalizeProfileImageUrl(profile_image);
 
     await ensureEmailAvailable(pool, normalizedEmail, id);
 
     const result = await pool.query(
       `UPDATE users
-       SET name=$1, email=$2, profile_image=$3
-       WHERE id=$4
-       RETURNING id, name, email, role, profile_image`,
-      [normalizedName, normalizedEmail, normalizedProfileImage, id],
+       SET name=$1, email=$2
+       WHERE id=$3
+       RETURNING id,
+                 name,
+                 email,
+                 role,
+                 profile_image_url,
+                 profile_image_public_id,
+                 COALESCE(profile_image_url, profile_image) AS profile_image`,
+      [normalizedName, normalizedEmail, id],
     );
 
     res.json(result.rows[0]);
@@ -113,6 +133,152 @@ exports.updateUser = async (req, res) => {
     }
 
     res.status(500).json({ error: "User update failed" });
+  }
+};
+
+exports.uploadProfileImage = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "User id is required" });
+  }
+
+  if (String(req.user.id) !== String(id)) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: "Profile image is required" });
+  }
+
+  let uploaded = null;
+
+  try {
+    const current = await pool.query(
+      `
+      SELECT id, name, email, role, profile_image_public_id
+      FROM users
+      WHERE id=$1
+      `,
+      [id],
+    );
+
+    if (!current.rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    uploaded = await uploadProfileImageAsset(id, req.file);
+
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET profile_image_url=$1,
+          profile_image_public_id=$2,
+          profile_image=$1
+      WHERE id=$3
+      RETURNING id,
+                name,
+                email,
+                role,
+                profile_image_url,
+                profile_image_public_id,
+                COALESCE(profile_image_url, profile_image) AS profile_image
+      `,
+      [uploaded.profile_image_url, uploaded.profile_image_public_id, id],
+    );
+
+    const previousPublicId = current.rows[0].profile_image_public_id;
+
+    if (previousPublicId) {
+      await deleteProfileImage(previousPublicId).catch((err) => {
+        logger.warn("Profile image cleanup failed", {
+          err,
+          userId: id,
+          publicId: previousPublicId,
+        });
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (uploaded?.profile_image_public_id) {
+      await deleteProfileImage(uploaded.profile_image_public_id).catch((deleteErr) => {
+        logger.warn("Uploaded profile image cleanup failed", {
+          err: deleteErr,
+          userId: id,
+          publicId: uploaded.profile_image_public_id,
+        });
+      });
+    }
+
+    logger.error("Profile image upload failed", { err, userId: req.user?.id });
+
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : "Profile image upload failed",
+    });
+  }
+};
+
+exports.removeProfileImage = async (req, res) => {
+  const { id } = req.params;
+
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "User id is required" });
+  }
+
+  if (String(req.user.id) !== String(id)) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const current = await pool.query(
+      `
+      SELECT id, profile_image_public_id
+      FROM users
+      WHERE id=$1
+      `,
+      [id],
+    );
+
+    if (!current.rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET profile_image_url=NULL,
+          profile_image_public_id=NULL,
+          profile_image=NULL
+      WHERE id=$1
+      RETURNING id,
+                name,
+                email,
+                role,
+                profile_image_url,
+                profile_image_public_id,
+                COALESCE(profile_image_url, profile_image) AS profile_image
+      `,
+      [id],
+    );
+
+    const previousPublicId = current.rows[0].profile_image_public_id;
+
+    if (previousPublicId) {
+      await deleteProfileImage(previousPublicId).catch((err) => {
+        logger.warn("Profile image delete failed", {
+          err,
+          userId: id,
+          publicId: previousPublicId,
+        });
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    logger.error("Profile image removal failed", { err, userId: req.user?.id });
+
+    res.status(500).json({ error: "Profile image removal failed" });
   }
 };
 

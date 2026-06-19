@@ -77,6 +77,9 @@ export interface AuthUser {
   auth_provider?: "otp" | "google" | string;
   email_verified?: boolean;
   phone_verified_at?: ISODateString | null;
+  profile_image_url?: string | null;
+  profile_image_public_id?: string | null;
+  profile_image?: string | null;
 }
 
 export interface UserProfile {
@@ -88,6 +91,9 @@ export interface UserProfile {
   auth_provider?: "otp" | "google" | string;
   phone_verified_at?: ISODateString | null;
   role: UserRole | null;
+  profile_image_url?: string | null;
+  profile_image_public_id?: string | null;
+  profile_image?: string | null;
   created_at: ISODateString;
 }
 
@@ -96,6 +102,8 @@ export interface UserUpdateResult {
   name: string | null;
   email: string | null;
   role: UserRole | null;
+  profile_image_url: string | null;
+  profile_image_public_id?: string | null;
   profile_image: string | null;
 }
 
@@ -202,6 +210,7 @@ export interface FoodListingRow extends DbRow {
   is_deleted?: boolean;
   deleted_at?: ISODateString | null;
   provider_name?: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   reservation_count?: number | string;
   images?: ListingImageRow[];
@@ -232,6 +241,7 @@ export interface NearbyFoodListing {
   is_free?: boolean;
   price?: number | string | null;
   provider_name?: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   distanceKm?: number | string | null;
   ngoServiceRadiusKm?: number | string | null;
@@ -343,15 +353,18 @@ export interface ReservationDetails extends ReservationRow {
   is_free?: boolean;
   price?: number | string | null;
   provider_name?: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   provider_phone?: string | null;
   provider_address?: string | null;
   provider_latitude?: number | string | null;
   provider_longitude?: number | string | null;
   requester_name?: string | null;
+  requester_profile_image_url?: string | null;
   requester_phone?: string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
+  assigned_volunteer_profile_image_url?: string | null;
   review_id?: DbId | null;
   review_rating?: number | string | null;
   review_text?: string | null;
@@ -367,6 +380,7 @@ export interface ReservationHistoryRow extends ReservationRow {
   price?: number | string | null;
   provider_id?: DbId;
   provider_name?: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   provider_phone?: string | null;
   provider_address?: string | null;
@@ -374,6 +388,7 @@ export interface ReservationHistoryRow extends ReservationRow {
   provider_longitude?: number | string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
+  assigned_volunteer_profile_image_url?: string | null;
   distanceKm?: number | string | null;
 }
 
@@ -382,6 +397,7 @@ export type UserHistoryItem = FoodListingRow | ReservationHistoryRow;
 export interface VolunteerAvailableNGO {
   id: DbId;
   organization_name: string;
+  ngo_profile_image_url?: string | null;
   urgent_flag: boolean | null;
   active_listings: string;
   total_volunteers: string;
@@ -394,6 +410,7 @@ export interface VolunteerRequestRow extends DbRow {
   volunteer_id?: DbId;
   status?: string;
   organization_name: string;
+  ngo_profile_image_url?: string | null;
 }
 
 export interface VolunteerMembershipRow extends DbRow {
@@ -419,10 +436,12 @@ export interface VolunteerTask {
   ngo_latitude?: number | string | null;
   ngo_longitude?: number | string | null;
   ngo_name?: string | null;
+  ngo_profile_image_url?: string | null;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString | null;
   provider_id?: DbId;
   provider_name?: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   provider_phone?: string | null;
   images?: ListingImageRow[];
@@ -452,12 +471,14 @@ export interface VolunteerDashboardData {
 export interface NGOAssignedVolunteer {
   id: DbId;
   name: string | null;
+  profile_image_url?: string | null;
   status: string;
 }
 
 export interface NGOUnassignedVolunteer {
   id: DbId;
   name: string | null;
+  profile_image_url?: string | null;
   is_available: boolean | null;
 }
 
@@ -470,6 +491,7 @@ export interface NGOVolunteerJoinRequest {
   volunteer_name: string | null;
   volunteer_phone?: string | null;
   volunteer_email?: string | null;
+  volunteer_profile_image_url?: string | null;
   is_available?: boolean | null;
 }
 
@@ -481,6 +503,7 @@ export interface NGOIncomingRequest {
   quantity_unit?: QuantityUnit | string | null;
   custom_quantity_unit?: string | null;
   provider_name: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   provider_id?: DbId;
   provider_phone?: string | null;
@@ -510,6 +533,7 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   price: number | string | null;
   provider_id: DbId;
   provider_name: string | null;
+  provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
   provider_phone: string | null;
   provider_address?: string | null;
@@ -517,6 +541,7 @@ export interface NGOReservationHistoryRow extends ReservationRow {
   provider_longitude?: number | string | null;
   assigned_volunteer_name?: string | null;
   assigned_volunteer_phone?: string | null;
+  assigned_volunteer_profile_image_url?: string | null;
   review_id?: DbId | null;
   review_rating?: number | string | null;
   review_text?: string | null;
@@ -527,6 +552,7 @@ export interface ProviderReservationRow extends ReservationDetails {
   requester_id: DbId;
   requester_name: string | null;
   requester_organization_name?: string | null;
+  requester_profile_image_url?: string | null;
   requester_phone: string | null;
   reservation_kind: "user" | "ngo" | string;
   lifecycle_group?: "active" | "history" | string;

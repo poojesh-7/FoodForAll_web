@@ -40,6 +40,28 @@ export async function updateUser(
   return getEnvelopeData<UserUpdateResult>(data);
 }
 
+export async function uploadProfileImage(
+  id: DbId,
+  file: File
+): Promise<UserUpdateResult> {
+  const formData = new FormData();
+  formData.append("profile_image", file);
+
+  const { data } = await api.put<
+    ApiBody<UpdateUserResponse, UserUpdateResult>
+  >(`/users/${id}/profile-image`, formData);
+
+  return getEnvelopeData<UserUpdateResult>(data);
+}
+
+export async function removeProfileImage(id: DbId): Promise<UserUpdateResult> {
+  const { data } = await api.delete<
+    ApiBody<UpdateUserResponse, UserUpdateResult>
+  >(`/users/${id}/profile-image`);
+
+  return getEnvelopeData<UserUpdateResult>(data);
+}
+
 export async function getUserHistory(id: DbId): Promise<UserHistoryItem[]> {
   const { data } = await api.get<
     ApiBody<UserHistoryResponse, UserHistoryItem[]>
@@ -51,6 +73,8 @@ export async function getUserHistory(id: DbId): Promise<UserHistoryItem[]> {
 export const userService = {
   getUser,
   updateUser,
+  uploadProfileImage,
+  removeProfileImage,
   getUserHistory,
   getErrorMessage,
 };

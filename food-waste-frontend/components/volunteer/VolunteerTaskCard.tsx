@@ -1,5 +1,5 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
-import FoodImage from "@/components/FoodImage";
+import { FoodImageCarousel } from "@/components/FoodImage";
 import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import {
   Clock3,
@@ -143,7 +143,7 @@ export default function VolunteerTaskCard({
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <FoodImage source={task} className="h-48" />
+      <FoodImageCarousel source={task} className="h-48" />
       <div className="space-y-4 p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">

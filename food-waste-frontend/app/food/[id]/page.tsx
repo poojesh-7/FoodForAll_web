@@ -19,7 +19,7 @@ import {
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import ReviewList from "@/components/ratings/ReviewList";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
-import FoodImage from "@/components/FoodImage";
+import { FoodImageCarousel } from "@/components/FoodImage";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { foodService } from "@/services/food.service";
 import { impactService } from "@/services/impact.service";
@@ -421,7 +421,7 @@ export default function FoodDetailPage() {
         ) : listing ? (
           <div className="space-y-5">
             <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <FoodImage source={listing} className="h-72" />
+              <FoodImageCarousel source={listing} className="h-72" />
               <div className="space-y-5 p-6">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">

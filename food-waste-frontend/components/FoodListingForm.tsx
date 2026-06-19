@@ -95,7 +95,10 @@ export default function FoodListingForm({
           <div>
             <p className="text-sm font-semibold text-zinc-950">Listing images</p>
             <p className="text-xs text-zinc-500">
-              Optional JPG, PNG, or WEBP images. Up to {maxListingImages}.
+              {values.images.length} / {maxListingImages} images
+              <span className="ml-1">
+                Optional JPG, PNG, or WEBP.
+              </span>
             </p>
           </div>
           <label className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-950">

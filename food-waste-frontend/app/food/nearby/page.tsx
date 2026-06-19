@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LocateFixed, MapPin, Search } from "lucide-react";
 import FoodCard from "@/components/FoodCard";
+import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
 import { isNormalUserPaidListing } from "@/lib/food";
+import {
+  defaultListingDiscoveryFilters,
+  getDiscoveryParams,
+  type ListingDiscoveryFilters,
+} from "@/lib/listingDiscovery";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -29,6 +35,11 @@ export default function NearbyFoodPage() {
     radius: "5",
   });
   const [results, setResults] = useState<FoodCardListing[]>([]);
+  const [filters, setFilters] = useState<ListingDiscoveryFilters>({
+    ...defaultListingDiscoveryFilters,
+    distance: "5",
+    sort: "nearest",
+  });
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -63,7 +74,8 @@ export default function NearbyFoodPage() {
       const data = await foodService.getNearbyFood({
         lat: nextForm.lat,
         lng: nextForm.lng,
-        radius: nextForm.radius,
+        radius: filters.distance || nextForm.radius,
+        ...getDiscoveryParams(filters),
       });
 
       const realtimeListings = useRealtimeStore.getState().listings;
@@ -77,7 +89,7 @@ export default function NearbyFoodPage() {
             Number(listing.remaining_quantity ?? 0) > 0
         )
       );
-      setLocationStatus(`Searching within ${nextForm.radius || "5"} km`);
+      setLocationStatus(`Searching within ${filters.distance || nextForm.radius || "5"} km`);
     } catch (err) {
       setError(foodService.getErrorMessage(err));
     } finally {
@@ -190,6 +202,12 @@ export default function NearbyFoodPage() {
             </div>
           </details>
         </section>
+
+        <ListingDiscoveryControls
+          filters={filters}
+          onChange={setFilters}
+          onApply={() => search()}
+        />
 
         {error && (
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

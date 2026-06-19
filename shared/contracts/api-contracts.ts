@@ -20,6 +20,32 @@ export type QuantityUnit =
   | "Kilogram"
   | "Piece"
   | "Other";
+export type FoodCategory =
+  | "meals"
+  | "bakery"
+  | "beverages"
+  | "fruits"
+  | "vegetables"
+  | "dairy"
+  | "snacks"
+  | "prepared_food"
+  | "grocery"
+  | "other";
+export type DietaryTag =
+  | "vegetarian"
+  | "vegan"
+  | "egg"
+  | "non_veg"
+  | "halal"
+  | "jain"
+  | "gluten_free";
+export type ListingSort =
+  | "nearest"
+  | "newest"
+  | "pickup_ending_soon"
+  | "highest_quantity"
+  | "lowest_price"
+  | "highest_price";
 
 export interface ApiResponse<TData> {
   success: boolean;
@@ -70,6 +96,20 @@ export interface OptionalCoordinatesQuery {
   lng?: string;
   radius?: string;
 }
+
+export interface ListingDiscoveryQuery {
+  search?: string;
+  category?: FoodCategory | string;
+  dietaryTags?: string;
+  sort?: ListingSort | string;
+  distance?: string;
+  minQuantity?: string;
+  maxPrice?: string;
+}
+
+export interface FoodListingQuery extends PaginationQuery, ListingDiscoveryQuery {}
+export interface ActiveFoodListingQuery extends OptionalCoordinatesQuery, ListingDiscoveryQuery {}
+export interface NearbyFoodListingQuery extends CoordinatesQuery, ListingDiscoveryQuery {}
 
 export interface AuthUser {
   id: DbId;
@@ -200,6 +240,8 @@ export interface FoodListingRow extends DbRow {
   remaining_quantity?: number | string;
   quantity_unit?: QuantityUnit | string | null;
   custom_quantity_unit?: string | null;
+  category?: FoodCategory | string;
+  dietary_tags?: Array<DietaryTag | string>;
   price?: number | string;
   is_free?: boolean;
   pickup_start_time?: ISODateString | null;
@@ -236,6 +278,8 @@ export interface NearbyFoodListing {
   remaining_quantity: number | string;
   quantity_unit?: QuantityUnit | string | null;
   custom_quantity_unit?: string | null;
+  category?: FoodCategory | string;
+  dietary_tags?: Array<DietaryTag | string>;
   pickup_end_time?: ISODateString | null;
   status?: string;
   is_free?: boolean;
@@ -748,6 +792,8 @@ export interface CreateFoodRequest {
   quantity: number | string;
   quantity_unit: QuantityUnit | string;
   custom_quantity_unit?: string | null;
+  category: FoodCategory | string;
+  dietary_tags?: Array<DietaryTag | string> | string;
   price?: number | string;
   is_free?: boolean | "true" | "false";
   pickup_start_time?: ISODateString;
@@ -765,6 +811,8 @@ export interface UpdateFoodRequest {
   quantity?: number | string | null;
   quantity_unit?: QuantityUnit | string | null;
   custom_quantity_unit?: string | null;
+  category?: FoodCategory | string | null;
+  dietary_tags?: Array<DietaryTag | string> | string | null;
   price?: number | string | null;
   is_free?: boolean | "true" | "false" | null;
   pickup_start_time?: ISODateString | null;
@@ -2962,7 +3010,7 @@ export const apiContracts = {
       path: "/api/v1/food",
       auth: "public",
       middleware: [],
-      request: { params: "NoRequestParams", query: "PaginationQuery", body: "NoRequestBody" },
+      request: { params: "NoRequestParams", query: "FoodListingQuery", body: "NoRequestBody" },
       response: "GetAllFoodResponse",
       statusCodes: [200],
     },
@@ -2971,7 +3019,7 @@ export const apiContracts = {
       path: "/api/v1/food/active",
       auth: "public",
       middleware: [],
-      request: { params: "NoRequestParams", query: "OptionalCoordinatesQuery", body: "NoRequestBody" },
+      request: { params: "NoRequestParams", query: "ActiveFoodListingQuery", body: "NoRequestBody" },
       response: "GetActiveFoodResponse",
       statusCodes: [200, 400],
     },
@@ -2980,7 +3028,7 @@ export const apiContracts = {
       path: "/api/v1/food/nearby",
       auth: "public",
       middleware: [],
-      request: { params: "NoRequestParams", query: "CoordinatesQuery", body: "NoRequestBody" },
+      request: { params: "NoRequestParams", query: "NearbyFoodListingQuery", body: "NoRequestBody" },
       response: "GetNearbyFoodResponse",
       statusCodes: [200, 400],
     },
@@ -3121,7 +3169,7 @@ export const apiContracts = {
       path: "/api/v1/ngos/listings/nearby",
       auth: "protected",
       middleware: ["authMiddleware", "requireVerified"],
-      request: { params: "NoRequestParams", query: "CoordinatesQuery", body: "NoRequestBody" },
+      request: { params: "NoRequestParams", query: "NearbyFoodListingQuery", body: "NoRequestBody" },
       response: "NGONearbyListingsResponse",
       statusCodes: [200, 400, 401, 403, 404, 500],
     },

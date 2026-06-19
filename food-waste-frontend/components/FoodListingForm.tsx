@@ -7,6 +7,11 @@ import {
   getListingImageValidationError,
   maxListingImages,
 } from "@/lib/food";
+import {
+  dietaryTagOptions,
+  foodCategoryOptions,
+  toggleDietaryTag,
+} from "@/lib/listingDiscovery";
 import { quantityUnits } from "@/lib/quantityUnits";
 
 type FoodListingFormProps = {
@@ -89,6 +94,58 @@ export default function FoodListingForm({
         className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
         onChange={(event) => update({ description: event.target.value })}
       />
+
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+        <label className="space-y-1 text-sm text-zinc-700">
+          Category
+          <select
+            value={values.category}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+            onChange={(event) => update({ category: event.target.value })}
+          >
+            <option value="">Select category</option>
+            {foodCategoryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <fieldset className="space-y-2">
+          <legend className="text-sm text-zinc-700">Dietary tags</legend>
+          <div className="flex flex-wrap gap-2">
+            {dietaryTagOptions.map((option) => {
+              const checked = values.dietary_tags.includes(option.value);
+              return (
+                <label
+                  key={option.value}
+                  className={`inline-flex cursor-pointer items-center rounded-md border px-2.5 py-1.5 text-xs font-medium ${
+                    checked
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                      : "border-zinc-200 bg-white text-zinc-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    className="sr-only"
+                    onChange={() =>
+                      update({
+                        dietary_tags: toggleDietaryTag(
+                          values.dietary_tags,
+                          option.value
+                        ),
+                      })
+                    }
+                  />
+                  {option.label}
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      </div>
 
       <section className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">

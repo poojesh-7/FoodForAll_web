@@ -5,6 +5,7 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import FoodImage from "@/components/FoodImage";
+import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
 import IdentityChip from "@/components/identity/IdentityChip";
 import {
   formatDistanceKm,
@@ -14,6 +15,14 @@ import {
   getRestaurantDisplayName,
   isOutsideRescueRadius,
 } from "@/lib/food";
+import {
+  defaultListingDiscoveryFilters,
+  formatDietaryTag,
+  formatFoodCategory,
+  getDietaryTags,
+  getDiscoveryParams,
+  type ListingDiscoveryFilters,
+} from "@/lib/listingDiscovery";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { getReservationPaymentState, savePaymentSession } from "@/lib/payment-flow";
 import { mergeListingRows } from "@/lib/realtimeMerge";
@@ -108,6 +117,10 @@ async function pollNGOPayment(reservationId: DbId) {
 export default function NGONearbyListingsPage() {
   const router = useRouter();
   const [form, setForm] = useState<LocationForm>({ lat: "", lng: "" });
+  const [filters, setFilters] = useState<ListingDiscoveryFilters>({
+    ...defaultListingDiscoveryFilters,
+    sort: "nearest",
+  });
   const [listings, setListings] = useState<NearbyFoodListing[]>([]);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [searched, setSearched] = useState(false);
@@ -199,6 +212,7 @@ export default function NGONearbyListingsPage() {
       const data = await ngoService.getNearbyListings({
         lat: nextForm.lat,
         lng: nextForm.lng,
+        ...getDiscoveryParams(filters),
       });
       setListings(data.filter(isVisibleFreeListing));
       setQuantities({});
@@ -403,6 +417,13 @@ export default function NGONearbyListingsPage() {
         </details>
       </section>
 
+      <ListingDiscoveryControls
+        filters={filters}
+        includePrice={false}
+        onChange={setFilters}
+        onApply={() => search()}
+      />
+
       {error && <NGOStateBlock title={error} tone="error" />}
       {success && <NGOStateBlock title={success} tone="success" />}
 
@@ -458,6 +479,7 @@ export default function NGONearbyListingsPage() {
             const distance = formatDistanceKm(listing);
             const rescueRadiusKm = getRescueRadiusKm(listing);
             const outsideRadius = isOutsideRescueRadius(listing);
+            const dietaryTags = getDietaryTags(listing);
 
             return (
               <article
@@ -481,6 +503,22 @@ export default function NGONearbyListingsPage() {
                         {distance && (
                           <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
                             {distance}
+                          </span>
+                        )}
+                        <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+                          {formatFoodCategory(String(listing.category ?? "other"))}
+                        </span>
+                        {dietaryTags.slice(0, 2).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+                          >
+                            {formatDietaryTag(tag)}
+                          </span>
+                        ))}
+                        {dietaryTags.length > 2 && (
+                          <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-600">
+                            +{dietaryTags.length - 2}
                           </span>
                         )}
                       </div>

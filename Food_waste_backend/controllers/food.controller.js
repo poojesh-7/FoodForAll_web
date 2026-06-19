@@ -18,6 +18,13 @@ const {
   normalizeQuantityUnitFields,
 } = require("../shared/services/quantityUnit.service");
 const {
+  appendDiscoveryWhere,
+  buildDiscoveryOrder,
+  normalizeCategory,
+  normalizeDietaryTags,
+  normalizeDiscoveryFilters,
+} = require("../shared/services/listingDiscovery.service");
+const {
   addListingImages,
   deleteRemovedImages,
   listingImagesSelect,
@@ -401,6 +408,8 @@ exports.createFood = async (req, res) => {
       quantity,
       quantity_unit,
       custom_quantity_unit,
+      category,
+      dietary_tags,
       price,
       is_free,
       pickup_start_time,
@@ -427,6 +436,8 @@ exports.createFood = async (req, res) => {
       quantity_unit,
       custom_quantity_unit,
     });
+    const listingCategory = normalizeCategory(category, { required: true });
+    const dietaryTags = normalizeDietaryTags(dietary_tags ?? req.body.dietaryTags);
 
     const now = Date.now();
     const startTime = new Date(pickup_start_time).getTime();
@@ -510,6 +521,8 @@ exports.createFood = async (req, res) => {
         remaining_quantity,
         quantity_unit,
         custom_quantity_unit,
+        category,
+        dietary_tags,
         price,
         is_free,
         pickup_start_time,
@@ -531,12 +544,14 @@ exports.createFood = async (req, res) => {
         $8,
         $9,
         $10,
-        $11::double precision,
-        $12::double precision,
+        $11,
+        $12,
+        $13::double precision,
+        $14::double precision,
         ST_SetSRID(
           ST_MakePoint(
-            $12::double precision,
-            $11::double precision
+            $14::double precision,
+            $13::double precision
           ),
           4326
         )::geography,
@@ -551,6 +566,8 @@ exports.createFood = async (req, res) => {
         quantity,
         quantityMetadata.quantityUnit,
         quantityMetadata.customQuantityUnit,
+        listingCategory,
+        dietaryTags,
         price,
         is_free,
         pickup_start_time,
@@ -662,6 +679,8 @@ exports.updateFood = async (req, res) => {
       quantity,
       quantity_unit,
       custom_quantity_unit,
+      category,
+      dietary_tags,
       pickup_end_time,
     } =
       req.body;
@@ -687,6 +706,14 @@ exports.updateFood = async (req, res) => {
       maxLength: 2000,
       preserveNewlines: true,
     });
+    const listingCategory =
+      category !== undefined
+        ? normalizeCategory(category, { required: true })
+        : current.category || "other";
+    const dietaryTags =
+      dietary_tags !== undefined || req.body.dietaryTags !== undefined
+        ? normalizeDietaryTags(dietary_tags ?? req.body.dietaryTags)
+        : current.dietary_tags || [];
     const endTime = new Date(pickup_end_time).getTime();
     const originalStartTime = new Date(current.pickup_start_time).getTime();
 
@@ -772,10 +799,12 @@ exports.updateFood = async (req, res) => {
            remaining_quantity=$4,
            quantity_unit=$5,
            custom_quantity_unit=$6,
-           price=$7,
-           is_free=$8,
-           pickup_end_time=$9
-       WHERE id=$10
+           category=$7,
+           dietary_tags=$8,
+           price=$9,
+           is_free=$10,
+           pickup_end_time=$11
+       WHERE id=$12
        RETURNING *`,
       [
         sanitizedTitle,
@@ -784,6 +813,8 @@ exports.updateFood = async (req, res) => {
         nextRemaining,
         quantityMetadata.quantityUnit,
         quantityMetadata.customQuantityUnit,
+        listingCategory,
+        dietaryTags,
         nextPrice,
         requestedFree,
         pickup_end_time,
@@ -931,29 +962,18 @@ exports.getAllFood = async (req, res) => {
   }
 
   const offset = (pageValue - 1) * limitValue;
+  const params = [];
 
-  const result = await pool.query(
-    `SELECT f.*,
-            ${listingImagesSelect("f")}
-     FROM food_listings f
-     ORDER BY f.created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [limitValue, offset],
-  );
+  try {
+    const filters = normalizeDiscoveryFilters(req.query);
+    const clauses = [];
+    appendDiscoveryWhere(clauses, params, filters);
+    const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const orderBy = buildDiscoveryOrder(filters, { defaultSort: "newest" });
+    const limitPlaceholder = `$${params.length + 1}`;
+    const offsetPlaceholder = `$${params.length + 2}`;
+    params.push(limitValue, offset);
 
-  res.json(result.rows.map(normalizeListingImages));
-};
-
-// GET ACTIVE FOOD
-exports.getActiveFood = async (req, res) => {
-  await ensureFoodListingSoftDeleteSchema();
-
-  const { lat, lng, radius = 5 } = req.query;
-  const hasLat = isProvided(lat);
-  const hasLng = isProvided(lng);
-
-  // 🔹 If no location → fallback
-  if (!hasLat && !hasLng) {
     const result = await pool.query(
       `SELECT f.*,
               ${listingImagesSelect("f")},
@@ -969,11 +989,67 @@ exports.getActiveFood = async (req, res) => {
          ORDER BY is_verified DESC, id DESC
          LIMIT 1
        ) restaurant ON true
-       WHERE f.status = 'active'
-       AND f.is_deleted = false
-       AND f.pickup_end_time > NOW()
-       AND f.remaining_quantity > 0
-       ORDER BY f.pickup_end_time ASC`
+       ${whereSql}
+       ORDER BY ${orderBy}
+       LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`,
+      params,
+    );
+
+    res.json(result.rows.map(normalizeListingImages));
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+
+    logger.error("Food listing fetch failed", { err });
+    res.status(500).json({ error: "Food listing fetch failed" });
+  }
+};
+
+// GET ACTIVE FOOD
+exports.getActiveFood = async (req, res) => {
+  await ensureFoodListingSoftDeleteSchema();
+
+  const { lat, lng, radius = 5 } = req.query;
+  const hasLat = isProvided(lat);
+  const hasLng = isProvided(lng);
+  let filters;
+
+  try {
+    filters = normalizeDiscoveryFilters(req.query);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
+
+  // 🔹 If no location → fallback
+  if (!hasLat && !hasLng) {
+    const params = [];
+    const clauses = [
+      "f.status = 'active'",
+      "f.is_deleted = false",
+      "f.pickup_end_time > NOW()",
+      "f.remaining_quantity > 0",
+    ];
+    appendDiscoveryWhere(clauses, params, filters);
+    const orderBy = buildDiscoveryOrder(filters);
+    const result = await pool.query(
+      `SELECT f.*,
+              ${listingImagesSelect("f")},
+              u.name AS provider_name,
+              u.profile_image_url AS provider_profile_image_url,
+              restaurant.restaurant_name
+       FROM food_listings f
+       JOIN users u ON u.id = f.provider_id
+       LEFT JOIN LATERAL (
+         SELECT restaurant_name
+         FROM restaurants
+         WHERE user_id = f.provider_id
+         ORDER BY is_verified DESC, id DESC
+         LIMIT 1
+       ) restaurant ON true
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY ${orderBy}`,
+      params
     );
 
     return res.json(result.rows.map(normalizeListingImages));
@@ -987,11 +1063,35 @@ exports.getActiveFood = async (req, res) => {
     return res.status(400).json({ error: "Invalid coordinates" });
   }
 
-  const radiusValue = toNumber(radius);
+  const radiusValue = filters.distance ?? toNumber(radius);
 
   if (!isNumberInRange(radiusValue, 0.1, 100)) {
     return res.status(400).json({ error: "Radius must be between 0.1 and 100 km" });
   }
+
+  const distanceExpression = `
+      ST_Distance(
+        f.location,
+        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+      )
+    `;
+  const params = [toNumber(lat), toNumber(lng), radiusValue];
+  const clauses = [
+    "f.status = 'active'",
+    "f.is_deleted = false",
+    "f.pickup_end_time > NOW()",
+    "f.remaining_quantity > 0",
+    `ST_DWithin(
+      f.location,
+      ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
+      $3 * 1000
+    )`,
+  ];
+  appendDiscoveryWhere(clauses, params, filters, { distanceExpression });
+  const orderBy = buildDiscoveryOrder(filters, {
+    distanceExpression,
+    defaultSort: "nearest",
+  });
 
   // 🔥 GEO QUERY
   const result = await pool.query(
@@ -1020,18 +1120,10 @@ exports.getActiveFood = async (req, res) => {
       ORDER BY is_verified DESC, id DESC
       LIMIT 1
     ) restaurant ON true
-    WHERE f.status = 'active'
-    AND f.is_deleted = false
-    AND f.pickup_end_time > NOW()
-    AND f.remaining_quantity > 0
-    AND ST_DWithin(
-      f.location,
-      ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
-      $3 * 1000
-    )
-    ORDER BY distance ASC
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY ${orderBy}
     `,
-    [toNumber(lat), toNumber(lng), radiusValue]
+    params
   );
 
   res.json(result.rows.map(normalizeListingImages));
@@ -1094,11 +1186,43 @@ exports.getNearbyFood = async (req, res) => {
     return res.status(400).json({ error: "Invalid coordinates" });
   }
 
-  const radiusValue = toNumber(radius);
+  let filters;
+
+  try {
+    filters = normalizeDiscoveryFilters(req.query);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
+
+  const radiusValue = filters.distance ?? toNumber(radius);
 
   if (!isNumberInRange(radiusValue, 0.1, 100)) {
     return res.status(400).json({ error: "Radius must be between 0.1 and 100 km" });
   }
+
+  const distanceExpression = `
+      ST_Distance(
+        f.location,
+        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
+      )
+    `;
+  const params = [toNumber(lat), toNumber(lng), radiusValue];
+  const clauses = [
+    "f.status='active'",
+    "f.is_deleted = false",
+    "f.pickup_end_time > NOW()",
+    "f.remaining_quantity > 0",
+    `ST_DWithin(
+        f.location,
+        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
+        $3*1000
+    )`,
+  ];
+  appendDiscoveryWhere(clauses, params, filters, { distanceExpression });
+  const orderBy = buildDiscoveryOrder(filters, {
+    distanceExpression,
+    defaultSort: "nearest",
+  });
 
   const result = await pool.query(
     `
@@ -1108,6 +1232,8 @@ exports.getNearbyFood = async (req, res) => {
            f.remaining_quantity,
            f.quantity_unit,
            f.custom_quantity_unit,
+           f.category,
+           f.dietary_tags,
            f.pickup_end_time,
            f.status,
            f.is_free,
@@ -1131,21 +1257,10 @@ exports.getNearbyFood = async (req, res) => {
       ORDER BY is_verified DESC, id DESC
       LIMIT 1
     ) restaurant ON true
-    WHERE f.status='active'
-    AND f.is_deleted = false
-    AND f.pickup_end_time > NOW()
-    AND f.remaining_quantity > 0
-    AND ST_DWithin(
-        f.location,
-        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
-        $3*1000
-    )
-    ORDER BY ST_Distance(
-        f.location,
-        ST_SetSRID(ST_MakePoint($2,$1),4326)::geography
-    );
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY ${orderBy};
     `,
-    [toNumber(lat), toNumber(lng), radiusValue],
+    params,
   );
 
   res.json(result.rows.map(normalizeListingImages));

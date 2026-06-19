@@ -10,6 +10,7 @@ import type {
   DbId,
   ImpactSummary,
   ImpactSummaryResponse,
+  ListingDiscoveryQuery,
   ApproveVolunteerJoinRequestResponse,
   NGOAssignedVolunteer,
   NGOAssignedVolunteersResponse,
@@ -80,7 +81,7 @@ export async function getMyNGO(): Promise<MyNGOProfile> {
 export async function getNearbyListings(params: {
   lat: string | number;
   lng: string | number;
-}): Promise<NearbyFoodListing[]> {
+} & Partial<ListingDiscoveryQuery>): Promise<NearbyFoodListing[]> {
   const { data } = await api.get<NGONearbyListingsResponse | NearbyFoodListing[]>(
     "/ngos/listings/nearby",
     { params }

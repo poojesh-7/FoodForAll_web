@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import FoodCard from "@/components/FoodCard";
+import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
 import { isNormalUserPaidListing } from "@/lib/food";
+import {
+  defaultListingDiscoveryFilters,
+  getDiscoveryParams,
+  type ListingDiscoveryFilters,
+} from "@/lib/listingDiscovery";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { authService } from "@/services/auth";
 import { foodService } from "@/services/food.service";
@@ -27,23 +33,25 @@ function getProfileCoordinates(user: {
   return { lat: latitude, lng: longitude };
 }
 
-async function getMarketplaceListings() {
+async function getMarketplaceListings(filters: ListingDiscoveryFilters) {
+  const discoveryParams = getDiscoveryParams(filters);
   try {
     const user = await authService.fetchMe();
     const coordinates = getProfileCoordinates(user);
 
     if (coordinates) {
-      return foodService.getActiveFood(coordinates);
+      return foodService.getActiveFood({ ...coordinates, ...discoveryParams });
     }
   } catch {
     // Public marketplace remains available when no signed-in location is present.
   }
 
-  return foodService.getActiveFood();
+  return foodService.getActiveFood(discoveryParams);
 }
 
 export default function FoodMarketplacePage() {
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [filters, setFilters] = useState(defaultListingDiscoveryFilters);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const listingVersion = useRealtimeStore((state) => state.listingVersion);
@@ -52,7 +60,10 @@ export default function FoodMarketplacePage() {
   useEffect(() => {
     let active = true;
 
-    getMarketplaceListings()
+    queueMicrotask(() => {
+      if (active) setLoading(true);
+    });
+    getMarketplaceListings(filters)
       .then((result) => {
         if (active) {
           const realtimeListings = useRealtimeStore.getState().listings;
@@ -78,7 +89,7 @@ export default function FoodMarketplacePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [filters]);
 
   useEffect(() => {
     if (!listingVersion) return;
@@ -116,6 +127,11 @@ export default function FoodMarketplacePage() {
             {error}
           </p>
         )}
+
+        <ListingDiscoveryControls
+          filters={filters}
+          onChange={setFilters}
+        />
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

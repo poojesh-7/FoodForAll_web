@@ -12,6 +12,7 @@ import type {
   GetAllFoodResponse,
   GetFoodByIdResponse,
   GetNearbyFoodResponse,
+  ListingDiscoveryQuery,
   GetMyRestaurantResponse,
   RegisterRestaurantData,
   RegisterRestaurantRequest,
@@ -195,7 +196,7 @@ export async function getActiveFood(params?: {
   lat?: string | number;
   lng?: string | number;
   radius?: string | number;
-}): Promise<Array<FoodListingRow | FoodListingWithDistance>> {
+} & Partial<ListingDiscoveryQuery>): Promise<Array<FoodListingRow | FoodListingWithDistance>> {
   const { data } = await api.get<
     GetActiveFoodResponse | Array<FoodListingRow | FoodListingWithDistance>
   >(
@@ -209,7 +210,7 @@ export async function getNearbyFood(params: {
   lat: string | number;
   lng: string | number;
   radius?: string | number;
-}) {
+} & Partial<ListingDiscoveryQuery>) {
   const { data } = await api.get<GetNearbyFoodResponse | FoodListingRow[]>(
     "/food/nearby",
     { params }

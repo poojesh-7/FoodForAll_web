@@ -9,6 +9,10 @@ import {
   formatQuantityWithUnit,
   normalizeQuantityUnit,
 } from "./quantityUnits";
+import {
+  foodCategoryOptions,
+  dietaryTagOptions,
+} from "./listingDiscovery";
 import { sanitizeTextInput } from "./sanitize";
 
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;
@@ -37,6 +41,8 @@ export type FoodFormValues = {
   quantity: string;
   quantity_unit: string;
   custom_quantity_unit: string;
+  category: string;
+  dietary_tags: string[];
   price: string;
   is_free: boolean;
   pickup_start_time: string;
@@ -70,6 +76,18 @@ export function getFoodValidationError(
     return includePickupStart
       ? "Title, pickup start, and pickup end time are required."
       : "Title and pickup end time are required.";
+  }
+
+  if (!foodCategoryOptions.some((option) => option.value === values.category)) {
+    return "Food category is required.";
+  }
+
+  if (
+    values.dietary_tags.some(
+      (tag) => !dietaryTagOptions.some((option) => option.value === tag)
+    )
+  ) {
+    return "Select valid dietary tags.";
   }
 
   if (includeQuantity && (!Number.isFinite(quantity) || quantity <= 0)) {
@@ -154,6 +172,8 @@ export function sanitizeFoodFormValues(values: FoodFormValues): FoodFormValues {
       values.quantity_unit === "Other"
         ? sanitizeTextInput(values.custom_quantity_unit, { maxLength: 80 })
         : "",
+    category: values.category,
+    dietary_tags: [...new Set(values.dietary_tags)],
   };
 }
 

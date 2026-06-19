@@ -21,6 +21,8 @@ const emptyValues: FoodFormValues = {
   quantity: "",
   quantity_unit: "Piece",
   custom_quantity_unit: "",
+  category: "",
+  dietary_tags: [],
   price: "",
   is_free: true,
   pickup_start_time: "",
@@ -83,6 +85,10 @@ export default function EditProviderListingPage() {
           quantity: String(listing.quantity ?? ""),
           quantity_unit: String(listing.quantity_unit ?? "Piece"),
           custom_quantity_unit: String(listing.custom_quantity_unit ?? ""),
+          category: String(listing.category ?? "other"),
+          dietary_tags: Array.isArray(listing.dietary_tags)
+            ? listing.dietary_tags.map(String)
+            : [],
           price: String(listing.price ?? ""),
           is_free: Boolean(listing.is_free),
           pickup_start_time: toDateTimeLocal(listing.pickup_start_time),
@@ -129,6 +135,8 @@ export default function EditProviderListingPage() {
           sanitizedValues.quantity_unit === "Other"
             ? sanitizedValues.custom_quantity_unit
             : null,
+        category: sanitizedValues.category,
+        dietary_tags: sanitizedValues.dietary_tags,
         price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
         is_free: sanitizedValues.is_free,
         pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),

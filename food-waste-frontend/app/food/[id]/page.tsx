@@ -34,6 +34,11 @@ import {
   getRestaurantDisplayName,
 } from "@/lib/food";
 import {
+  formatDietaryTag,
+  formatFoodCategory,
+  getDietaryTags,
+} from "@/lib/listingDiscovery";
+import {
   getReservationPaymentState,
   savePaymentSession,
 } from "@/lib/payment-flow";
@@ -392,6 +397,7 @@ export default function FoodDetailPage() {
   const foodAmount = pricingPreview?.foodAmount ?? fallbackFoodAmount;
   const depositAmount = pricingPreview?.depositAmount ?? 0;
   const totalAmount = pricingPreview?.totalAmount ?? foodAmount + depositAmount;
+  const dietaryTags = listing ? getDietaryTags(listing) : [];
 
   const setQuantityWithinLimit = (nextValue: number) => {
     const bounded = Math.max(1, Math.min(maxReservableQuantity || 1, nextValue));
@@ -439,6 +445,17 @@ export default function FoodDetailPage() {
                           Pickup soon
                         </span>
                       )}
+                      <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+                        {formatFoodCategory(String(listing.category ?? "other"))}
+                      </span>
+                      {dietaryTags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+                        >
+                          {formatDietaryTag(tag)}
+                        </span>
+                      ))}
                     </div>
                     <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-950">
                       {String(listing.title ?? "Untitled food")}

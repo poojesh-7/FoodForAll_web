@@ -23,6 +23,11 @@ const {
   normalizeListingImages,
 } = require("../shared/services/listingImage.service");
 const {
+  appendDiscoveryWhere,
+  buildDiscoveryOrder,
+  normalizeDiscoveryFilters,
+} = require("../shared/services/listingDiscovery.service");
+const {
   blockingReservationWhere,
   pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
@@ -366,6 +371,13 @@ exports.getNearbyListings = async (req, res) => {
   const radius = ngo.rows[0].service_radius_km;
 
   const { lat, lng } = req.query;
+  let filters;
+
+  try {
+    filters = normalizeDiscoveryFilters(req.query);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   if (!isProvided(lat) || !isProvided(lng)) {
     return res.status(400).json({ error: "Latitude and longitude required" });
@@ -374,6 +386,38 @@ exports.getNearbyListings = async (req, res) => {
   if (!isValidLatitude(lat) || !isValidLongitude(lng)) {
     return res.status(400).json({ error: "Invalid coordinates" });
   }
+
+  const radiusValue = filters.distance ?? toNumber(radius);
+  const distanceExpression = `
+        ST_Distance(
+          f.location,
+          ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
+        )
+      `;
+  const params = [toNumber(lng), toNumber(lat), radiusValue];
+  const clauses = [
+    "f.status='active'",
+    "f.is_deleted = false",
+    "f.is_free = true",
+    "f.pickup_end_time > NOW()",
+    "f.remaining_quantity > 0",
+    `EXISTS (
+      SELECT 1
+      FROM restaurants approved_restaurant
+      WHERE approved_restaurant.user_id=f.provider_id
+      AND approved_restaurant.is_verified=true
+    )`,
+    `ST_DWithin(
+        f.location,
+        ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
+        $3 * 1000
+    )`,
+  ];
+  appendDiscoveryWhere(clauses, params, filters, { distanceExpression });
+  const orderBy = buildDiscoveryOrder(filters, {
+    distanceExpression,
+    defaultSort: "nearest",
+  });
 
   const result = await pool.query(
     `
@@ -384,9 +428,12 @@ exports.getNearbyListings = async (req, res) => {
       f.remaining_quantity,
       f.quantity_unit,
       f.custom_quantity_unit,
+      f.category,
+      f.dietary_tags,
       f.pickup_end_time,
       f.status,
       f.is_free,
+      f.price,
       ${listingImagesSelect("f")},
       ${providerDisplaySelect("restaurant", "u")} AS provider_name,
       u.profile_image_url AS provider_profile_image_url,
@@ -408,26 +455,10 @@ exports.getNearbyListings = async (req, res) => {
       ORDER BY is_verified DESC, id DESC
       LIMIT 1
     ) restaurant ON true
-    WHERE f.status='active'
-    AND f.is_free = true
-    AND f.remaining_quantity > 0
-    AND EXISTS (
-      SELECT 1
-      FROM restaurants approved_restaurant
-      WHERE approved_restaurant.user_id=f.provider_id
-      AND approved_restaurant.is_verified=true
-    )
-    AND ST_DWithin(
-        f.location,
-        ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
-        $3 * 1000
-    )
-    ORDER BY ST_Distance(
-        f.location,
-        ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
-    );
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY ${orderBy};
     `,
-    [toNumber(lng), toNumber(lat), toNumber(radius)],
+    params,
   );
 
   res.json(result.rows.map(normalizeListingImages));

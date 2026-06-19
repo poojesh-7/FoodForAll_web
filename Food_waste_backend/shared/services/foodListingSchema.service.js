@@ -30,6 +30,12 @@ function ensureFoodListingSoftDeleteSchema(client = pool) {
       `);
 
       await client.query(`
+        ALTER TABLE food_listings
+        ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other',
+        ADD COLUMN IF NOT EXISTS dietary_tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+      `);
+
+      await client.query(`
         UPDATE food_listings
         SET quantity_unit = 'Piece'
         WHERE quantity_unit IS NULL OR TRIM(quantity_unit) = ''
@@ -74,8 +80,55 @@ function ensureFoodListingSoftDeleteSchema(client = pool) {
       `);
 
       await client.query(`
+        ALTER TABLE food_listings
+        DROP CONSTRAINT IF EXISTS food_listings_category_valid,
+        ADD CONSTRAINT food_listings_category_valid
+          CHECK (
+            category IN (
+              'meals',
+              'bakery',
+              'beverages',
+              'fruits',
+              'vegetables',
+              'dairy',
+              'snacks',
+              'prepared_food',
+              'grocery',
+              'other'
+            )
+          )
+      `);
+
+      await client.query(`
+        ALTER TABLE food_listings
+        DROP CONSTRAINT IF EXISTS food_listings_dietary_tags_valid,
+        ADD CONSTRAINT food_listings_dietary_tags_valid
+          CHECK (
+            dietary_tags <@ ARRAY[
+              'vegetarian',
+              'vegan',
+              'egg',
+              'non_veg',
+              'halal',
+              'jain',
+              'gluten_free'
+            ]::TEXT[]
+          )
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_food_listings_visibility
         ON food_listings (status, is_deleted, pickup_end_time)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_food_listings_category
+        ON food_listings (category)
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_food_listings_dietary_tags
+        ON food_listings USING GIN (dietary_tags)
       `);
     };
 

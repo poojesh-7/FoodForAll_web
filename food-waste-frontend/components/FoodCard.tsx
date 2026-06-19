@@ -11,6 +11,11 @@ import {
   getRestaurantDisplayName,
   type FoodCardListing,
 } from "@/lib/food";
+import {
+  formatDietaryTag,
+  formatFoodCategory,
+  getDietaryTags,
+} from "@/lib/listingDiscovery";
 import type { ReactNode } from "react";
 
 type FoodCardProps = {
@@ -43,6 +48,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
   const price = getListingPrice(listing);
   const providerName = getRestaurantDisplayName(listing);
   const distance = formatDistanceKm(listing);
+  const dietaryTags = getDietaryTags(listing);
   const content = (
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md">
       <FoodImage source={listing} className="h-44" />
@@ -77,6 +83,22 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
             <span className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">
               <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
               {distance}
+            </span>
+          )}
+          <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
+            {formatFoodCategory(String(listing.category ?? "other"))}
+          </span>
+          {dietaryTags.slice(0, 2).map((tag) => (
+            <span
+              key={tag}
+              className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
+            >
+              {formatDietaryTag(tag)}
+            </span>
+          ))}
+          {dietaryTags.length > 2 && (
+            <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-600">
+              +{dietaryTags.length - 2}
             </span>
           )}
         </div>

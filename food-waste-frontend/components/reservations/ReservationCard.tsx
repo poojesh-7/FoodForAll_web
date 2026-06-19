@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import FoodImage from "@/components/FoodImage";
 import {
   AlertTriangle,
   ArrowRight,
@@ -288,6 +289,7 @@ export default function ReservationCard({
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+      <FoodImage source={reservation} className="h-48" />
       <div className="space-y-4 p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">

@@ -47,6 +47,10 @@ const {
 } = require("../shared/services/lifecycleAccounting.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
+  listingImagesSelect,
+  normalizeListingImages,
+} = require("../shared/services/listingImage.service");
+const {
   ensureReservationPaymentContextSchema,
 } = require("../shared/services/reservationPaymentContext.service");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
@@ -512,6 +516,7 @@ exports.getReservationById = async (req, res) => {
             f.price,
             f.quantity_unit,
             f.custom_quantity_unit,
+            ${listingImagesSelect("f")},
             p.food_amount,
             p.reliability_deposit_amount,
             p.reliability_deposit_status,
@@ -574,7 +579,7 @@ exports.getReservationById = async (req, res) => {
 
   if (!result.rows.length) return res.status(404).json({ error: "Not found" });
 
-  const reservation = result.rows[0];
+  const reservation = normalizeListingImages(result.rows[0]);
   const isRequester = String(reservation.user_id) === String(req.user.id);
   const isProvider = String(reservation.provider_id) === String(req.user.id);
   const isVolunteer =
@@ -613,6 +618,7 @@ exports.getMyReservations = async (req, res) => {
           f.price,
           f.quantity_unit,
           f.custom_quantity_unit,
+          ${listingImagesSelect("f")},
           p.food_amount,
           p.reliability_deposit_amount,
           p.reliability_deposit_status,
@@ -665,7 +671,7 @@ exports.getMyReservations = async (req, res) => {
     [req.user.id],
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 exports.getProviderReservations = async (req, res) => {
@@ -699,6 +705,7 @@ exports.getProviderReservations = async (req, res) => {
              f.price,
              f.quantity_unit,
              f.custom_quantity_unit,
+             ${listingImagesSelect("f")},
              p.food_amount,
              p.reliability_deposit_amount,
              p.reliability_deposit_status,
@@ -731,7 +738,7 @@ exports.getProviderReservations = async (req, res) => {
       [req.user.id],
     );
 
-    res.json(result.rows);
+    res.json(result.rows.map(normalizeListingImages));
   } catch (err) {
     logger.error("Failed to fetch provider reservations", {
       err,

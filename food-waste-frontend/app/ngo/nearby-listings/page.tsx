@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
+import FoodImage from "@/components/FoodImage";
 import {
   formatDistanceKm,
   formatFoodDate,
@@ -462,6 +463,7 @@ export default function NGONearbyListingsPage() {
                 key={id}
                 className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
               >
+                <FoodImage source={listing} className="h-44" />
                 <div className="space-y-4 p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import FoodListingForm from "@/components/FoodListingForm";
 import { foodService } from "@/services/food.service";
@@ -21,14 +21,29 @@ const initialValues: FoodFormValues = {
   is_free: true,
   pickup_start_time: "",
   pickup_end_time: "",
+  images: [],
 };
 
 export default function CreateProviderListingPage() {
   const router = useRouter();
 
   const [values, setValues] = useState<FoodFormValues>(initialValues);
+  const imagesRef = useRef(values.images);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    imagesRef.current = values.images;
+  }, [values.images]);
+
+  useEffect(
+    () => () => {
+      imagesRef.current.forEach((image) => {
+        if (image.file) URL.revokeObjectURL(image.previewUrl);
+      });
+    },
+    []
+  );
 
   const submit = async () => {
     if (loading) return;
@@ -57,6 +72,9 @@ export default function CreateProviderListingPage() {
         is_free: sanitizedValues.is_free,
         pickup_start_time: new Date(sanitizedValues.pickup_start_time).toISOString(),
         pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),
+        images: sanitizedValues.images
+          .map((image) => image.file)
+          .filter((file): file is File => Boolean(file)),
       });
 
       router.push("/provider/listings");
@@ -92,6 +110,7 @@ export default function CreateProviderListingPage() {
           values={values}
           mode="create"
           loading={loading}
+          onImageError={setError}
           onChange={setValues}
           onSubmit={submit}
         />

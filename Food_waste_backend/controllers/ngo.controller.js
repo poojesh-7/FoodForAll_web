@@ -19,6 +19,10 @@ const {
 const { reserveListingStock } = require("../shared/services/inventory.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
+  listingImagesSelect,
+  normalizeListingImages,
+} = require("../shared/services/listingImage.service");
+const {
   blockingReservationWhere,
   pendingPaymentReservationWhere,
 } = require("../shared/services/reservationLock.service");
@@ -383,6 +387,7 @@ exports.getNearbyListings = async (req, res) => {
       f.pickup_end_time,
       f.status,
       f.is_free,
+      ${listingImagesSelect("f")},
       ${providerDisplaySelect("restaurant", "u")} AS provider_name,
       restaurant.restaurant_name,
       (
@@ -424,7 +429,7 @@ exports.getNearbyListings = async (req, res) => {
     [toNumber(lng), toNumber(lat), toNumber(radius)],
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 
@@ -884,6 +889,7 @@ exports.getMyReservations = async (req, res) => {
         f.price,
         f.quantity_unit,
         f.custom_quantity_unit,
+        ${listingImagesSelect("f")},
         p.food_amount,
         p.reliability_deposit_amount,
         p.reliability_deposit_amount AS refundable_deposit,
@@ -947,7 +953,7 @@ exports.getMyReservations = async (req, res) => {
     );
 
     res.json({
-      reservations: result.rows,
+      reservations: result.rows.map(normalizeListingImages),
     });
 
   } catch (err) {
@@ -1293,6 +1299,7 @@ exports.viewIncomingRequests = async (req, res) => {
            f.quantity_unit,
            f.custom_quantity_unit,
            f.pickup_end_time,
+           ${listingImagesSelect("f")},
            nr.requested_at,
            provider.id AS provider_id,
            ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
@@ -1325,7 +1332,7 @@ exports.viewIncomingRequests = async (req, res) => {
     [ngoId],
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 exports.acceptNGORequest = async (req, res) => {

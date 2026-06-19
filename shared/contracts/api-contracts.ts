@@ -204,6 +204,15 @@ export interface FoodListingRow extends DbRow {
   provider_name?: string | null;
   restaurant_name?: string | null;
   reservation_count?: number | string;
+  images?: ListingImageRow[];
+  primary_image_url?: string | null;
+}
+
+export interface ListingImageRow {
+  listing_id?: DbId;
+  image_url: string;
+  public_id: string;
+  display_order: number | string;
 }
 
 export interface FoodListingWithDistance extends FoodListingRow {
@@ -226,6 +235,8 @@ export interface NearbyFoodListing {
   restaurant_name?: string | null;
   distanceKm?: number | string | null;
   ngoServiceRadiusKm?: number | string | null;
+  images?: ListingImageRow[];
+  primary_image_url?: string | null;
 }
 
 export interface FoodNGOOption {
@@ -262,6 +273,8 @@ export interface ReservationRow extends DbRow {
   refundable_deposit?: number | string | null;
   deposit_status?: string | null;
   refund_status?: string | null;
+  images?: ListingImageRow[];
+  primary_image_url?: string | null;
 }
 
 export interface PaymentCreateResult {
@@ -412,6 +425,8 @@ export interface VolunteerTask {
   provider_name?: string | null;
   restaurant_name?: string | null;
   provider_phone?: string | null;
+  images?: ListingImageRow[];
+  primary_image_url?: string | null;
   distance: number | string;
 }
 
@@ -475,6 +490,8 @@ export interface NGOIncomingRequest {
   restriction_level?: number | string | null;
   distanceKm?: number | string | null;
   ngoServiceRadiusKm?: number | string | null;
+  images?: ListingImageRow[];
+  primary_image_url?: string | null;
 }
 
 export interface NGOReservationHistoryRow extends ReservationRow {
@@ -709,6 +726,7 @@ export interface CreateFoodRequest {
   is_free?: boolean | "true" | "false";
   pickup_start_time?: ISODateString;
   pickup_end_time: ISODateString;
+  images?: File[];
 }
 export interface FoodListingData {
   listing: FoodListingRow;
@@ -725,6 +743,10 @@ export interface UpdateFoodRequest {
   is_free?: boolean | "true" | "false" | null;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString | null;
+  images?: File[];
+  image_order?: string[];
+  new_image_client_ids?: string[];
+  removed_image_public_ids?: string[];
 }
 export type UpdateFoodResponse = ApiResponse<FoodListingRow>;
 export interface DeleteFoodData {

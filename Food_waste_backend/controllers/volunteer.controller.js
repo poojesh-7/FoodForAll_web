@@ -16,6 +16,10 @@ const {
 const {
   ensureVolunteerRequestSchema,
 } = require("../shared/services/volunteerRequestSchema.service");
+const {
+  listingImagesSelect,
+  normalizeListingImages,
+} = require("../shared/services/listingImage.service");
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
@@ -129,6 +133,7 @@ exports.getDashboard = async (req, res) => {
           f.pickup_end_time,
           f.quantity_unit,
           f.custom_quantity_unit,
+          ${listingImagesSelect("f")},
           u.id AS provider_id,
           u.name AS provider_name,
           restaurant.restaurant_name,
@@ -178,7 +183,9 @@ exports.getDashboard = async (req, res) => {
 
     res.json({
       active_ngo: activeNGO.rows[0] || null,
-      current_task: currentTask.rows[0] || null,
+      current_task: currentTask.rows[0]
+        ? normalizeListingImages(currentTask.rows[0])
+        : null,
       stats: stats.rows[0] || {
         total_completed: 0,
         avg_completion_time: 0,
@@ -705,6 +712,7 @@ exports.getTasks = async (req, res) => {
         f.pickup_end_time,
         f.quantity_unit,
         f.custom_quantity_unit,
+        ${listingImagesSelect("f")},
         u.id AS provider_id,
         u.name AS provider_name,
         restaurant.restaurant_name,
@@ -740,7 +748,7 @@ exports.getTasks = async (req, res) => {
       `,
       [toNumber(lng), toNumber(lat), ngo.user_id, radiusMeters],
     );
-    res.json(tasks.rows);
+    res.json(tasks.rows.map(normalizeListingImages));
   } catch (err) {
     logger.error("Failed to fetch volunteer tasks", { err, userId: req.user?.id });
     res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : "Failed to fetch tasks" });

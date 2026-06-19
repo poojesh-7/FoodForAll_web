@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Clock3, MapPin, Package, Store } from "lucide-react";
+import FoodImage from "@/components/FoodImage";
 import {
   formatFoodDate,
   formatQuantityWithUnit,
@@ -43,6 +44,7 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
   const distance = formatDistanceKm(listing);
   const content = (
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md">
+      <FoodImage source={listing} className="h-44" />
       <div className="flex flex-1 flex-col gap-4 p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

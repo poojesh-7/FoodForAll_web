@@ -1,6 +1,12 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import type { FoodFormValues } from "@/lib/food";
+import {
+  getListingImageValidationError,
+  maxListingImages,
+} from "@/lib/food";
 import { quantityUnits } from "@/lib/quantityUnits";
 
 type FoodListingFormProps = {
@@ -9,6 +15,7 @@ type FoodListingFormProps = {
   loading: boolean;
   canEditPricing?: boolean;
   pickupStartLabel?: string;
+  onImageError?: (message: string) => void;
   onChange: (values: FoodFormValues) => void;
   onSubmit: () => void;
 };
@@ -19,10 +26,52 @@ export default function FoodListingForm({
   loading,
   canEditPricing = true,
   pickupStartLabel,
+  onImageError,
   onChange,
   onSubmit,
 }: FoodListingFormProps) {
   const update = (patch: Partial<FoodFormValues>) => onChange({ ...values, ...patch });
+  const updateImages = (images: FoodFormValues["images"]) => update({ images });
+
+  const addImages = (files: FileList | null) => {
+    const selected = Array.from(files ?? []);
+    if (!selected.length) return;
+
+    const validationError = getListingImageValidationError(
+      selected,
+      values.images.length
+    );
+    if (validationError) {
+      onImageError?.(validationError);
+      return;
+    }
+
+    updateImages([
+      ...values.images,
+      ...selected.map((file) => ({
+        id:
+          typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${file.name}-${file.lastModified}-${Math.random()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      })),
+    ]);
+  };
+
+  const removeImage = (id: string) => {
+    const image = values.images.find((item) => item.id === id);
+    if (image?.file) URL.revokeObjectURL(image.previewUrl);
+    updateImages(values.images.filter((item) => item.id !== id));
+  };
+
+  const moveImage = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= values.images.length) return;
+    const next = [...values.images];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    updateImages(next);
+  };
 
   return (
     <div className="space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
@@ -40,6 +89,81 @@ export default function FoodListingForm({
         className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
         onChange={(event) => update({ description: event.target.value })}
       />
+
+      <section className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-semibold text-zinc-950">Listing images</p>
+            <p className="text-xs text-zinc-500">
+              Optional JPG, PNG, or WEBP images. Up to {maxListingImages}.
+            </p>
+          </div>
+          <label className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-950">
+            Add image
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="sr-only"
+              onChange={(event) => {
+                addImages(event.target.files);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+
+        {values.images.length === 0 ? (
+          <div className="flex min-h-28 items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white text-sm text-zinc-500">
+            No images added
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {values.images.map((image, index) => (
+              <div
+                key={image.id}
+                className="overflow-hidden rounded-md border border-zinc-200 bg-white"
+              >
+                <img
+                  src={image.previewUrl}
+                  alt={`Listing image ${index + 1}`}
+                  className="h-36 w-full object-cover"
+                />
+                <div className="flex items-center justify-between gap-2 p-2">
+                  <span className="truncate text-xs font-medium text-zinc-600">
+                    {index === 0 ? "Primary image" : `Image ${index + 1}`}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => moveImage(index, -1)}
+                      disabled={index === 0}
+                      className="rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-700 disabled:opacity-40"
+                    >
+                      Left
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveImage(index, 1)}
+                      disabled={index === values.images.length - 1}
+                      className="rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-700 disabled:opacity-40"
+                    >
+                      Right
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeImage(image.id)}
+                      className="rounded border border-red-200 px-2 py-1 text-xs font-medium text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <input

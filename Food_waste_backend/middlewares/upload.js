@@ -10,6 +10,8 @@ const FSSAI_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg", "appli
 const FSSAI_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".pdf"];
 const REPORT_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const REPORT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
+const LISTING_ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const LISTING_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 
 function createImageUpload({
   allowedMimeTypes = DEFAULT_ALLOWED_MIME_TYPES,
@@ -59,8 +61,16 @@ upload.providerReportAttachments = createImageUpload({
   maxFiles: 3,
 });
 
+upload.listingImages = createImageUpload({
+  allowedMimeTypes: LISTING_ALLOWED_MIME_TYPES,
+  allowedExtensions: LISTING_ALLOWED_EXTENSIONS,
+  errorMessage: "Only JPG, JPEG, PNG, or WEBP listing images allowed",
+  maxFiles: 5,
+});
+
 upload.MAX_UPLOAD_BYTES = MAX_UPLOAD_BYTES;
 upload.FSSAI_ALLOWED_MIME_TYPES = FSSAI_ALLOWED_MIME_TYPES;
 upload.REPORT_ALLOWED_MIME_TYPES = REPORT_ALLOWED_MIME_TYPES;
+upload.LISTING_ALLOWED_MIME_TYPES = LISTING_ALLOWED_MIME_TYPES;
 
 module.exports = upload;

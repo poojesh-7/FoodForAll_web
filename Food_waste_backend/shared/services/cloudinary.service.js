@@ -90,7 +90,38 @@ async function uploadBuffer(buffer, options = {}) {
   return result;
 }
 
+async function deleteResource(publicId) {
+  if (!publicId) return null;
+
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const params = {
+    public_id: publicId,
+    timestamp: Math.floor(Date.now() / 1000),
+  };
+  const formData = new FormData();
+
+  Object.entries(params).forEach(([key, value]) => {
+    formData.append(key, String(value));
+  });
+
+  formData.append("api_key", process.env.CLOUDINARY_API_KEY);
+  formData.append("signature", signUploadParams(params));
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`,
+    { method: "POST", body: formData }
+  );
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(result?.error?.message || "Cloudinary delete failed");
+  }
+
+  return result;
+}
+
 module.exports = {
   assertSafeImageBuffer,
+  deleteResource,
   uploadBuffer,
 };

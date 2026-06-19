@@ -18,6 +18,14 @@ const {
   normalizeQuantityUnitFields,
 } = require("../shared/services/quantityUnit.service");
 const {
+  addListingImages,
+  deleteRemovedImages,
+  listingImagesSelect,
+  normalizeListingImages,
+  parseJsonArray,
+  updateListingImages,
+} = require("../shared/services/listingImage.service");
+const {
   sanitizeOptionalText,
 } = require("../shared/utils/sanitize");
 const {
@@ -553,6 +561,12 @@ exports.createFood = async (req, res) => {
     );
 
     const listing = result.rows[0];
+    const images = await addListingImages(client, listing.id, req.files || []);
+    const responseListing = normalizeListingImages({
+      ...listing,
+      images,
+      primary_image_url: images[0]?.image_url || null,
+    });
 
     /*
     ========================
@@ -565,12 +579,15 @@ exports.createFood = async (req, res) => {
     await client.query("COMMIT");
 
     // 🔹 Realtime
-    req.app.get("io").emit("food:new", listing);
-    await publishListingUpdated(listing.id, { action: "created", listing });
+    req.app.get("io").emit("food:new", responseListing);
+    await publishListingUpdated(listing.id, {
+      action: "created",
+      listing: responseListing,
+    });
 
     res.status(201).json({
       message: "Food created successfully",
-      listing,
+      listing: responseListing,
     });
 
   } catch (err) {
@@ -773,10 +790,24 @@ exports.updateFood = async (req, res) => {
         id,
       ],
     );
+    const removedPublicIds = parseJsonArray(req.body.removed_image_public_ids).map(
+      (item) => String(item)
+    );
+    const images = await updateListingImages(
+      client,
+      id,
+      req.body,
+      req.files || []
+    );
+    const responseListing = normalizeListingImages({
+      ...result.rows[0],
+      images,
+      primary_image_url: images[0]?.image_url || null,
+    });
 
     const expiryTimingChanged =
       new Date(current.pickup_end_time).getTime() !==
-      new Date(result.rows[0].pickup_end_time).getTime();
+      new Date(responseListing.pickup_end_time).getTime();
 
     if (expiryTimingChanged) {
       await rescheduleExpiryJobs(id, endTime);
@@ -784,12 +815,14 @@ exports.updateFood = async (req, res) => {
 
     await client.query("COMMIT");
 
+    await deleteRemovedImages(removedPublicIds);
+
     await publishListingUpdated(id, {
       action: "updated",
-      listing: result.rows[0],
+      listing: responseListing,
     });
 
-    res.json(result.rows[0]);
+    res.json(responseListing);
   } catch (err) {
     await client.query("ROLLBACK");
     logger.error("Food update failed", { err, listingId: id, userId: req.user?.id });
@@ -900,13 +933,15 @@ exports.getAllFood = async (req, res) => {
   const offset = (pageValue - 1) * limitValue;
 
   const result = await pool.query(
-    `SELECT * FROM food_listings
-   ORDER BY created_at DESC
-   LIMIT $1 OFFSET $2`,
+    `SELECT f.*,
+            ${listingImagesSelect("f")}
+     FROM food_listings f
+     ORDER BY f.created_at DESC
+     LIMIT $1 OFFSET $2`,
     [limitValue, offset],
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 // GET ACTIVE FOOD
@@ -921,6 +956,7 @@ exports.getActiveFood = async (req, res) => {
   if (!hasLat && !hasLng) {
     const result = await pool.query(
       `SELECT f.*,
+              ${listingImagesSelect("f")},
               u.name AS provider_name,
               restaurant.restaurant_name
        FROM food_listings f
@@ -939,7 +975,7 @@ exports.getActiveFood = async (req, res) => {
        ORDER BY f.pickup_end_time ASC`
     );
 
-    return res.json(result.rows);
+    return res.json(result.rows.map(normalizeListingImages));
   }
 
   if (hasLat !== hasLng) {
@@ -960,6 +996,7 @@ exports.getActiveFood = async (req, res) => {
   const result = await pool.query(
     `
     SELECT f.*,
+    ${listingImagesSelect("f")},
     u.name AS provider_name,
     restaurant.restaurant_name,
     ST_Distance(
@@ -995,7 +1032,7 @@ exports.getActiveFood = async (req, res) => {
     [toNumber(lat), toNumber(lng), radiusValue]
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 // GET FOOD BY ID
@@ -1011,6 +1048,7 @@ exports.getFoodById = async (req, res) => {
   const result = await pool.query(
     `
     SELECT f.*,
+           ${listingImagesSelect("f")},
            u.name AS provider_name,
            restaurant.restaurant_name,
            (
@@ -1036,7 +1074,7 @@ exports.getFoodById = async (req, res) => {
   if (result.rows.length === 0)
     return res.status(404).json({ error: "Not found" });
 
-  res.json(result.rows[0]);
+  res.json(normalizeListingImages(result.rows[0]));
 };
 
 // GET NEARBY FOOD (basic radius search)
@@ -1071,6 +1109,7 @@ exports.getNearbyFood = async (req, res) => {
            f.status,
            f.is_free,
            f.price,
+           ${listingImagesSelect("f")},
            u.name AS provider_name,
            restaurant.restaurant_name,
            (
@@ -1105,7 +1144,7 @@ exports.getNearbyFood = async (req, res) => {
     [toNumber(lat), toNumber(lng), radiusValue],
   );
 
-  res.json(result.rows);
+  res.json(result.rows.map(normalizeListingImages));
 };
 
 // 🔍 View NGOs

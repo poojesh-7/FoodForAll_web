@@ -24,8 +24,24 @@ router.post(
   foodCtrl.registerRestaurant,
 );
 router.get("/me", authMiddleware, requireVerifiedProvider, foodCtrl.getMyRestaurant);
-router.post("/", authMiddleware, listingCreateLimiter, requireVerifiedProvider, providerRestrictionMiddleware, foodCtrl.createFood);
-router.put("/:id", authMiddleware, listingCreateLimiter, requireVerifiedProvider, providerRestrictionMiddleware, foodCtrl.updateFood);
+router.post(
+  "/",
+  authMiddleware,
+  listingCreateLimiter,
+  requireVerifiedProvider,
+  providerRestrictionMiddleware,
+  upload.listingImages.array("images", 5),
+  foodCtrl.createFood,
+);
+router.put(
+  "/:id",
+  authMiddleware,
+  listingCreateLimiter,
+  requireVerifiedProvider,
+  providerRestrictionMiddleware,
+  upload.listingImages.array("images", 5),
+  foodCtrl.updateFood,
+);
 router.delete("/:id", authMiddleware, requireVerifiedProvider, foodCtrl.deleteFood);
 router.get("/ngos", authMiddleware, requireVerifiedProvider, foodCtrl.viewNGOs);
 router.post(

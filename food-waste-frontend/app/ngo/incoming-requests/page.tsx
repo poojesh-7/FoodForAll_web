@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
+import FoodImage from "@/components/FoodImage";
 import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
@@ -236,8 +237,10 @@ export default function NGOIncomingRequestsPage() {
             return (
               <article
                 key={String(requestId)}
-                className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
+                className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
               >
+                <FoodImage source={request} className="h-44" />
+                <div className="space-y-4 p-5">
                 <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <h2 className="truncate text-base font-semibold text-zinc-950">
@@ -335,6 +338,7 @@ export default function NGOIncomingRequestsPage() {
                   >
                     Reject
                   </button>
+                </div>
                 </div>
               </article>
             );

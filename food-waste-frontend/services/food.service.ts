@@ -34,6 +34,12 @@ type LegacyCreateFoodResponse = {
   listing: FoodListingRow;
 };
 type MessageResponse = { message?: string; listing?: FoodListingRow };
+type ListingMediaPayload = {
+  images?: File[];
+  image_order?: string[];
+  new_image_client_ids?: string[];
+  removed_image_public_ids?: string[];
+};
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
   if (body && typeof body === "object" && "data" in body) {
@@ -82,8 +88,23 @@ export async function getMyRestaurant(): Promise<RestaurantProfile> {
 }
 
 export async function createFood(
-  payload: CreateFoodRequest
+  payload: CreateFoodRequest & ListingMediaPayload
 ): Promise<FoodListingRow> {
+  const images = payload.images ?? [];
+  if (images.length > 0) {
+    const formData = foodFormData(payload);
+    const { data } = await api.post<CreateFoodResponse | LegacyCreateFoodResponse>(
+      "/food",
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+    return getEnvelopeData<FoodListingData>(data).listing;
+  }
+
   const { data } = await api.post<CreateFoodResponse | LegacyCreateFoodResponse>(
     "/food",
     payload
@@ -93,13 +114,68 @@ export async function createFood(
 
 export async function updateFood(
   id: string | number,
-  payload: UpdateFoodRequest
+  payload: UpdateFoodRequest & ListingMediaPayload
 ): Promise<FoodListingRow> {
+  const usesMultipart =
+    (payload.images?.length ?? 0) > 0 ||
+    (payload.image_order?.length ?? 0) > 0 ||
+    (payload.new_image_client_ids?.length ?? 0) > 0 ||
+    (payload.removed_image_public_ids?.length ?? 0) > 0;
+
+  if (usesMultipart) {
+    const formData = foodFormData(payload);
+    const { data } = await api.put<UpdateFoodResponse | FoodListingRow>(
+      `/food/${id}`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+    return getEnvelopeData<FoodListingRow>(data);
+  }
+
   const { data } = await api.put<UpdateFoodResponse | FoodListingRow>(
     `/food/${id}`,
     payload
   );
   return getEnvelopeData<FoodListingRow>(data);
+}
+
+function foodFormData(payload: ListingMediaPayload & object) {
+  const formData = new FormData();
+  const mediaKeys = new Set([
+    "images",
+    "image_order",
+    "new_image_client_ids",
+    "removed_image_public_ids",
+  ]);
+
+  Object.entries(payload).forEach(([key, value]) => {
+    if (mediaKeys.has(key) || value === undefined || value === null) return;
+    formData.append(key, String(value));
+  });
+
+  payload.images?.forEach((image) => formData.append("images", image));
+
+  if (payload.image_order) {
+    formData.append("image_order", JSON.stringify(payload.image_order));
+  }
+  if (payload.new_image_client_ids) {
+    formData.append(
+      "new_image_client_ids",
+      JSON.stringify(payload.new_image_client_ids)
+    );
+  }
+  if (payload.removed_image_public_ids) {
+    formData.append(
+      "removed_image_public_ids",
+      JSON.stringify(payload.removed_image_public_ids)
+    );
+  }
+
+  return formData;
 }
 
 export async function deleteFood(id: string | number): Promise<FoodListingRow | null> {

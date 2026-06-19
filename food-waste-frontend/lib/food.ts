@@ -1,4 +1,8 @@
-import type { FoodListingRow, NearbyFoodListing } from "@shared/contracts/api-contracts";
+import type {
+  FoodListingRow,
+  ListingImageRow,
+  NearbyFoodListing,
+} from "@shared/contracts/api-contracts";
 import { formatPlatformDateTime } from "./dateTime";
 import {
   fallbackQuantityUnit,
@@ -10,6 +14,22 @@ import { sanitizeTextInput } from "./sanitize";
 export type FoodCardListing = FoodListingRow | NearbyFoodListing;
 
 const minimumPickupWindowMs = 30 * 60 * 1000;
+export const maxListingImages = 5;
+export const maxListingImageBytes = 5 * 1024 * 1024;
+export const listingImageMimeTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+export type FoodFormImage = {
+  id: string;
+  previewUrl: string;
+  file?: File;
+  image_url?: string;
+  public_id?: string;
+  display_order?: number | string;
+};
 
 export type FoodFormValues = {
   title: string;
@@ -21,6 +41,7 @@ export type FoodFormValues = {
   is_free: boolean;
   pickup_start_time: string;
   pickup_end_time: string;
+  images: FoodFormImage[];
 };
 
 type FoodValidationOptions = {
@@ -97,6 +118,24 @@ export function getFoodValidationError(
 
   if (!values.is_free && (!Number.isFinite(price) || price <= 0)) {
     return "Paid food must have a valid price.";
+  }
+
+  return null;
+}
+
+export function getListingImageValidationError(files: File[], currentCount = 0) {
+  if (currentCount + files.length > maxListingImages) {
+    return `Listings can include up to ${maxListingImages} images.`;
+  }
+
+  for (const file of files) {
+    if (!listingImageMimeTypes.has(file.type)) {
+      return "Only JPG, PNG, or WEBP images are allowed.";
+    }
+
+    if (file.size > maxListingImageBytes) {
+      return "Each image must be 5 MB or smaller.";
+    }
   }
 
   return null;
@@ -196,6 +235,25 @@ export function getListingPrice(listing: FoodCardListing) {
 }
 
 export { formatQuantityWithUnit };
+
+export function getPrimaryImageUrl(source?: {
+  primary_image_url?: string | null;
+  images?: ListingImageRow[] | null;
+}) {
+  if (!source) return null;
+  if (source.primary_image_url) return source.primary_image_url;
+  const images = Array.isArray(source.images) ? source.images : [];
+  const firstImage = [...images].sort(
+    (left, right) => Number(left.display_order) - Number(right.display_order)
+  )[0];
+  return firstImage?.image_url || null;
+}
+
+export function sortListingImages(images?: ListingImageRow[] | null) {
+  return [...(images ?? [])].sort(
+    (left, right) => Number(left.display_order) - Number(right.display_order)
+  );
+}
 
 function isUsableRestaurantName(value: unknown) {
   const text = String(value ?? "").trim();

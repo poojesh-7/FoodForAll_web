@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, ShieldAlert } from "lucide-react";
 import toast from "react-hot-toast";
+import FoodImage from "@/components/FoodImage";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatPlatformDate } from "@/lib/dateTime";
 import {
@@ -554,6 +555,7 @@ export default function ProviderListingsPage() {
                     key={String(listing.id)}
                     className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
                   >
+                    <FoodImage source={listing} className="h-44" />
                     <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs font-medium uppercase text-zinc-500">

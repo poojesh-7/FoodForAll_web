@@ -110,14 +110,33 @@ async function insertImageRows(client, listingId, images, offset = 1000) {
 }
 
 async function applyDisplayOrder(client, listingId, images) {
-  await client.query(
+  if (!images.length) return;
+
+  const maxOrderResult = await client.query(
     `
-    UPDATE listing_images
-    SET display_order = display_order + 1000
+    SELECT COALESCE(MAX(display_order), 0)::int AS max_display_order
+    FROM listing_images
     WHERE listing_id=$1
     `,
     [listingId]
   );
+  const tempBase =
+    Number(maxOrderResult.rows[0]?.max_display_order || 0) +
+    images.length +
+    MAX_LISTING_IMAGES +
+    1;
+
+  for (let index = 0; index < images.length; index += 1) {
+    await client.query(
+      `
+      UPDATE listing_images
+      SET display_order=$1
+      WHERE listing_id=$2
+      AND public_id=$3
+      `,
+      [tempBase + index, listingId, images[index].public_id]
+    );
+  }
 
   for (let index = 0; index < images.length; index += 1) {
     await client.query(
@@ -195,6 +214,13 @@ async function updateListingImages(client, listingId, body = {}, files = []) {
     parseJsonArray(body.removed_image_public_ids).map((item) => String(item))
   );
   const remaining = existing.filter((image) => !removedPublicIds.has(image.public_id));
+  const uploadOffset =
+    Math.max(
+      0,
+      ...existing.map((image) => Number(image.display_order)).filter(Number.isFinite)
+    ) +
+    MAX_LISTING_IMAGES +
+    1;
 
   if (remaining.length + files.length > MAX_LISTING_IMAGES) {
     const error = new Error(`Listings can include up to ${MAX_LISTING_IMAGES} images`);
@@ -224,7 +250,7 @@ async function updateListingImages(client, listingId, body = {}, files = []) {
       });
     }
 
-    await insertImageRows(client, listingId, uploaded, 1000);
+    await insertImageRows(client, listingId, uploaded, uploadOffset);
 
     const imageOrder = parseJsonArray(body.image_order);
     const ordered = orderedImages([...remaining, ...uploaded], imageOrder);

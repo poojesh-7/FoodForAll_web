@@ -5,6 +5,7 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import FoodImage from "@/components/FoodImage";
+import IdentityChip from "@/components/identity/IdentityChip";
 import {
   formatDistanceKm,
   formatFoodDate,
@@ -512,9 +513,15 @@ export default function NGONearbyListingsPage() {
                       <p className="text-xs font-medium uppercase text-zinc-500">
                         Restaurant
                       </p>
-                      <p className="mt-1 text-zinc-950">
-                        {getRestaurantDisplayName(listing)}
-                      </p>
+                      <div className="mt-2">
+                        <IdentityChip
+                          src={listing.provider_profile_image_url}
+                          name={getRestaurantDisplayName(listing)}
+                          role="provider"
+                          label="Provider avatar"
+                          caption="Provider"
+                        />
+                      </div>
                     </div>
                   </div>
 

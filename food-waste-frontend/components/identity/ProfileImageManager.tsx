@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import IdentityAvatar from "@/components/identity/IdentityAvatar";
 import { userService } from "@/services/user";
 import type {
@@ -39,9 +40,15 @@ export default function ProfileImageManager({
   role,
   onChange,
 }: ProfileImageManagerProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const refreshIdentitySurfaces = () => {
+    router.refresh();
+    window.location.reload();
+  };
 
   const uploadImage = async (file: File) => {
     const validationError = getValidationError(file);
@@ -56,6 +63,7 @@ export default function ProfileImageManager({
       setError("");
       const updated = await userService.uploadProfileImage(userId, file);
       onChange(updated);
+      refreshIdentitySurfaces();
     } catch (err) {
       setError(userService.getErrorMessage(err));
     } finally {
@@ -70,6 +78,7 @@ export default function ProfileImageManager({
       setError("");
       const updated = await userService.removeProfileImage(userId);
       onChange(updated);
+      refreshIdentitySurfaces();
     } catch (err) {
       setError(userService.getErrorMessage(err));
     } finally {

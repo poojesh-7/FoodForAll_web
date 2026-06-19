@@ -49,7 +49,11 @@ export async function uploadProfileImage(
 
   const { data } = await api.put<
     ApiBody<UpdateUserResponse, UserUpdateResult>
-  >(`/users/${id}/profile-image`, formData);
+  >(`/users/${id}/profile-image`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
 
   return getEnvelopeData<UserUpdateResult>(data);
 }

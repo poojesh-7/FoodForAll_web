@@ -23,6 +23,10 @@ const {
   normalizeListingImages,
 } = require("../shared/services/listingImage.service");
 const {
+  providerReviewAggregateJoin,
+  providerReviewSummarySelect,
+} = require("../shared/services/reviewSummary.service");
+const {
   appendDiscoveryWhere,
   buildDiscoveryOrder,
   normalizeDiscoveryFilters,
@@ -435,6 +439,7 @@ exports.getNearbyListings = async (req, res) => {
       f.is_free,
       f.price,
       ${listingImagesSelect("f")},
+      ${providerReviewSummarySelect()},
       ${providerDisplaySelect("restaurant", "u")} AS provider_name,
       u.profile_image_url AS provider_profile_image_url,
       restaurant.restaurant_name,
@@ -447,6 +452,7 @@ exports.getNearbyListings = async (req, res) => {
       $3::double precision AS "ngoServiceRadiusKm"
     FROM food_listings f
     JOIN users u ON u.id=f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name,
              NULL::text AS business_name
@@ -922,6 +928,7 @@ exports.getMyReservations = async (req, res) => {
         f.quantity_unit,
         f.custom_quantity_unit,
         ${listingImagesSelect("f")},
+        ${providerReviewSummarySelect()},
         p.food_amount,
         p.reliability_deposit_amount,
         p.reliability_deposit_amount AS refundable_deposit,
@@ -965,6 +972,7 @@ exports.getMyReservations = async (req, res) => {
         ON f.id = r.listing_id
       JOIN users u
         ON u.id = f.provider_id
+      ${providerReviewAggregateJoin("f")}
       LEFT JOIN LATERAL (
         SELECT restaurant_name,
                NULL::text AS business_name
@@ -1335,6 +1343,7 @@ exports.viewIncomingRequests = async (req, res) => {
            f.custom_quantity_unit,
            f.pickup_end_time,
            ${listingImagesSelect("f")},
+           ${providerReviewSummarySelect()},
            nr.requested_at,
            provider.id AS provider_id,
            ${providerDisplaySelect("restaurant", "provider")} AS provider_name,
@@ -1353,6 +1362,7 @@ exports.viewIncomingRequests = async (req, res) => {
     JOIN ngos n ON n.id=nr.ngo_id
     JOIN food_listings f ON f.id=nr.listing_id
     JOIN users provider ON provider.id=f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name,
              NULL::text AS business_name

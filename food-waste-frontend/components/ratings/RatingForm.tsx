@@ -10,6 +10,9 @@ type RatingFormProps = {
   title?: string;
   description?: string;
   framed?: boolean;
+  initialRating?: number | string | null;
+  initialReview?: string | null;
+  submitLabel?: string;
 };
 
 export default function RatingForm({
@@ -18,9 +21,15 @@ export default function RatingForm({
   title = "Rate Pickup",
   description = "Share feedback for this completed reservation.",
   framed = true,
+  initialRating,
+  initialReview,
+  submitLabel = "Submit Review",
 }: RatingFormProps) {
-  const [rating, setRating] = useState<number | null>(null);
-  const [review, setReview] = useState("");
+  const [rating, setRating] = useState<number | null>(() => {
+    const value = Number(initialRating);
+    return Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
+  });
+  const [review, setReview] = useState(String(initialReview ?? ""));
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -39,8 +48,10 @@ export default function RatingForm({
         rating,
         sanitizeTextInput(review, { maxLength: 500, preserveNewlines: true })
       );
-      setReview("");
-      setRating(null);
+      if (initialRating === undefined && initialReview === undefined) {
+        setReview("");
+        setRating(null);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -96,7 +107,7 @@ export default function RatingForm({
         disabled={disabled || submitting || rating === null}
         className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting ? "Submitting..." : "Submit Review"}
+        {submitting ? "Submitting..." : submitLabel}
       </button>
     </form>
   );

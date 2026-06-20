@@ -224,7 +224,20 @@ export default function ReservationsPage() {
   const renderReservationActions = (reservation: ReservationHistoryRow) => {
     const paymentState = getReservationPaymentState(reservation);
 
-    if (paymentState !== "payment_pending") return null;
+    if (paymentState !== "payment_pending") {
+      if (getReservationBucket(reservation) !== "completed" || !reservation.id) {
+        return null;
+      }
+
+      return (
+        <Link
+          href={`/reservations/${String(reservation.id)}`}
+          className="inline-flex min-h-10 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-950"
+        >
+          {reservation.review_id ? "Edit Review" : "Leave Review"}
+        </Link>
+      );
+    }
 
     const session =
       getPaymentSessionFromReservation(reservation) ??

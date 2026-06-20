@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Clock3, MapPin, Package } from "lucide-react";
 import FoodImage from "@/components/FoodImage";
 import IdentityAvatar from "@/components/identity/IdentityAvatar";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import {
   formatFoodDate,
   formatQuantityWithUnit,
@@ -138,6 +139,9 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
           <div className="min-w-0 py-2 pr-3">
             <p className="truncate font-medium text-zinc-950">{providerName}</p>
             <p className="text-xs text-zinc-500">Restaurant</p>
+            <div className="mt-1">
+              <ReviewSummary summary={listing} />
+            </div>
           </div>
         </div>
 

@@ -28,6 +28,8 @@ const LISTING_SORTS = [
   "highest_quantity",
   "lowest_price",
   "highest_price",
+  "highest_rated",
+  "most_reviewed",
 ];
 
 function withStatus(message, statusCode = 400) {
@@ -181,6 +183,12 @@ function buildDiscoveryOrder(filters, { distanceExpression, defaultSort = "picku
   if (sort === "highest_quantity") return "f.remaining_quantity DESC, f.pickup_end_time ASC";
   if (sort === "lowest_price") return "f.price ASC, f.pickup_end_time ASC";
   if (sort === "highest_price") return "f.price DESC, f.pickup_end_time ASC";
+  if (sort === "highest_rated") {
+    return "provider_reviews.average_rating DESC NULLS LAST, provider_reviews.total_reviews DESC NULLS LAST, f.pickup_end_time ASC";
+  }
+  if (sort === "most_reviewed") {
+    return "provider_reviews.total_reviews DESC NULLS LAST, provider_reviews.average_rating DESC NULLS LAST, f.pickup_end_time ASC";
+  }
 
   return "f.pickup_end_time ASC, f.created_at DESC";
 }

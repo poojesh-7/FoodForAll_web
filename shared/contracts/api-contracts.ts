@@ -45,7 +45,9 @@ export type ListingSort =
   | "pickup_ending_soon"
   | "highest_quantity"
   | "lowest_price"
-  | "highest_price";
+  | "highest_price"
+  | "highest_rated"
+  | "most_reviewed";
 
 export interface ApiResponse<TData> {
   success: boolean;
@@ -254,6 +256,10 @@ export interface FoodListingRow extends DbRow {
   provider_name?: string | null;
   provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
+  averageRating?: number | string;
+  totalReviews?: number | string;
+  average_rating?: number | string;
+  total_reviews?: number | string;
   reservation_count?: number | string;
   images?: ListingImageRow[];
   primary_image_url?: string | null;
@@ -287,6 +293,10 @@ export interface NearbyFoodListing {
   provider_name?: string | null;
   provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
+  averageRating?: number | string;
+  totalReviews?: number | string;
+  average_rating?: number | string;
+  total_reviews?: number | string;
   distanceKm?: number | string | null;
   ngoServiceRadiusKm?: number | string | null;
   images?: ListingImageRow[];
@@ -327,6 +337,10 @@ export interface ReservationRow extends DbRow {
   refundable_deposit?: number | string | null;
   deposit_status?: string | null;
   refund_status?: string | null;
+  averageRating?: number | string;
+  totalReviews?: number | string;
+  average_rating?: number | string;
+  total_reviews?: number | string;
   images?: ListingImageRow[];
   primary_image_url?: string | null;
 }
@@ -487,6 +501,10 @@ export interface VolunteerTask {
   provider_name?: string | null;
   provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
+  averageRating?: number | string;
+  totalReviews?: number | string;
+  average_rating?: number | string;
+  total_reviews?: number | string;
   provider_phone?: string | null;
   images?: ListingImageRow[];
   primary_image_url?: string | null;
@@ -551,6 +569,10 @@ export interface NGOIncomingRequest {
   restaurant_name?: string | null;
   provider_id?: DbId;
   provider_phone?: string | null;
+  averageRating?: number | string;
+  totalReviews?: number | string;
+  average_rating?: number | string;
+  total_reviews?: number | string;
   pickup_end_time?: ISODateString | null;
   requested_at?: ISODateString | null;
   trust_score?: number | string | null;
@@ -620,8 +642,13 @@ export interface ListingRating {
 }
 
 export interface ProviderRatingSummary {
+  averageRating?: number | string;
+  totalReviews?: number | string;
   average_rating: number | string;
   total_reviews: number | string;
+  foodQualityAverage?: number | string;
+  pickupExperienceAverage?: number | string;
+  packagingAverage?: number | string;
 }
 
 export interface ImpactSummary {
@@ -1109,7 +1136,12 @@ export interface CreateRatingRequest {
   rating: number | string;
   review?: string | null;
 }
+export interface UpdateRatingRequest {
+  rating: number | string;
+  review?: string | null;
+}
 export type CreateRatingResponse = ApiResponse<RatingRow>;
+export type UpdateRatingResponse = ApiResponse<RatingRow>;
 export type ListingRatingsResponse = ApiResponse<ListingRating[]>;
 export type ProviderRatingsResponse = ApiResponse<ProviderRatingSummary>;
 
@@ -3338,6 +3370,15 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "NoRequestQuery", body: "CreateRatingRequest" },
       response: "CreateRatingResponse",
       statusCodes: [201, 400, 401, 403, 409],
+    },
+    {
+      method: "PUT",
+      path: "/api/v1/ratings/:id",
+      auth: "protected",
+      middleware: ["authMiddleware"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateRatingRequest" },
+      response: "UpdateRatingResponse",
+      statusCodes: [200, 400, 401, 403, 404],
     },
     {
       method: "GET",

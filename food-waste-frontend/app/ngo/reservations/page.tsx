@@ -190,11 +190,16 @@ export default function NGOReservationsPage() {
     try {
       setError("");
       setSuccess("");
-      const created = await ratingService.createRating({
-        reservation_id: reservation.id,
-        rating,
-        review: review || null,
-      });
+      const created = reservation.review_id
+        ? await ratingService.updateRating(reservation.review_id, {
+            rating,
+            review: review || null,
+          })
+        : await ratingService.createRating({
+            reservation_id: reservation.id,
+            rating,
+            review: review || null,
+          });
 
       setReservations((current) =>
         current.map((item) =>
@@ -208,7 +213,11 @@ export default function NGOReservationsPage() {
             : item
         )
       );
-      setSuccess("Review submitted successfully.");
+      setSuccess(
+        reservation.review_id
+          ? "Review updated successfully."
+          : "Review submitted successfully."
+      );
     } catch (err) {
       setError(ratingService.getErrorMessage(err));
     }
@@ -369,20 +378,19 @@ export default function NGOReservationsPage() {
               : "Cancel Reservation"}
           </button>
         )}
-        {!paymentPending && reservation.review_id ? (
-          <p className="text-sm font-medium text-emerald-700">
-            You have already reviewed this reservation.
-          </p>
-        ) : !paymentPending && canReviewReservation(reservation) ? (
+        {!paymentPending && (reservation.review_id || canReviewReservation(reservation)) ? (
           <details className="rounded-md border border-zinc-200 bg-white p-3">
             <summary className="cursor-pointer text-sm font-medium text-zinc-950">
-              Review provider
+              {reservation.review_id ? "Edit Review" : "Leave Review"}
             </summary>
             <div className="mt-3">
               <RatingForm
                 framed={false}
-                title="Provider Rating"
+                title={reservation.review_id ? "Edit Review" : "Provider Rating"}
                 description="Rate the provider after successful delivery."
+                initialRating={reservation.review_rating}
+                initialReview={reservation.review_text}
+                submitLabel={reservation.review_id ? "Update Review" : "Submit Review"}
                 onSubmit={(rating, review) =>
                   submitReview(reservation, rating, review)
                 }

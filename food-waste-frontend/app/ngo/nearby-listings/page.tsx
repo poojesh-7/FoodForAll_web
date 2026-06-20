@@ -7,6 +7,7 @@ import PricingBreakdown from "@/components/payments/PricingBreakdown";
 import FoodImage from "@/components/FoodImage";
 import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
 import IdentityChip from "@/components/identity/IdentityChip";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import {
   formatDistanceKm,
   formatFoodDate,
@@ -559,6 +560,9 @@ export default function NGONearbyListingsPage() {
                           label="Provider avatar"
                           caption="Provider"
                         />
+                      </div>
+                      <div className="mt-2">
+                        <ReviewSummary summary={listing} />
                       </div>
                     </div>
                   </div>

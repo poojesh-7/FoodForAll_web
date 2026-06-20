@@ -20,6 +20,10 @@ const {
   listingImagesSelect,
   normalizeListingImages,
 } = require("../shared/services/listingImage.service");
+const {
+  providerReviewAggregateJoin,
+  providerReviewSummarySelect,
+} = require("../shared/services/reviewSummary.service");
 const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
@@ -138,6 +142,7 @@ exports.getDashboard = async (req, res) => {
           f.quantity_unit,
           f.custom_quantity_unit,
           ${listingImagesSelect("f")},
+          ${providerReviewSummarySelect()},
           u.id AS provider_id,
           u.name AS provider_name,
           u.profile_image_url AS provider_profile_image_url,
@@ -150,6 +155,7 @@ exports.getDashboard = async (req, res) => {
         FROM reservations r
         JOIN food_listings f ON f.id=r.listing_id
         JOIN users u ON u.id=f.provider_id
+        ${providerReviewAggregateJoin("f")}
         LEFT JOIN LATERAL (
           SELECT restaurant_name
           FROM restaurants
@@ -722,6 +728,7 @@ exports.getTasks = async (req, res) => {
         f.quantity_unit,
         f.custom_quantity_unit,
         ${listingImagesSelect("f")},
+        ${providerReviewSummarySelect()},
         u.id AS provider_id,
         u.name AS provider_name,
         u.profile_image_url AS provider_profile_image_url,
@@ -738,6 +745,7 @@ exports.getTasks = async (req, res) => {
       FROM reservations r
       JOIN food_listings f ON r.listing_id = f.id
       JOIN users u ON u.id = f.provider_id
+      ${providerReviewAggregateJoin("f")}
       LEFT JOIN LATERAL (
         SELECT restaurant_name
         FROM restaurants

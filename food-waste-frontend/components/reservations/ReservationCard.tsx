@@ -3,6 +3,7 @@
 import Link from "next/link";
 import FoodImage from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import {
   AlertTriangle,
   ArrowRight,
@@ -387,25 +388,28 @@ export default function ReservationCard({
         </div>
 
         <div className="grid gap-3 text-sm md:grid-cols-2">
-          <IdentityChip
-            src={
-              providerView && "requester_profile_image_url" in reservation
-                ? String(reservation.requester_profile_image_url ?? "")
-                : reservation.provider_profile_image_url
-            }
-            name={
-              providerView && "requester_name" in reservation
-                ? String(displayValue(reservation.requester_name))
-                : restaurantName
-            }
-            role={providerView ? (reservation.pickup_type === "ngo" ? "ngo" : "user") : "provider"}
-            label={providerView ? "User avatar" : "Provider avatar"}
-            caption={
-              providerView && "requester_phone" in reservation
-                ? `Requester - ${displayValue(reservation.requester_phone)}`
-                : `Provider - ${displayValue(reservation.provider_phone)}`
-            }
-          />
+          <div className="space-y-2">
+            <IdentityChip
+              src={
+                providerView && "requester_profile_image_url" in reservation
+                  ? String(reservation.requester_profile_image_url ?? "")
+                  : reservation.provider_profile_image_url
+              }
+              name={
+                providerView && "requester_name" in reservation
+                  ? String(displayValue(reservation.requester_name))
+                  : restaurantName
+              }
+              role={providerView ? (reservation.pickup_type === "ngo" ? "ngo" : "user") : "provider"}
+              label={providerView ? "User avatar" : "Provider avatar"}
+              caption={
+                providerView && "requester_phone" in reservation
+                  ? `Requester - ${displayValue(reservation.requester_phone)}`
+                  : `Provider - ${displayValue(reservation.provider_phone)}`
+              }
+            />
+            {!providerView && <ReviewSummary summary={reservation} />}
+          </div>
 
           {showVolunteer && (
             <IdentityChip

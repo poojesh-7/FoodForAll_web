@@ -5,6 +5,7 @@ import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import FoodImage from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import { formatPlatformDateTime, formatPlatformRelativeTime } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
@@ -288,6 +289,9 @@ export default function NGOIncomingRequestsPage() {
                         {request.provider_phone}
                       </p>
                     )}
+                    <div className="mt-2">
+                      <ReviewSummary summary={request} />
+                    </div>
                   </div>
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
                     <div className="flex items-start justify-between gap-2">

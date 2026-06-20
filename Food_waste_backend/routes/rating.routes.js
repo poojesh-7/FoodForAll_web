@@ -4,6 +4,7 @@ const ratingCtrl = require("../controllers/rating.controller");
 const { requireActiveAccount } = require("../middlewares/verification");
 
 router.post("/", authMiddleware, requireActiveAccount, ratingCtrl.createRating);
+router.put("/:id", authMiddleware, requireActiveAccount, ratingCtrl.updateRating);
 router.get("/listing/:listingId", ratingCtrl.getListingRatings);
 router.get("/provider/:providerId", ratingCtrl.getProviderRatings);
 

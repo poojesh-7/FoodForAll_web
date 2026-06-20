@@ -246,11 +246,16 @@ export default function ReservationDetailPage() {
     try {
       setError("");
       setSuccess("");
-      const created = await ratingService.createRating({
-        reservation_id: reservation.id,
-        rating,
-        review: review || null,
-      });
+      const created = reservation.review_id
+        ? await ratingService.updateRating(reservation.review_id, {
+            rating,
+            review: review || null,
+          })
+        : await ratingService.createRating({
+            reservation_id: reservation.id,
+            rating,
+            review: review || null,
+          });
       setRatingSubmitted(true);
       setReservation((current) =>
         current
@@ -262,16 +267,33 @@ export default function ReservationDetailPage() {
             }
           : current
       );
-      setSuccess("Rating submitted successfully.");
-      setRatings((current) => [
-        {
-          rating: created.rating ?? rating,
-          review: created.review ?? (review || null),
-          created_at: new Date().toISOString(),
-          name: "You",
-        },
-        ...current,
-      ]);
+      setSuccess(
+        reservation.review_id
+          ? "Review updated successfully."
+          : "Review submitted successfully."
+      );
+      setRatings((current) =>
+        reservation.review_id
+          ? current.map((item) =>
+              String(item.id) === String(reservation.review_id)
+                ? {
+                    ...item,
+                    rating: created.rating ?? rating,
+                    review: created.review ?? (review || null),
+                  }
+                : item
+            )
+          : [
+              {
+                id: created.id,
+                rating: created.rating ?? rating,
+                review: created.review ?? (review || null),
+                created_at: new Date().toISOString(),
+                name: "You",
+              },
+              ...current,
+            ]
+      );
     } catch (err) {
       setError(ratingService.getErrorMessage(err));
     }
@@ -440,17 +462,15 @@ export default function ReservationDetailPage() {
                 )
               }
             />
-            {canRate(reservation) && !ratingSubmitted && !isRatingWindowExpired(reservation) && (
+            {canRate(reservation) && !isRatingWindowExpired(reservation) && (
               <RatingForm
                 onSubmit={submitRating}
-                title="Review Provider"
+                title={ratingSubmitted ? "Edit Review" : "Leave Review"}
                 description="Rate the provider for this completed pickup."
+                initialRating={reservation.review_rating}
+                initialReview={reservation.review_text}
+                submitLabel={ratingSubmitted ? "Update Review" : "Submit Review"}
               />
-            )}
-            {canRate(reservation) && ratingSubmitted && (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700 shadow-sm">
-                You have already reviewed this reservation.
-              </div>
             )}
             {canRate(reservation) && !ratingSubmitted && isRatingWindowExpired(reservation) && (
               <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

@@ -9,6 +9,8 @@ import type {
   ProviderRatingSummary,
   ProviderRatingsResponse,
   RatingRow,
+  UpdateRatingRequest,
+  UpdateRatingResponse,
 } from "@shared/contracts/api-contracts";
 
 function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
@@ -24,6 +26,18 @@ export async function createRating(
 ): Promise<RatingRow> {
   const { data } = await api.post<CreateRatingResponse | RatingRow>(
     "/ratings",
+    payload
+  );
+
+  return getEnvelopeData<RatingRow>(data);
+}
+
+export async function updateRating(
+  ratingId: DbId,
+  payload: UpdateRatingRequest
+): Promise<RatingRow> {
+  const { data } = await api.put<UpdateRatingResponse | RatingRow>(
+    `/ratings/${String(ratingId)}`,
     payload
   );
 
@@ -57,6 +71,7 @@ export function toRatingNumber(value: unknown): number {
 
 export const ratingService = {
   createRating,
+  updateRating,
   getListingRatings,
   getProviderRatings,
   toRatingNumber,

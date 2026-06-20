@@ -32,6 +32,8 @@ export const listingSortOptions: Array<{ value: ListingSort; label: string }> = 
   { value: "newest", label: "Newest" },
   { value: "pickup_ending_soon", label: "Pickup Ending Soon" },
   { value: "highest_quantity", label: "Highest Quantity" },
+  { value: "highest_rated", label: "Highest Rated" },
+  { value: "most_reviewed", label: "Most Reviewed" },
   { value: "lowest_price", label: "Lowest Price" },
   { value: "highest_price", label: "Highest Price" },
 ];

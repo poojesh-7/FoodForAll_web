@@ -1,6 +1,7 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import { FoodImageCarousel } from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import {
   Clock3,
@@ -182,13 +183,16 @@ export default function VolunteerTaskCard({
             icon={<Store className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Restaurant"
             value={
-              <IdentityChip
-                src={task.provider_profile_image_url}
-                name={providerName}
-                role="provider"
-                label="Provider avatar"
-                caption="Provider"
-              />
+              <div className="space-y-2">
+                <IdentityChip
+                  src={task.provider_profile_image_url}
+                  name={providerName}
+                  role="provider"
+                  label="Provider avatar"
+                  caption="Provider"
+                />
+                <ReviewSummary summary={task} />
+              </div>
             }
           />
           <DetailItem

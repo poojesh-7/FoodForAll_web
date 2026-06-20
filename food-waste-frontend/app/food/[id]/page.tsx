@@ -138,6 +138,12 @@ export default function FoodDetailPage() {
         setLoading(true);
         setError("");
         const result = await foodService.getFoodById(params.id);
+        const listingProviderSummary = {
+          averageRating: result.averageRating,
+          totalReviews: result.totalReviews,
+          average_rating: result.average_rating,
+          total_reviews: result.total_reviews,
+        };
         const [impact, listingRatings, providerSummary] = await Promise.all([
           result.id
             ? impactService.getListingImpact(result.id)
@@ -147,7 +153,9 @@ export default function FoodDetailPage() {
             : Promise.resolve<ListingRating[]>([]),
           result.provider_id
             ? ratingService.getProviderRatings(result.provider_id)
-            : Promise.resolve<ProviderRatingSummary | null>(null),
+            : Promise.resolve<ProviderRatingSummary | null>(
+                listingProviderSummary as ProviderRatingSummary
+              ),
         ]);
 
         if (!active) return;
@@ -157,7 +165,7 @@ export default function FoodDetailPage() {
         setListing(realtimeListing ? { ...result, ...realtimeListing } : result);
         setListingImpact(impact);
         setRatings(listingRatings);
-        setProviderRatings(providerSummary);
+        setProviderRatings(providerSummary ?? (listingProviderSummary as ProviderRatingSummary));
       } catch (err) {
         if (active) setError(foodService.getErrorMessage(err));
       } finally {
@@ -628,10 +636,10 @@ export default function FoodDetailPage() {
             <section className="space-y-3">
               <div>
                 <h2 className="text-lg font-semibold text-zinc-950">
-                  Restaurant Reputation
+                  Provider Rating
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
-                  Recent pickup feedback for {providerName}.
+                  Average rating and total reviews for {providerName}.
                 </p>
               </div>
               <ProviderReputation summary={providerRatings} />
@@ -639,12 +647,17 @@ export default function FoodDetailPage() {
 
             <section className="space-y-3">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-950">Reviews</h2>
+                <h2 className="text-lg font-semibold text-zinc-950">
+                  Recent Reviews
+                </h2>
                 <p className="mt-1 text-sm text-zinc-600">
                   What other food savers said after pickup.
                 </p>
               </div>
-              <ReviewList ratings={ratings} emptyMessage="No reviews for this listing yet." />
+              <ReviewList
+                ratings={ratings.slice(0, 3)}
+                emptyMessage="No reviews available."
+              />
             </section>
           </div>
         ) : (

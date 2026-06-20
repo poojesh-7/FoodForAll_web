@@ -33,6 +33,10 @@ const {
   updateListingImages,
 } = require("../shared/services/listingImage.service");
 const {
+  providerReviewAggregateJoin,
+  providerReviewSummarySelect,
+} = require("../shared/services/reviewSummary.service");
+const {
   sanitizeOptionalText,
 } = require("../shared/utils/sanitize");
 const {
@@ -977,11 +981,13 @@ exports.getAllFood = async (req, res) => {
     const result = await pool.query(
       `SELECT f.*,
               ${listingImagesSelect("f")},
+              ${providerReviewSummarySelect()},
               u.name AS provider_name,
               u.profile_image_url AS provider_profile_image_url,
               restaurant.restaurant_name
        FROM food_listings f
        JOIN users u ON u.id = f.provider_id
+       ${providerReviewAggregateJoin("f")}
        LEFT JOIN LATERAL (
          SELECT restaurant_name
          FROM restaurants
@@ -1035,11 +1041,13 @@ exports.getActiveFood = async (req, res) => {
     const result = await pool.query(
       `SELECT f.*,
               ${listingImagesSelect("f")},
+              ${providerReviewSummarySelect()},
               u.name AS provider_name,
               u.profile_image_url AS provider_profile_image_url,
               restaurant.restaurant_name
        FROM food_listings f
        JOIN users u ON u.id = f.provider_id
+       ${providerReviewAggregateJoin("f")}
        LEFT JOIN LATERAL (
          SELECT restaurant_name
          FROM restaurants
@@ -1098,6 +1106,7 @@ exports.getActiveFood = async (req, res) => {
     `
     SELECT f.*,
     ${listingImagesSelect("f")},
+    ${providerReviewSummarySelect()},
     u.name AS provider_name,
     u.profile_image_url AS provider_profile_image_url,
     restaurant.restaurant_name,
@@ -1113,6 +1122,7 @@ exports.getActiveFood = async (req, res) => {
     )::double precision AS "distanceKm"
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name
       FROM restaurants
@@ -1143,6 +1153,7 @@ exports.getFoodById = async (req, res) => {
     `
     SELECT f.*,
            ${listingImagesSelect("f")},
+           ${providerReviewSummarySelect()},
            u.name AS provider_name,
            u.profile_image_url AS provider_profile_image_url,
            restaurant.restaurant_name,
@@ -1154,6 +1165,7 @@ exports.getFoodById = async (req, res) => {
            ) AS reservation_count
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name
       FROM restaurants
@@ -1239,6 +1251,7 @@ exports.getNearbyFood = async (req, res) => {
            f.is_free,
            f.price,
            ${listingImagesSelect("f")},
+           ${providerReviewSummarySelect()},
            u.name AS provider_name,
            u.profile_image_url AS provider_profile_image_url,
            restaurant.restaurant_name,
@@ -1250,6 +1263,7 @@ exports.getNearbyFood = async (req, res) => {
            )::double precision AS "distanceKm"
     FROM food_listings f
     JOIN users u ON u.id = f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name
       FROM restaurants

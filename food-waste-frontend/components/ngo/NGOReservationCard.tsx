@@ -4,6 +4,7 @@ import LocationMapPreview from "@/components/maps/LocationMapPreview";
 import FoodImage from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
+import ReviewSummary from "@/components/ratings/ReviewSummary";
 import {
   formatFoodDate,
   formatQuantityWithUnit,
@@ -373,13 +374,16 @@ export default function NGOReservationCard({
         )}
 
         <div className="grid gap-3 text-sm md:grid-cols-2">
-          <IdentityChip
-            src={reservation.provider_profile_image_url}
-            name={restaurantName}
-            role="provider"
-            label="Provider avatar"
-            caption={`Provider - ${displayValue(reservation.provider_phone)}`}
-          />
+          <div className="space-y-2">
+            <IdentityChip
+              src={reservation.provider_profile_image_url}
+              name={restaurantName}
+              role="provider"
+              label="Provider avatar"
+              caption={`Provider - ${displayValue(reservation.provider_phone)}`}
+            />
+            <ReviewSummary summary={reservation} />
+          </div>
 
           {showVolunteer && (
             <IdentityChip

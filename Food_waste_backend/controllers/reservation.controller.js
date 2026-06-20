@@ -51,6 +51,10 @@ const {
   normalizeListingImages,
 } = require("../shared/services/listingImage.service");
 const {
+  providerReviewAggregateJoin,
+  providerReviewSummarySelect,
+} = require("../shared/services/reviewSummary.service");
+const {
   ensureReservationPaymentContextSchema,
 } = require("../shared/services/reservationPaymentContext.service");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
@@ -517,6 +521,7 @@ exports.getReservationById = async (req, res) => {
             f.quantity_unit,
             f.custom_quantity_unit,
             ${listingImagesSelect("f")},
+            ${providerReviewSummarySelect()},
             p.food_amount,
             p.reliability_deposit_amount,
             p.reliability_deposit_status,
@@ -563,6 +568,7 @@ exports.getReservationById = async (req, res) => {
     FROM reservations r
     JOIN food_listings f ON r.listing_id = f.id
     JOIN users provider ON provider.id = f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name,
              NULL::text AS business_name
@@ -622,6 +628,7 @@ exports.getMyReservations = async (req, res) => {
           f.quantity_unit,
           f.custom_quantity_unit,
           ${listingImagesSelect("f")},
+          ${providerReviewSummarySelect()},
           p.food_amount,
           p.reliability_deposit_amount,
           p.reliability_deposit_status,
@@ -653,6 +660,9 @@ exports.getMyReservations = async (req, res) => {
           volunteer.name AS assigned_volunteer_name,
           volunteer.phone AS assigned_volunteer_phone,
           volunteer.profile_image_url AS assigned_volunteer_profile_image_url,
+          rating.id AS review_id,
+          rating.rating AS review_rating,
+          rating.review AS review_text,
           CASE
             WHEN r.pickup_type = 'ngo' THEN 'ngo'
             ELSE 'self_pickup'
@@ -660,6 +670,7 @@ exports.getMyReservations = async (req, res) => {
     FROM reservations r
     JOIN food_listings f ON f.id = r.listing_id
     JOIN users provider ON provider.id = f.provider_id
+    ${providerReviewAggregateJoin("f")}
     LEFT JOIN LATERAL (
       SELECT restaurant_name,
              NULL::text AS business_name
@@ -670,6 +681,7 @@ exports.getMyReservations = async (req, res) => {
     ) restaurant ON true
     LEFT JOIN users requester ON requester.id = r.user_id
     LEFT JOIN users volunteer ON volunteer.id = r.assigned_volunteer_id
+    LEFT JOIN ratings rating ON rating.reservation_id = r.id
     LEFT JOIN payments p ON p.reservation_id = r.id
     WHERE r.user_id = $1
     ORDER BY r.reserved_at DESC NULLS LAST, r.id DESC

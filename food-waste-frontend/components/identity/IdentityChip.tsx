@@ -1,6 +1,7 @@
 "use client";
 
 import IdentityAvatar from "@/components/identity/IdentityAvatar";
+import { Star } from "lucide-react";
 import type { UserRole } from "@shared/contracts/api-contracts";
 
 type IdentityChipProps = {
@@ -9,6 +10,8 @@ type IdentityChipProps = {
   role?: UserRole | "provider" | "ngo" | "volunteer" | "user" | string | null;
   label: string;
   caption?: string;
+  rating?: number | string | null;
+  reviewCount?: number | string | null;
   tone?: "default" | "amber";
 };
 
@@ -17,12 +20,25 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
+function formatRole(role: IdentityChipProps["role"]) {
+  const text = displayValue(role).replace(/_/g, " ");
+  if (text === "-") return "Member";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function toNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export default function IdentityChip({
   src,
   name,
   role,
   label,
   caption,
+  rating,
+  reviewCount,
   tone = "default",
 }: IdentityChipProps) {
   const toneClasses =
@@ -37,7 +53,17 @@ export default function IdentityChip({
         <p className="truncate text-sm font-semibold text-zinc-950">
           {displayValue(name)}
         </p>
-        {caption && <p className="truncate text-xs">{caption}</p>}
+        <p className="truncate text-xs">
+          {formatRole(role)}
+          {caption ? ` - ${caption}` : ""}
+        </p>
+        {toNumber(reviewCount) !== null && toNumber(reviewCount)! > 0 && (
+          <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-zinc-600">
+            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-hidden="true" />
+            {toNumber(rating)?.toFixed(1) ?? "0.0"} ({toNumber(reviewCount)}{" "}
+            {toNumber(reviewCount) === 1 ? "review" : "reviews"})
+          </p>
+        )}
       </div>
     </div>
   );

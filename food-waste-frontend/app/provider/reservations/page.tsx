@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, ShieldCheck, Ticket, Truck } from "lucide-react";
+import { ReservationFoodImage } from "@/components/FoodImage";
+import IdentityChip from "@/components/identity/IdentityChip";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
+import { MetaChip, SignalTile } from "@/components/reservations/ReservationHighlights";
 import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import {
@@ -49,6 +52,13 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
+function getOptionalDisplayMetric(source: object, key: string) {
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" || typeof value === "number" || value === null
+    ? value
+    : undefined;
+}
+
 function getReservationDisplayId(id?: DbId) {
   const raw = String(id ?? "").replace(/-/g, "");
   return `RES-${(raw.slice(-4) || "----").toUpperCase()}`;
@@ -89,21 +99,46 @@ function getStatusLabel(status: StatusFilter) {
   return labels[status];
 }
 
-function getStatusClasses(status: StatusFilter) {
-  if (status === "reserved") return "border-sky-200 bg-sky-50 text-sky-700";
-  if (status === "in_progress") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-  if (status === "completed") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (status === "payment_pending") {
-    return "border-violet-200 bg-violet-50 text-violet-700";
-  }
+function getStatusTone(status: StatusFilter) {
+  if (status === "completed") return "emerald";
+  if (status === "in_progress" || status === "payment_pending") return "amber";
+  if (status === "reserved" || status === "active") return "sky";
   if (status === "cancelled" || status === "expired" || status === "failed") {
-    return "border-zinc-200 bg-zinc-100 text-zinc-600";
+    return "red";
   }
-  return "border-zinc-200 bg-white text-zinc-700";
+  return "zinc";
+}
+
+function getRequesterDisplayName(reservation: ProviderReservationRow) {
+  return (
+    reservation.requester_organization_name ||
+    reservation.requester_name ||
+    "Requester"
+  );
+}
+
+function getVolunteerState(reservation: ProviderReservationRow) {
+  const taskStatus = String(reservation.task_status ?? "").toLowerCase();
+  if (taskStatus === "delivered" || reservation.completed_at) return "Delivered";
+  if (taskStatus === "picked_from_provider") return "Picked from provider";
+  if (taskStatus === "in_progress") return "At provider pickup";
+  if (reservation.assigned_volunteer_name) return "Assigned";
+  if (reservation.pickup_type === "ngo") return "Awaiting volunteer";
+  return "Self pickup";
+}
+
+function getProviderProgress(reservation: ProviderReservationRow) {
+  const status = getOperationalStatus(reservation);
+  if (status === "payment_pending") return "Waiting for requester payment";
+  if (status === "reserved" && canConfirmPickup(reservation)) {
+    return "Enter the pickup code to confirm handoff";
+  }
+  if (status === "in_progress") return "Volunteer pickup is underway";
+  if (status === "completed") return "Pickup completed";
+  if (status === "cancelled") return "Reservation cancelled";
+  if (status === "expired") return "Reservation expired";
+  if (status === "failed") return "Reservation failed";
+  return "No action needed right now";
 }
 
 function getPaymentFilterState(state: ReservationPaymentState): PaymentFilter {
@@ -271,12 +306,33 @@ export default function ProviderReservationsPage() {
 
   useEffect(() => {
     if (!reservationVersion) return;
+    let active = true;
+
     queueMicrotask(() =>
       setReservations((current) =>
         mergeRealtimeRows<ProviderReservationRow>(current, reservationsById)
       )
     );
+
+    reservationService
+      .getProviderReservations()
+      .then((result) => {
+        if (active) setReservations(result);
+      })
+      .catch((err) => {
+        if (active) setError(reservationService.getErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
   }, [reservationVersion, reservationsById]);
+
+  const reloadProviderReservations = async () => {
+    const result = await reservationService.getProviderReservations();
+    setReservations(result);
+    return result;
+  };
 
   const activeReservations = useMemo(
     () => reservations.filter((reservation) => !isHistoricalReservation(reservation)),
@@ -351,6 +407,7 @@ export default function ProviderReservationsPage() {
         )
       );
       setPickupCodes((current) => ({ ...current, [reservationId]: "" }));
+      await reloadProviderReservations();
       setSuccess("Pickup confirmed.");
     } catch (err) {
       setError(reservationService.getErrorMessage(err));
@@ -367,40 +424,72 @@ export default function ProviderReservationsPage() {
     const confirmable = canConfirmPickup(reservation);
     const operationalStatus = getOperationalStatus(reservation);
     const reservationType = getReservationType(reservation);
+    const requesterRole = reservationType === "ngo" ? "ngo" : "user";
 
     return (
       <article
         key={id}
         className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
       >
+        <ReservationFoodImage source={reservation} />
         <div className="space-y-4 p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-lg font-semibold text-zinc-950">
-                  {getReservationDisplayId(reservation.id)}
-                </span>
-                <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold uppercase text-zinc-600">
-                  {reservationType}
-                </span>
-                <span
-                  className={`rounded-md border px-2 py-1 text-xs font-semibold ${getStatusClasses(
-                    operationalStatus
-                  )}`}
-                >
-                  {getStatusLabel(operationalStatus)}
-                </span>
+                <h2 className="text-lg font-semibold leading-snug text-zinc-950">
+                  {displayValue(reservation.title)}
+                </h2>
+                <MetaChip label={getReservationDisplayId(reservation.id)} />
+                <MetaChip label={reservationType.toUpperCase()} />
               </div>
-              <h2 className="mt-2 text-base font-semibold text-zinc-950">
-                {displayValue(reservation.title)}
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                {displayValue(reservation.requester_name)} ·{" "}
-                {displayValue(reservation.requester_phone)}
-              </p>
+            </div>
+            <div className="max-w-sm">
+              <IdentityChip
+                src={reservation.requester_profile_image_url}
+                name={getRequesterDisplayName(reservation)}
+                role={requesterRole}
+                label="Requester avatar"
+                caption={displayValue(reservation.requester_phone)}
+                rating={
+                  getOptionalDisplayMetric(reservation, "requester_average_rating") ??
+                  getOptionalDisplayMetric(reservation, "requester_rating")
+                }
+                reviewCount={
+                  getOptionalDisplayMetric(reservation, "requester_total_reviews") ??
+                  getOptionalDisplayMetric(reservation, "requester_review_count")
+                }
+              />
             </div>
             <PaymentStatusBadge
               state={getReservationPaymentState(reservation)}
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <SignalTile
+              icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+              label="Status"
+              value={getStatusLabel(operationalStatus)}
+              detail={getProviderProgress(reservation)}
+              tone={getStatusTone(operationalStatus)}
+            />
+            <SignalTile
+              icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
+              label="Pickup Code"
+              value={confirmable ? "Code required" : "No code needed now"}
+              detail={
+                confirmable
+                  ? "Ask the requester or volunteer for the code."
+                  : getProviderProgress(reservation)
+              }
+              tone={confirmable ? "amber" : "zinc"}
+            />
+            <SignalTile
+              icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+              label="Volunteer State"
+              value={getVolunteerState(reservation)}
+              detail={displayValue(reservation.assigned_volunteer_name)}
+              tone={reservation.pickup_type === "ngo" ? "sky" : "zinc"}
             />
           </div>
 
@@ -440,7 +529,7 @@ export default function ProviderReservationsPage() {
               <input
                 value={pickupCodes[id] ?? ""}
                 placeholder="Pickup code"
-                className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+                className="min-h-10 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
                 onChange={(event) =>
                   setPickupCodes((current) => ({
                     ...current,

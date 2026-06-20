@@ -42,6 +42,49 @@ const withStatus = (message, statusCode) => {
   return error;
 };
 
+const ACTIVE_VOLUNTEER_TASK_STATUSES = [
+  "in_progress",
+  "picked_from_provider",
+];
+const ACTIVE_VOLUNTEER_TASK_STATUS_SQL = ACTIVE_VOLUNTEER_TASK_STATUSES
+  .map((status) => `'${status}'`)
+  .join(",");
+const TERMINAL_VOLUNTEER_TASK_STATUSES = new Set([
+  "completed",
+  "delivered",
+  "failed",
+  "expired",
+  "cancelled",
+  "picked_up",
+]);
+const TERMINAL_RESERVATION_STATUSES = new Set([
+  "completed",
+  "delivered",
+  "failed",
+  "expired",
+  "cancelled",
+  "picked_up",
+]);
+
+function isActiveVolunteerTask(row) {
+  if (!row) return false;
+
+  const reservationStatus = String(row.status || "").toLowerCase();
+  const taskStatus = String(row.task_status || "").toLowerCase();
+
+  return (
+    reservationStatus === "reserved" &&
+    ACTIVE_VOLUNTEER_TASK_STATUSES.includes(taskStatus) &&
+    !TERMINAL_VOLUNTEER_TASK_STATUSES.has(taskStatus) &&
+    !TERMINAL_RESERVATION_STATUSES.has(reservationStatus) &&
+    !row.completed_at
+  );
+}
+
+function normalizeVolunteerCurrentTask(row) {
+  return isActiveVolunteerTask(row) ? normalizeListingImages(row) : null;
+}
+
 // 🔍 View NGOs
 exports.viewAvailableNGOs = async (req, res) => {
   if (req.user.role !== "volunteer")
@@ -80,7 +123,11 @@ exports.viewAvailableNGOs = async (req, res) => {
         LIMIT 1
       )
     WHERE n.is_verified = true
-    GROUP BY n.id
+    GROUP BY
+      n.id,
+      n.organization_name,
+      ngo_user.profile_image_url,
+      n.urgent_flag
     ORDER BY n.urgent_flag DESC, active_listings DESC
   `,
     [req.user.id],
@@ -113,7 +160,7 @@ exports.getDashboard = async (req, res) => {
         LEFT JOIN volunteers active_v ON active_v.ngo_id=n.id
         WHERE v.user_id=$1
         AND v.status='active'
-        GROUP BY n.id, v.status
+        GROUP BY n.id, ngo_user.profile_image_url, v.status
         ORDER BY n.urgent_flag DESC, n.id DESC
         LIMIT 1
         `,
@@ -166,7 +213,8 @@ exports.getDashboard = async (req, res) => {
         JOIN ngos n ON n.user_id=r.user_id
         JOIN users ngo_user ON ngo_user.id=n.user_id
         WHERE r.assigned_volunteer_id=$1
-        AND r.task_status IN ('in_progress','picked_from_provider')
+        AND r.status='reserved'
+        AND r.task_status IN (${ACTIVE_VOLUNTEER_TASK_STATUS_SQL})
         ORDER BY r.assigned_at DESC
         LIMIT 1
         `,
@@ -197,9 +245,7 @@ exports.getDashboard = async (req, res) => {
 
     res.json({
       active_ngo: activeNGO.rows[0] || null,
-      current_task: currentTask.rows[0]
-        ? normalizeListingImages(currentTask.rows[0])
-        : null,
+      current_task: normalizeVolunteerCurrentTask(currentTask.rows[0]),
       stats: stats.rows[0] || {
         total_completed: 0,
         avg_completion_time: 0,
@@ -487,7 +533,8 @@ exports.leaveNGO = async (req, res) => {
     SELECT COUNT(*)
     FROM reservations
     WHERE assigned_volunteer_id=$1
-    AND task_status IN ('assigned','in_progress')
+    AND status='reserved'
+    AND task_status IN ('assigned',${ACTIVE_VOLUNTEER_TASK_STATUS_SQL})
     `,
     [req.user.id],
   );
@@ -531,7 +578,8 @@ exports.startTask = async (req, res) => {
       SELECT id
       FROM reservations
       WHERE assigned_volunteer_id=$1
-      AND task_status IN ('in_progress','picked_from_provider')
+      AND status='reserved'
+      AND task_status IN (${ACTIVE_VOLUNTEER_TASK_STATUS_SQL})
       `,
       [volunteerId]
     );
@@ -952,4 +1000,10 @@ exports.completeTask = async (req, res) => {
   } finally {
     client.release();
   }
+};
+
+exports._private = {
+  ACTIVE_VOLUNTEER_TASK_STATUSES,
+  isActiveVolunteerTask,
+  normalizeVolunteerCurrentTask,
 };

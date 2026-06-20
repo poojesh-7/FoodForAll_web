@@ -169,11 +169,26 @@ export default function NGOReservationsPage() {
 
   useEffect(() => {
     if (!reservationVersion) return;
+    let active = true;
+
     queueMicrotask(() =>
       setReservations((current) =>
         mergeRealtimeRows<NGOReservationHistoryRow>(current, reservationsById)
       )
     );
+
+    ngoService
+      .getReservations()
+      .then((result) => {
+        if (active) setReservations(result);
+      })
+      .catch((err) => {
+        if (active) setError(ngoService.getErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
   }, [reservationVersion, reservationsById]);
 
   const reloadReservations = async () => {

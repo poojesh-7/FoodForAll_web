@@ -44,6 +44,30 @@ function getTaskStatusLabel(status: unknown) {
   return displayValue(status).replace(/_/g, " ");
 }
 
+function normalizeCurrentTask(task: VolunteerCurrentTask | null) {
+  if (!task) return null;
+
+  const status = String(task.status ?? "").toLowerCase();
+  const taskStatus = String(task.task_status ?? "").toLowerCase();
+  if (
+    taskStatus === "completed" ||
+    taskStatus === "delivered" ||
+    taskStatus === "failed" ||
+    taskStatus === "expired" ||
+    taskStatus === "cancelled" ||
+    status === "completed" ||
+    status === "picked_up" ||
+    status === "failed" ||
+    status === "expired" ||
+    status === "cancelled" ||
+    Boolean(task.completed_at)
+  ) {
+    return null;
+  }
+
+  return task;
+}
+
 function ActiveTaskSummary({ task }: { task: VolunteerCurrentTask }) {
   return (
     <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
@@ -93,7 +117,12 @@ export default function VolunteerDashboardPage() {
     volunteerService
       .getDashboard()
       .then((result) => {
-        if (active) setDashboard(result);
+        if (active) {
+          setDashboard({
+            ...result,
+            current_task: normalizeCurrentTask(result.current_task),
+          });
+        }
       })
       .catch((err) => {
         if (active) setError(volunteerService.getErrorMessage(err));
@@ -116,7 +145,10 @@ export default function VolunteerDashboardPage() {
         return update
           ? {
               ...current,
-              current_task: { ...current.current_task, ...update },
+              current_task: normalizeCurrentTask({
+                ...current.current_task,
+                ...update,
+              }),
             }
           : current;
       })

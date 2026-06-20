@@ -1,7 +1,7 @@
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
-import { FoodImageCarousel } from "@/components/FoodImage";
+import { ReservationFoodImage } from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
-import ReviewSummary from "@/components/ratings/ReviewSummary";
+import { MetaChip, SignalTile } from "@/components/reservations/ReservationHighlights";
 import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
 import {
   Clock3,
@@ -67,15 +67,12 @@ function getStatusLabel(status: unknown) {
   return displayValue(status).replace(/_/g, " ");
 }
 
-function getStatusClasses(active: boolean, status: unknown) {
+function getStatusTone(active: boolean, status: unknown) {
   const normalized = String(status ?? "").toLowerCase();
-  if (normalized === "picked_from_provider") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-  if (active || normalized === "in_progress") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  return "border-sky-200 bg-sky-50 text-sky-700";
+  if (normalized === "picked_from_provider") return "amber";
+  if (active || normalized === "in_progress") return "emerald";
+  if (normalized === "delivered") return "emerald";
+  return "sky";
 }
 
 function getProgressLabel(task: TaskLike) {
@@ -145,7 +142,7 @@ export default function VolunteerTaskCard({
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <FoodImageCarousel source={task} className="h-48" />
+      <ReservationFoodImage source={task} />
       <div className="space-y-4 p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -153,19 +150,47 @@ export default function VolunteerTaskCard({
               <h2 className="text-lg font-semibold leading-snug text-zinc-950">
                 {task.title}
               </h2>
-              <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
-                {getReservationDisplayId(getTaskId(task))}
-              </span>
-              <span
-                className={`rounded-md border px-2 py-1 text-xs font-semibold capitalize ${getStatusClasses(
-                  active,
-                  task.task_status
-                )}`}
-              >
-                {getStatusLabel(task.task_status)}
-              </span>
+              <MetaChip label={getReservationDisplayId(getTaskId(task))} />
+              <MetaChip label={displayValue(task.pickup_type)} />
+              {distance && (
+                <MetaChip
+                  icon={<Navigation className="h-3.5 w-3.5" aria-hidden="true" />}
+                  label={distance}
+                />
+              )}
             </div>
           </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <SignalTile
+            icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+            label="Status"
+            value={getStatusLabel(task.task_status)}
+            detail={active ? "This is your active task." : "Available rescue task."}
+            tone={getStatusTone(active, task.task_status)}
+          />
+          {"pickup_code" in task && (
+            <SignalTile
+              icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
+              label="Pickup Code"
+              value={displayValue(task.pickup_code)}
+              detail="Share this with the provider."
+              tone={task.pickup_code ? "amber" : "zinc"}
+            />
+          )}
+          <SignalTile
+            icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+            label="Task Progress"
+            value={getProgressLabel(task)}
+            detail={
+              <>
+                Provider: {providerName}
+                {task.provider_phone ? ` - ${task.provider_phone}` : ""}
+              </>
+            }
+            tone={getStatusTone(active, task.task_status)}
+          />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -173,11 +198,6 @@ export default function VolunteerTaskCard({
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
             value={formatQuantityWithUnit(task.quantity_reserved, task)}
-          />
-          <DetailItem
-            icon={<Truck className="h-3.5 w-3.5" aria-hidden="true" />}
-            label="Pickup Type"
-            value={displayValue(task.pickup_type)}
           />
           <DetailItem
             icon={<Store className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -189,9 +209,10 @@ export default function VolunteerTaskCard({
                   name={providerName}
                   role="provider"
                   label="Provider avatar"
-                  caption="Provider"
+                  caption={displayValue(task.provider_phone)}
+                  rating={task.average_rating ?? task.averageRating}
+                  reviewCount={task.total_reviews ?? task.totalReviews}
                 />
-                <ReviewSummary summary={task} />
               </div>
             }
           />
@@ -204,7 +225,6 @@ export default function VolunteerTaskCard({
                 name={displayValue(task.ngo_name)}
                 role="ngo"
                 label="NGO avatar"
-                caption="NGO"
               />
             }
           />
@@ -213,40 +233,6 @@ export default function VolunteerTaskCard({
             label="Pickup Ends"
             value={formatFoodDate(task.pickup_end_time)}
           />
-          {distance && (
-            <DetailItem
-              icon={<Navigation className="h-3.5 w-3.5" aria-hidden="true" />}
-              label="Distance"
-              value={distance}
-            />
-          )}
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          {"pickup_code" in task && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
-              <div className="flex items-center gap-2 text-xs font-medium uppercase text-amber-700">
-                <Ticket className="h-3.5 w-3.5" aria-hidden="true" />
-                Pickup Code
-              </div>
-              <p className="mt-2 text-2xl font-semibold tracking-wide text-zinc-950">
-                {displayValue(task.pickup_code)}
-              </p>
-            </div>
-          )}
-          <div className="rounded-md border border-zinc-200 bg-white p-4">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
-              <Truck className="h-3.5 w-3.5" aria-hidden="true" />
-              Task Progress
-            </div>
-            <p className="mt-2 text-sm font-semibold text-zinc-950">
-              {getProgressLabel(task)}
-            </p>
-            <p className="mt-1 text-sm text-zinc-600">
-              Provider: {providerName}
-              {task.provider_phone ? ` - ${task.provider_phone}` : ""}
-            </p>
-          </div>
         </div>
       </div>
 

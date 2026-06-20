@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ImageIcon,
+  Images,
   X,
 } from "lucide-react";
 import { getPrimaryImageUrl, sortListingImages } from "@/lib/food";
@@ -56,7 +57,8 @@ function PhotoBadge({ count }: { count: number }) {
 
   return (
     <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs font-semibold text-white shadow-sm">
-      📷 {count} Photos
+      <Images className="h-3.5 w-3.5" aria-hidden="true" />
+      {count} Photos
     </span>
   );
 }
@@ -65,8 +67,8 @@ function Placeholder() {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-2 border-b border-zinc-200 bg-zinc-100 text-zinc-500">
       <ImageIcon className="h-8 w-8" aria-hidden="true" />
-      <span className="text-xs font-medium uppercase tracking-wide">
-        No Food Image Available
+      <span className="text-xs font-medium">
+        No food image uploaded
       </span>
     </div>
   );
@@ -326,5 +328,14 @@ export function FoodImageCarousel({
         />
       )}
     </>
+  );
+}
+
+export function ReservationFoodImage(props: FoodImageCarouselProps) {
+  return (
+    <FoodImageCarousel
+      {...props}
+      className={props.className ?? "h-52 sm:h-56"}
+    />
   );
 }

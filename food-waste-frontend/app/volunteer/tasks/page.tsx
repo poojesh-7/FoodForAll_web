@@ -65,6 +65,22 @@ function isVisibleVolunteerTask(task: VolunteerTask) {
   );
 }
 
+function normalizeCurrentTask(task: VolunteerCurrentTask | null) {
+  if (!task) return null;
+
+  const status = String(task.status ?? "").toLowerCase();
+  const taskStatus = String(task.task_status ?? "").toLowerCase();
+  if (
+    taskStatus === "delivered" ||
+    status === "picked_up" ||
+    Boolean(task.completed_at)
+  ) {
+    return null;
+  }
+
+  return task;
+}
+
 export default function VolunteerTasksPage() {
   const [form, setForm] = useState<LocationForm>({
     lat: "",
@@ -90,7 +106,7 @@ export default function VolunteerTasksPage() {
     volunteerService
       .getDashboard()
       .then((dashboard) => {
-        if (active) setActiveTask(dashboard.current_task);
+        if (active) setActiveTask(normalizeCurrentTask(dashboard.current_task));
       })
       .catch(() => {
         if (active) setActiveTask(null);
@@ -108,7 +124,7 @@ export default function VolunteerTasksPage() {
       setActiveTask((current) => {
         if (!current) return current;
         const update = reservationsById[String(current.reservation_id)];
-        return update ? { ...current, ...update } : current;
+        return update ? normalizeCurrentTask({ ...current, ...update }) : current;
       });
       setTasks((current) =>
         mergeRealtimeRows<VolunteerTask>(current, reservationsById).filter(
@@ -153,6 +169,33 @@ export default function VolunteerTasksPage() {
     }
   };
 
+  const refreshVolunteerState = async (nextForm = form) => {
+    const [dashboard] = await Promise.all([
+      volunteerService
+        .getDashboard()
+        .then((result) => {
+          setActiveTask(normalizeCurrentTask(result.current_task));
+          return result;
+        })
+        .catch(() => {
+          setActiveTask(null);
+          return null;
+        }),
+      searched && nextForm.lat && nextForm.lng
+        ? volunteerService
+            .getTasks({
+              lat: nextForm.lat,
+              lng: nextForm.lng,
+              radius: nextForm.radius,
+            })
+            .then((result) => setTasks(result.filter(isVisibleVolunteerTask)))
+            .catch(() => undefined)
+        : Promise.resolve(),
+    ]);
+
+    return dashboard;
+  };
+
   const useCurrentLocation = async () => {
     try {
       setLoading(true);
@@ -191,6 +234,7 @@ export default function VolunteerTasksPage() {
           (item) => String(item.reservation_id) !== String(task.reservation_id)
         )
       );
+      await refreshVolunteerState();
       setSuccess("Task started. Share the pickup code with the provider.");
     } catch (err) {
       setError(volunteerService.getErrorMessage(err));
@@ -214,13 +258,9 @@ export default function VolunteerTasksPage() {
       await volunteerService.completeTask(activeTask.reservation_id, {
         receive_code: receiveCode.trim(),
       });
-      setActiveTask({
-        ...activeTask,
-        task_status: "delivered",
-        status: "picked_up",
-        completed_at: new Date().toISOString(),
-      });
+      setActiveTask(null);
       setReceiveCode("");
+      await refreshVolunteerState();
       setSuccess("Delivery completed successfully.");
     } catch (err) {
       setError(volunteerService.getErrorMessage(err));

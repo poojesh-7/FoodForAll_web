@@ -1,10 +1,10 @@
 "use client";
 
 import LocationMapPreview from "@/components/maps/LocationMapPreview";
-import FoodImage from "@/components/FoodImage";
+import { ReservationFoodImage } from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
-import ReviewSummary from "@/components/ratings/ReviewSummary";
+import { MetaChip, SignalTile } from "@/components/reservations/ReservationHighlights";
 import {
   formatFoodDate,
   formatQuantityWithUnit,
@@ -47,6 +47,13 @@ type ReservationStatus =
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
+}
+
+function getOptionalDisplayMetric(source: object, key: string) {
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" || typeof value === "number" || value === null
+    ? value
+    : undefined;
 }
 
 function getReservationPrice(reservation: NGOReservationHistoryRow) {
@@ -129,20 +136,26 @@ function getStatusLabel(status: ReservationStatus) {
   return labels[status];
 }
 
-function getStatusClasses(status: ReservationStatus) {
-  if (status === "completed") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (status === "payment_pending") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-  if (status === "volunteer_started" || status === "picked_from_provider") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
+function getStatusTone(status: ReservationStatus) {
+  if (status === "completed") return "emerald";
+  if (status === "payment_pending" || status === "volunteer_started") return "amber";
+  if (status === "picked_from_provider" || status === "reserved") return "sky";
   if (status === "cancelled" || status === "expired" || status === "failed") {
-    return "border-red-200 bg-red-50 text-red-700";
+    return "red";
   }
-  return "border-sky-200 bg-sky-50 text-sky-700";
+  return "zinc";
+}
+
+function getProgressLabel(status: ReservationStatus) {
+  if (status === "completed") return "Delivery complete";
+  if (status === "picked_from_provider") return "Volunteer is delivering to your NGO";
+  if (status === "volunteer_started") return "Volunteer is at the provider pickup stage";
+  if (status === "pending") return "Waiting for volunteer assignment";
+  if (status === "payment_pending") return "Finish payment to keep this reservation";
+  if (status === "cancelled") return "Reservation cancelled";
+  if (status === "expired") return "Reservation expired";
+  if (status === "failed") return "Reservation failed";
+  return "Reserved and ready for rescue coordination";
 }
 
 function getVolunteerState(reservation: NGOReservationHistoryRow, status: ReservationStatus) {
@@ -270,11 +283,7 @@ export default function NGOReservationCard({
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <FoodImage
-        source={reservation}
-        className="h-48"
-        showViewGalleryLink
-      />
+      <ReservationFoodImage source={reservation} />
       <div className="space-y-4 p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -282,23 +291,10 @@ export default function NGOReservationCard({
               <h2 className="text-lg font-semibold leading-snug text-zinc-950">
                 {reservation.title}
               </h2>
-              <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
-                {getReservationDisplayId(reservation.id)}
-              </span>
-              <span
-                className={`rounded-md border px-2 py-1 text-xs font-semibold ${getStatusClasses(
-                  status
-                )}`}
-              >
-                {getStatusLabel(status)}
-              </span>
-              <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700">
-                {displayValue(reservation.pickup_type)}
-              </span>
+              <MetaChip label={getReservationDisplayId(reservation.id)} />
+              <MetaChip label={displayValue(reservation.pickup_type)} />
               {price && (
-                <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                  {price}
-                </span>
+                <MetaChip label={price} tone="emerald" />
               )}
             </div>
             {reservation.description && (
@@ -314,26 +310,40 @@ export default function NGOReservationCard({
           <PaymentPendingNotice remainingMs={paymentRemainingMs} />
         )}
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <SignalTile
+            icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+            label="Status"
+            value={getStatusLabel(status)}
+            detail={getProgressLabel(status)}
+            tone={getStatusTone(status)}
+          />
+          <SignalTile
+            icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
+            label="Receive Code"
+            value={displayValue(reservation.receive_code)}
+            detail="Give this to the volunteer at delivery."
+            tone={reservation.receive_code ? "amber" : "zinc"}
+          />
+          <SignalTile
+            icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+            label="Volunteer State"
+            value={getVolunteerState(reservation, status)}
+            detail={getProgressLabel(status)}
+            tone={showVolunteer ? "sky" : "zinc"}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <DetailItem
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
             value={formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
           />
           <DetailItem
-            icon={<Truck className="h-3.5 w-3.5" aria-hidden="true" />}
-            label="Volunteer State"
-            value={getVolunteerState(reservation, status)}
-          />
-          <DetailItem
             icon={<Clock3 className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Pickup Ends"
             value={formatFoodDate(reservation.pickup_end_time)}
-          />
-          <DetailItem
-            icon={<Ticket className="h-3.5 w-3.5" aria-hidden="true" />}
-            label="Receive Code"
-            value={displayValue(reservation.receive_code)}
           />
         </div>
 
@@ -380,9 +390,16 @@ export default function NGOReservationCard({
               name={restaurantName}
               role="provider"
               label="Provider avatar"
-              caption={`Provider - ${displayValue(reservation.provider_phone)}`}
+              caption={displayValue(reservation.provider_phone)}
+              rating={
+                getOptionalDisplayMetric(reservation, "average_rating") ??
+                getOptionalDisplayMetric(reservation, "averageRating")
+              }
+              reviewCount={
+                getOptionalDisplayMetric(reservation, "total_reviews") ??
+                getOptionalDisplayMetric(reservation, "totalReviews")
+              }
             />
-            <ReviewSummary summary={reservation} />
           </div>
 
           {showVolunteer && (

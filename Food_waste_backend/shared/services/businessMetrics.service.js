@@ -867,7 +867,7 @@ async function getFinancialInsights({ client, startAt }) {
       (
         SELECT COUNT(*)::int
         FROM provider_settlements ps
-        WHERE ps.status = 'settled'
+        WHERE ps.status IN ('paid','settled')
         AND ${windowPredicate("ps.updated_at")}
       ) AS settlements_completed,
       (

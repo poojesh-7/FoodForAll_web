@@ -240,11 +240,17 @@ async function ensureSettlementAccountingSchema(client = pool) {
         amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         commission_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         currency TEXT NOT NULL DEFAULT 'INR',
-        status TEXT NOT NULL DEFAULT 'allocated',
+        status TEXT NOT NULL DEFAULT 'pending',
+        paid_at TIMESTAMP NULL,
+        payment_reference TEXT NULL,
+        notes TEXT NULL,
+        processed_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
         idempotency_key TEXT NOT NULL,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT provider_settlements_status_valid
+          CHECK (status IN ('pending','processing','paid','failed','cancelled'))
       )
     `);
     await db.query(`
@@ -759,7 +765,7 @@ async function getFinancialDiagnostics({ client = pool } = {}) {
         COALESCE(SUM(amount), 0)::numeric AS provider_settlement_total,
         COALESCE(SUM(commission_amount), 0)::numeric AS provider_commission_total
       FROM provider_settlements
-      WHERE status IN ('allocated','batched')
+      WHERE status IN ('pending','processing','allocated','batched')
     `),
   ]);
 

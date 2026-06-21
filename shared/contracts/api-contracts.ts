@@ -653,6 +653,129 @@ export interface ProviderRatingSummary {
   packagingAverage?: number | string;
 }
 
+export type ProviderPayoutAccountType = "UPI" | "BANK";
+export type ProviderSettlementStatus =
+  | "pending"
+  | "processing"
+  | "paid"
+  | "failed"
+  | "cancelled"
+  | string;
+
+export interface ProviderPayoutAccount extends DbRow {
+  id: DbId;
+  provider_id: DbId;
+  account_type: ProviderPayoutAccountType | string;
+  upi_id?: string | null;
+  account_holder_name?: string | null;
+  bank_account_number?: string | null;
+  bank_account_number_last4?: string | null;
+  ifsc_code?: string | null;
+  is_active: boolean;
+  is_verified: boolean;
+  created_at?: ISODateString | null;
+  updated_at?: ISODateString | null;
+}
+
+export interface SaveProviderPayoutAccountRequest {
+  account_type: ProviderPayoutAccountType;
+  upi_id?: string | null;
+  account_holder_name?: string | null;
+  bank_account_number?: string | null;
+  ifsc_code?: string | null;
+}
+
+export interface ProviderPayoutAccountsData {
+  active_account: ProviderPayoutAccount | null;
+  accounts: ProviderPayoutAccount[];
+}
+
+export type ProviderPayoutAccountsResponse =
+  ApiResponse<ProviderPayoutAccountsData>;
+export type SaveProviderPayoutAccountResponse =
+  ApiResponse<{ account: ProviderPayoutAccount | null }>;
+
+export interface ProviderSettlementHistoryRow extends DbRow {
+  id: DbId;
+  provider_id: DbId;
+  reservation_id: DbId;
+  payment_id?: DbId | null;
+  payment_session_id: string;
+  amount: number | string;
+  commission_amount?: number | string;
+  currency: string;
+  status: ProviderSettlementStatus;
+  raw_status?: string | null;
+  paid_at?: ISODateString | null;
+  payment_reference?: string | null;
+  notes?: string | null;
+  processed_by?: DbId | null;
+  created_at?: ISODateString | null;
+  updated_at?: ISODateString | null;
+}
+
+export interface ProviderSettlementSummaryData {
+  payout_account: ProviderPayoutAccount | null;
+  payout_accounts: ProviderPayoutAccount[];
+  earnings: {
+    pending: number | string;
+    paid: number | string;
+  };
+  settlements: ProviderSettlementHistoryRow[];
+}
+
+export type ProviderSettlementSummaryResponse =
+  ApiResponse<{ summary: ProviderSettlementSummaryData }>;
+
+export interface AdminProviderSettlementRow extends ProviderSettlementHistoryRow {
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  restaurant_name?: string | null;
+  amount_due: number | string;
+  pending_settlements: number | string;
+  last_settlement_at?: ISODateString | null;
+  payout_account: ProviderPayoutAccount | null;
+}
+
+export interface AdminProviderSettlementSummaryRow {
+  provider_id: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  restaurant_name?: string | null;
+  amount_due: number | string;
+  pending_settlements: number | string;
+  last_settlement_at?: ISODateString | null;
+  payout_account: ProviderPayoutAccount | null;
+}
+
+export interface AdminProviderSettlementConsoleData {
+  filter: "pending" | "paid" | "failed" | "all" | string;
+  summary: AdminProviderSettlementSummaryRow[];
+  settlements: AdminProviderSettlementRow[];
+}
+
+export interface AdminProviderSettlementConsoleQuery {
+  status?: "pending" | "paid" | "failed" | "all" | string;
+  limit?: string | number;
+}
+
+export interface UpdateProviderSettlementStatusRequest {
+  payment_reference?: string | null;
+  paymentReference?: string | null;
+  paid_at?: ISODateString | null;
+  paidAt?: ISODateString | null;
+  notes?: string | null;
+}
+
+export interface UpdateProviderSettlementNotesRequest {
+  notes?: string | null;
+}
+
+export type AdminProviderSettlementConsoleResponse =
+  ApiResponse<{ settlements: AdminProviderSettlementConsoleData }>;
+export type UpdateProviderSettlementResponse =
+  ApiResponse<{ settlement: ProviderSettlementHistoryRow }>;
+
 export interface ImpactSummary {
   total_pickups: number | string;
   total_meals_saved: number | string;
@@ -1184,6 +1307,7 @@ export interface ProviderReportsAdminQuery {
   caseStatus?: ModerationCaseStatus | string;
   case_status?: ModerationCaseStatus | string;
 }
+export type ProviderFinancialSummaryResponse = ProviderSettlementSummaryResponse;
 export interface OperationalMonitoringQuery {
   window?: "1h" | "24h" | "7d" | "30d" | string;
 }
@@ -3179,6 +3303,44 @@ export const apiContracts = {
       statusCodes: [200, 400, 401, 403, 404, 409, 500],
     },
   ],
+  providerFinancial: [
+    {
+      method: "GET",
+      path: "/api/v1/provider/financial/payout-account",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "SaveProviderPayoutAccountResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "POST",
+      path: "/api/v1/provider/financial/payout-account",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "SaveProviderPayoutAccountRequest" },
+      response: "SaveProviderPayoutAccountResponse",
+      statusCodes: [201, 400, 401, 403, 500],
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/provider/financial/payout-account",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ProviderPayoutAccountsResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/provider/financial/settlements",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireVerifiedProvider"],
+      request: { params: "NoRequestParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "ProviderFinancialSummaryResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+  ],
   ngo: [
     {
       method: "POST",
@@ -3567,6 +3729,42 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
       response: "ProviderReportsAdminResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/settlements",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "AdminProviderSettlementConsoleQuery", body: "NoRequestBody" },
+      response: "AdminProviderSettlementConsoleResponse",
+      statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/settlements/:id/paid",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateProviderSettlementStatusRequest" },
+      response: "UpdateProviderSettlementResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/settlements/:id/failed",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateProviderSettlementStatusRequest" },
+      response: "UpdateProviderSettlementResponse",
+      statusCodes: [200, 400, 401, 403, 404, 409, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/settlements/:id/notes",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateProviderSettlementNotesRequest" },
+      response: "UpdateProviderSettlementResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
     },
     {
       method: "GET",

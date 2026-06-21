@@ -17,6 +17,11 @@ const {
   getFinancialDiagnostics,
 } = require("../shared/services/financialLedger.service");
 const {
+  listAdminProviderSettlements,
+  transitionProviderSettlementStatus,
+  updateProviderSettlementNotes,
+} = require("../shared/services/providerPayout.service");
+const {
   dismissProviderReport,
   getModerationCaseDetail,
   listModerationAppeals,
@@ -1138,6 +1143,145 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
     res.status(err.statusCode || 500).json({ error: "Failed to record trust recovery credit" });
   } finally {
     client.release();
+  }
+};
+
+exports.getProviderSettlementConsole = async (req, res) => {
+  try {
+    const settlements = await listAdminProviderSettlements({
+      status: req.query.status,
+      limit: req.query.limit,
+    });
+    res.json({ settlements });
+  } catch (err) {
+    logger.error("Failed to fetch provider settlement console", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch provider settlements",
+    });
+  }
+};
+
+async function recordSettlementAdminEvent(req, eventName, settlement, extra = {}) {
+  logger.security("Admin settlement action recorded", {
+    adminId: req.user?.id,
+    eventName,
+    settlementId: settlement?.id || req.params?.id,
+    providerId: settlement?.provider_id,
+  });
+  await recordOperationalEvent({
+    category: "financial",
+    severity: "info",
+    eventName,
+    metadata: {
+      adminId: req.user?.id,
+      settlementId: settlement?.id || req.params?.id,
+      providerId: settlement?.provider_id || null,
+      reservationId: settlement?.reservation_id || null,
+      paymentId: settlement?.payment_id || null,
+      paymentSessionId: settlement?.payment_session_id || null,
+      status: settlement?.status || null,
+      ...extra,
+    },
+  });
+}
+
+async function transitionProviderSettlementFromAdmin(req, res, status) {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Settlement id is required" });
+  }
+
+  try {
+    const settlement = await transitionProviderSettlementStatus({
+      settlementId: id,
+      status,
+      adminId: req.user.id,
+      paymentReference: req.body?.payment_reference || req.body?.paymentReference,
+      paidAt: req.body?.paid_at || req.body?.paidAt,
+      notes: req.body?.notes,
+    });
+
+    if (!settlement) {
+      return res.status(404).json({ error: "Settlement not found" });
+    }
+
+    await recordSettlementAdminEvent(
+      req,
+      status === "paid"
+        ? "provider_settlement_marked_paid"
+        : "provider_settlement_marked_failed",
+      settlement,
+      {
+        paymentReference: settlement.payment_reference || null,
+        manual_settlement: true,
+        money_movement_executed_by_system: false,
+      }
+    );
+
+    res.json({
+      message: `Settlement marked ${status}`,
+      settlement,
+    });
+  } catch (err) {
+    logger.error("Provider settlement status update failed", {
+      err,
+      adminId: req.user?.id,
+      settlementId: id,
+      status,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update settlement",
+    });
+  }
+}
+
+exports.markProviderSettlementPaid = (req, res) =>
+  transitionProviderSettlementFromAdmin(req, res, "paid");
+
+exports.markProviderSettlementFailed = (req, res) =>
+  transitionProviderSettlementFromAdmin(req, res, "failed");
+
+exports.updateProviderSettlementNotes = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Settlement id is required" });
+  }
+
+  try {
+    const settlement = await updateProviderSettlementNotes({
+      settlementId: id,
+      adminId: req.user.id,
+      notes: req.body?.notes,
+    });
+
+    if (!settlement) {
+      return res.status(404).json({ error: "Settlement not found" });
+    }
+
+    await recordSettlementAdminEvent(
+      req,
+      "provider_settlement_notes_updated",
+      settlement,
+      { manual_settlement: true }
+    );
+
+    res.json({
+      message: "Settlement notes updated",
+      settlement,
+    });
+  } catch (err) {
+    logger.error("Provider settlement notes update failed", {
+      err,
+      adminId: req.user?.id,
+      settlementId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update settlement notes",
+    });
   }
 };
 

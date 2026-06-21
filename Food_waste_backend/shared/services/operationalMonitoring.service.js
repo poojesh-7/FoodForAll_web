@@ -270,9 +270,9 @@ async function getPaymentSnapshot(windowKey) {
     safeQuery(
       `
       SELECT
-        COUNT(*) FILTER (WHERE status IN ('allocated','batched'))::int AS pending_settlements,
-        COUNT(*) FILTER (WHERE status='cancelled')::int AS failed_settlements,
-        COUNT(*) FILTER (WHERE status='settled')::int AS settled
+        COUNT(*) FILTER (WHERE status IN ('pending','processing','allocated','batched'))::int AS pending_settlements,
+        COUNT(*) FILTER (WHERE status IN ('failed','cancelled'))::int AS failed_settlements,
+        COUNT(*) FILTER (WHERE status IN ('paid','settled'))::int AS settled
       FROM provider_settlements
       `,
       [],
@@ -667,7 +667,7 @@ async function getOperationalMonitoring(options = {}) {
       gaps: [
         "Socket disconnect and socket error counts are not persisted, so the dashboard marks those fields as unavailable instead of inferring them.",
         "Notification delivery failure is represented by notification queue failures and operational alerts; individual push outcomes are not stored.",
-        "Settlement failures are limited to cancelled settlement rows and financial alerts because provider_settlements has no failed status.",
+        "Settlement failures include failed and legacy cancelled provider_settlements plus financial alerts.",
       ],
       risks: [
         "Health can be stale when worker heartbeat writes stop but Redis and API remain reachable.",

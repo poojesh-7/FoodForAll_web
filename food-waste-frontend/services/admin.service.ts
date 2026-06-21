@@ -5,6 +5,9 @@ import type {
   ActiveIncidentConflictResponse,
   AdminOperationalSummary,
   AdminOperationalSummaryResponse,
+  AdminProviderSettlementConsoleData,
+  AdminProviderSettlementConsoleQuery,
+  AdminProviderSettlementConsoleResponse,
   AdminOperationalAlert,
   AdminOperationalAlertsResponse,
   AdminPaymentHealth,
@@ -74,6 +77,9 @@ import type {
   UpdateComplianceRequestStatus,
   UpdateIncidentStatusRequest,
   UpdateModerationAppealStatusResponse,
+  UpdateProviderSettlementNotesRequest,
+  UpdateProviderSettlementResponse,
+  UpdateProviderSettlementStatusRequest,
 } from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
@@ -136,6 +142,7 @@ export type AdminComplianceRequestDetail = ComplianceDeletionRequestDetail;
 export type AdminIncidentCenter = IncidentCenterData;
 export type AdminIncidentDetail = IncidentDetailData;
 export type AdminActiveIncidentConflict = ActiveIncidentConflict;
+export type AdminSettlementConsole = AdminProviderSettlementConsoleData;
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -331,6 +338,49 @@ export async function validateProviderReport(id: DbId): Promise<void> {
 
 export async function dismissProviderReport(id: DbId): Promise<void> {
   await api.patch<MessageResponse>(`/admin/provider-reports/${String(id)}/dismiss`);
+}
+
+export async function getProviderSettlementConsole(
+  params: AdminProviderSettlementConsoleQuery = {}
+): Promise<AdminSettlementConsole> {
+  const { data } = await api.get<
+    AdminProviderSettlementConsoleResponse | { settlements: AdminSettlementConsole }
+  >("/admin/settlements", { params });
+
+  return getEnvelopeData<{ settlements: AdminSettlementConsole }>(data)
+    .settlements;
+}
+
+async function patchProviderSettlement(
+  id: DbId,
+  action: "paid" | "failed" | "notes",
+  payload: UpdateProviderSettlementStatusRequest | UpdateProviderSettlementNotesRequest = {}
+): Promise<void> {
+  await api.patch<UpdateProviderSettlementResponse | MessageResponse>(
+    `/admin/settlements/${String(id)}/${action}`,
+    payload
+  );
+}
+
+export async function markProviderSettlementPaid(
+  id: DbId,
+  payload: UpdateProviderSettlementStatusRequest
+): Promise<void> {
+  await patchProviderSettlement(id, "paid", payload);
+}
+
+export async function markProviderSettlementFailed(
+  id: DbId,
+  payload: UpdateProviderSettlementStatusRequest = {}
+): Promise<void> {
+  await patchProviderSettlement(id, "failed", payload);
+}
+
+export async function updateProviderSettlementNotes(
+  id: DbId,
+  payload: UpdateProviderSettlementNotesRequest
+): Promise<void> {
+  await patchProviderSettlement(id, "notes", payload);
 }
 
 export async function getModerationCase(id: DbId): Promise<AdminModerationCase> {
@@ -738,6 +788,10 @@ export const adminService = {
   getProviderReports,
   validateProviderReport,
   dismissProviderReport,
+  getProviderSettlementConsole,
+  markProviderSettlementPaid,
+  markProviderSettlementFailed,
+  updateProviderSettlementNotes,
   getModerationCase,
   getModerationAppeals,
   getGovernanceDashboard,

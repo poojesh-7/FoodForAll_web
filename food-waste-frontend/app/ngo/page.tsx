@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import IdentityChip from "@/components/identity/IdentityChip";
 import NGOShell from "@/components/ngo/NGOShell";
 import NGOStateBlock from "@/components/ngo/NGOStateBlock";
 import NGOSummaryCard from "@/components/ngo/NGOSummaryCard";
@@ -10,6 +11,7 @@ import {
 } from "@/lib/dateTime";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
 import { ngoService, type MyNGOProfile } from "@/services/ngo.service";
+import { useAuthStore } from "@/store/authStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ImpactSummary,
@@ -57,6 +59,7 @@ function shouldShowRestrictionAlert(ngo: MyNGOProfile | null) {
 
 export default function NGODashboardPage() {
   const router = useRouter();
+  const user = useAuthStore((state) => state.user);
   const [ngo, setNgo] = useState<MyNGOProfile | null>(null);
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
   const [incomingRequests, setIncomingRequests] = useState<NGOIncomingRequest[]>([]);
@@ -253,9 +256,13 @@ export default function NGODashboardPage() {
             <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div>
-                  <h2 className="text-base font-semibold text-zinc-950">
-                    {String(ngo?.organization_name ?? "Your NGO")}
-                  </h2>
+                  <IdentityChip
+                    src={user?.profile_image_url ?? user?.profile_image}
+                    name={String(ngo?.organization_name ?? "Your NGO")}
+                    role="ngo"
+                    label="NGO avatar"
+                    caption="NGO"
+                  />
                   <p className="mt-1 text-sm text-zinc-600">
                     Service radius: {String(ngo?.service_radius_km ?? "-")} km
                   </p>

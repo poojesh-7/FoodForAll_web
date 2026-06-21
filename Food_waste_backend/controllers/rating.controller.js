@@ -248,7 +248,8 @@ exports.getListingRatings = async (req, res) => {
         r.rating,
         r.review,
         r.created_at,
-        u.name
+        u.name,
+        u.profile_image_url AS reviewer_profile_image_url
       FROM ratings r
       JOIN users u ON r.reviewer_id = u.id
       WHERE r.listing_id=$1

@@ -20,6 +20,7 @@ import {
 } from "@/lib/payment-flow";
 import { ratingService } from "@/services/rating.service";
 import { reservationService } from "@/services/reservation.service";
+import { useAuthStore } from "@/store/authStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ListingRating,
@@ -123,6 +124,7 @@ async function fetchReservationData(id: string) {
 export default function ReservationDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const user = useAuthStore((state) => state.user);
   const [reservation, setReservation] = useState<ReservationDetails | null>(null);
   const [ratings, setRatings] = useState<ListingRating[]>([]);
   const [loading, setLoading] = useState(true);
@@ -290,6 +292,8 @@ export default function ReservationDetailPage() {
                 review: created.review ?? (review || null),
                 created_at: new Date().toISOString(),
                 name: "You",
+                reviewer_profile_image_url:
+                  user?.profile_image_url ?? user?.profile_image ?? null,
               },
               ...current,
             ]

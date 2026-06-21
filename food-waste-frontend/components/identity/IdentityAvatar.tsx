@@ -57,7 +57,7 @@ export default function IdentityAvatar({
   size = "md",
   className = "",
 }: IdentityAvatarProps) {
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const thumbnailUrl = useMemo(
     () => getProfileThumbnailUrl(src, size === "lg" ? 160 : 96),
     [size, src]
@@ -65,7 +65,7 @@ export default function IdentityAvatar({
   const initial = getInitial(name, role);
   const baseClasses = `inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-950 font-semibold text-white ${sizeClasses[size]} ${className}`;
 
-  if (thumbnailUrl && !failed) {
+  if (thumbnailUrl && failedSrc !== thumbnailUrl) {
     return (
       <span className={baseClasses}>
         <img
@@ -73,7 +73,7 @@ export default function IdentityAvatar({
           alt={label}
           loading="lazy"
           className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(thumbnailUrl)}
         />
       </span>
     );

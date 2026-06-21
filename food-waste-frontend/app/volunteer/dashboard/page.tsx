@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Store } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import IdentityChip from "@/components/identity/IdentityChip";
 import VolunteerShell from "@/components/volunteer/VolunteerShell";
 import VolunteerStateBlock from "@/components/volunteer/VolunteerStateBlock";
 import VolunteerSummaryCard from "@/components/volunteer/VolunteerSummaryCard";
@@ -85,11 +86,20 @@ function ActiveTaskSummary({ task }: { task: VolunteerCurrentTask }) {
             {displayValue(task.title)}
           </h2>
           <div className="mt-3 grid gap-2 text-sm text-zinc-600 sm:grid-cols-2">
-            <p className="flex items-center gap-2">
-              <Store className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-              {getProviderDisplayName(task)}
-            </p>
-            <p>NGO: {displayValue(task.ngo_name)}</p>
+            <IdentityChip
+              src={task.provider_profile_image_url}
+              name={getProviderDisplayName(task)}
+              role="provider"
+              label="Provider avatar"
+              caption={displayValue(task.provider_phone)}
+            />
+            <IdentityChip
+              src={task.ngo_profile_image_url}
+              name={displayValue(task.ngo_name)}
+              role="ngo"
+              label="NGO avatar"
+              caption="NGO"
+            />
           </div>
         </div>
         <Link
@@ -167,18 +177,38 @@ export default function VolunteerDashboardPage() {
       ) : dashboard ? (
         <div className="space-y-5">
           <section className="grid gap-3 sm:grid-cols-3">
-            <VolunteerSummaryCard
-              label="Active NGO"
-              value={dashboard.active_ngo?.organization_name ?? "None"}
-              detail={
-                dashboard.active_ngo
-                  ? `${dashboard.active_ngo.active_listings} active listings`
-                  : "Join an NGO to receive tasks"
-              }
-            />
+            <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase text-zinc-500">
+                Active NGO
+              </p>
+              {dashboard.active_ngo ? (
+                <div className="mt-3">
+                  <IdentityChip
+                    src={dashboard.active_ngo.ngo_profile_image_url}
+                    name={dashboard.active_ngo.organization_name}
+                    role="ngo"
+                    label="NGO avatar"
+                    caption={`${dashboard.active_ngo.active_listings} active listings`}
+                  />
+                </div>
+              ) : (
+                <>
+                  <p className="mt-2 text-2xl font-semibold text-zinc-950">None</p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Join an NGO to receive tasks
+                  </p>
+                </>
+              )}
+            </article>
             <VolunteerSummaryCard
               label="Current Task"
-              value={dashboard.current_task ? dashboard.current_task.task_status : "None"}
+              value={
+                dashboard.current_task
+                  ? dashboard.current_task.task_status === "in_progress"
+                    ? "In Progress"
+                    : dashboard.current_task.task_status
+                  : "None"
+              }
               detail="One active task is allowed at a time"
             />
             <VolunteerSummaryCard

@@ -639,6 +639,8 @@ export interface ListingRating {
   review: string | null;
   created_at: ISODateString;
   name: string | null;
+  reviewer_profile_image_url?: string | null;
+  profile_image_url?: string | null;
 }
 
 export interface ProviderRatingSummary {

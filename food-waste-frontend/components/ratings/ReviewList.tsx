@@ -1,10 +1,17 @@
 import type { ListingRating } from "@shared/contracts/api-contracts";
+import IdentityChip from "@/components/identity/IdentityChip";
 import { formatPlatformDate } from "@/lib/dateTime";
 import { MessageSquare, Star } from "lucide-react";
 
 type ReviewListProps = {
   ratings: ListingRating[];
   emptyMessage?: string;
+};
+
+type ReviewIdentity = ListingRating & {
+  reviewer_profile_image_url?: string | null;
+  profile_image_url?: string | null;
+  profileImageUrl?: string | null;
 };
 
 function formatDate(value: string) {
@@ -33,30 +40,42 @@ export default function ReviewList({
 
   return (
     <div className="grid gap-3">
-      {ratings.map((rating, index) => (
-        <article
-          key={String(rating.id ?? `${String(rating.name ?? "review")}-${rating.created_at}-${index}`)}
-          className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
-        >
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-zinc-950">
-                {rating.name || "Food saver"}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">
-                {formatDate(rating.created_at)}
+      {ratings.map((rating, index) => {
+        const review = rating as ReviewIdentity;
+
+        return (
+          <article
+            key={String(
+              rating.id ??
+                `${String(rating.name ?? "review")}-${rating.created_at}-${index}`
+            )}
+            className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <IdentityChip
+                src={
+                  review.reviewer_profile_image_url ??
+                  review.profile_image_url ??
+                  review.profileImageUrl
+                }
+                name={rating.name || "Food saver"}
+                role="user"
+                label="Reviewer avatar"
+                caption={formatDate(rating.created_at)}
+              />
+              <p className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-sm font-semibold text-amber-700">
+                <Star className="h-3.5 w-3.5" aria-hidden="true" />
+                {Number(rating.rating).toFixed(1)}
               </p>
             </div>
-            <p className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-sm font-semibold text-amber-700">
-              <Star className="h-3.5 w-3.5" aria-hidden="true" />
-              {Number(rating.rating).toFixed(1)}
-            </p>
-          </div>
-          {rating.review && (
-            <p className="mt-4 text-sm leading-6 text-zinc-700">{rating.review}</p>
-          )}
-        </article>
-      ))}
+            {rating.review && (
+              <p className="mt-4 text-sm leading-6 text-zinc-700">
+                {rating.review}
+              </p>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }

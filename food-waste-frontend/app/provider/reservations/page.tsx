@@ -479,7 +479,7 @@ export default function ProviderReservationsPage() {
               value={confirmable ? "Code required" : "No code needed now"}
               detail={
                 confirmable
-                  ? "Ask the requester or volunteer for the code."
+                  ? "Ask the User or volunteer for the code."
                   : getProviderProgress(reservation)
               }
               tone={confirmable ? "amber" : "zinc"}

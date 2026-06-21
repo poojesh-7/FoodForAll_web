@@ -59,6 +59,27 @@ function isFreeRescueListing(food) {
   return Boolean(food.is_free) || Number(food.price) === 0;
 }
 
+const NGO_PROVIDER_REQUEST_BLOCK_LEVEL = 5;
+const eligibleNGOForProviderRequestsWhere = `
+  n.is_verified = true
+  AND u.role = 'ngo'
+  AND (u.banned_until IS NULL OR u.banned_until <= NOW())
+  AND (u.cooldown_until IS NULL OR u.cooldown_until <= NOW())
+  AND NULLIF(TRIM(n.organization_name), '') IS NOT NULL
+  AND LOWER(TRIM(n.organization_name)) <> 'anonymized ngo'
+  AND LOWER(TRIM(COALESCE(u.name, ''))) NOT LIKE 'deleted user %'
+  AND LOWER(TRIM(COALESCE(u.phone, ''))) NOT LIKE 'deleted%'
+  AND COALESCE(
+    ts.projected_restriction_level,
+    ts.restriction_level,
+    0
+  ) < ${NGO_PROVIDER_REQUEST_BLOCK_LEVEL}
+  AND (
+    COALESCE(ts.projected_cooldown_until, ts.cooldown_until) IS NULL
+    OR COALESCE(ts.projected_cooldown_until, ts.cooldown_until) <= NOW()
+  )
+`;
+
 exports.registerRestaurant = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1283,10 +1304,14 @@ exports.getNearbyFood = async (req, res) => {
 // 🔍 View NGOs
 exports.viewNGOs = async (req, res) => {
   const result = await pool.query(`
-    SELECT id, organization_name, urgent_flag
-    FROM ngos
-    WHERE is_verified = true
-    ORDER BY urgent_flag DESC
+    SELECT n.id, n.organization_name, n.urgent_flag
+    FROM ngos n
+    JOIN users u ON u.id=n.user_id
+    LEFT JOIN trust_scores ts
+      ON ts.subject_type='ngo'
+     AND ts.subject_id=u.id
+    WHERE ${eligibleNGOForProviderRequestsWhere}
+    ORDER BY n.urgent_flag DESC, n.organization_name ASC
   `);
 
   res.json(result.rows);
@@ -1359,7 +1384,30 @@ exports.requestNGO = async (req, res) => {
   if (!ngoUser.rows.length)
     return res.status(404).json({ error: "Verified NGO not found" });
 
-  const ngoUserId = ngoUser.rows[0].user_id;
+  const eligibleNGO = await pool.query(
+    `
+    SELECT n.user_id
+    FROM ngos n
+    JOIN users u ON u.id=n.user_id
+    LEFT JOIN trust_scores ts
+      ON ts.subject_type='ngo'
+     AND ts.subject_id=u.id
+    WHERE n.id=$1
+    AND ${eligibleNGOForProviderRequestsWhere}
+    `,
+    [ngo_id]
+  );
+
+  if (!eligibleNGO.rows.length) {
+    logger.security("Blocked provider request to ineligible NGO", {
+      providerId: req.user?.id,
+      listingId,
+      ngoId: ngo_id,
+    });
+    return res.status(403).json({ error: "NGO is not eligible for new requests" });
+  }
+
+  const ngoUserId = eligibleNGO.rows[0].user_id;
 
   // 🚨 2️⃣ Already owns listing?
   const existingReservation = await pool.query(

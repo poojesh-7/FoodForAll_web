@@ -414,17 +414,19 @@ function normalizeAdminSettlementFilter(value) {
     : "pending";
 }
 
-function adminSettlementFilterClause(filter) {
-  if (filter === "pending") {
-    return `ps.status = ANY($2::text[])`;
-  }
-  if (filter === "paid") {
-    return `ps.status = ANY($3::text[])`;
-  }
-  if (filter === "failed") {
-    return `ps.status = ANY($4::text[])`;
-  }
-  return `ps.status = ANY($5::text[])`;
+function adminSettlementStatusesForFilter(filter) {
+  if (filter === "pending") return PENDING_SETTLEMENT_STATUSES;
+  if (filter === "paid") return PAID_SETTLEMENT_STATUSES;
+  if (filter === "failed") return FAILED_SETTLEMENT_STATUSES;
+
+  return Array.from(
+    new Set([
+      ...PENDING_SETTLEMENT_STATUSES,
+      ...PAID_SETTLEMENT_STATUSES,
+      ...FAILED_SETTLEMENT_STATUSES,
+      ...FINAL_SETTLEMENT_STATUSES,
+    ])
+  );
 }
 
 function payoutAccountSummary(row) {
@@ -490,12 +492,8 @@ async function listAdminProviderSettlements({
   }
 
   const filter = normalizeAdminSettlementFilter(status);
-  const allStatuses = [
-    ...PENDING_SETTLEMENT_STATUSES,
-    ...PAID_SETTLEMENT_STATUSES,
-    ...FAILED_SETTLEMENT_STATUSES,
-    ...FINAL_SETTLEMENT_STATUSES,
-  ];
+  const filterStatuses = adminSettlementStatusesForFilter(filter);
+
   const result = await client.query(
     `
     WITH provider_due AS (
@@ -539,7 +537,7 @@ async function listAdminProviderSettlements({
     LEFT JOIN restaurants r ON r.user_id=ps.provider_id
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=ps.provider_id
-    WHERE ${adminSettlementFilterClause(filter)}
+    WHERE ps.status = ANY($3::text[])
     ORDER BY
       CASE
         WHEN ps.status = ANY($2::text[]) THEN 0
@@ -548,16 +546,16 @@ async function listAdminProviderSettlements({
       END,
       COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC,
       ps.id DESC
-    LIMIT $1
+    LIMIT $1::int
     `,
     [
       normalizeLimit(limit),
       PENDING_SETTLEMENT_STATUSES,
-      PAID_SETTLEMENT_STATUSES,
+      filterStatuses,
       FAILED_SETTLEMENT_STATUSES,
-      allStatuses,
     ]
   );
+
   const settlements = result.rows.map(serializeAdminSettlement);
 
   return {

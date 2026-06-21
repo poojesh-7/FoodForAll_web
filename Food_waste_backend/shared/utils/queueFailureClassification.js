@@ -27,6 +27,18 @@ function classifyDeadLetter(workerName, job, err) {
     };
   }
 
+  if (
+    queueName === "financial-reconciliation-queue" ||
+    queueName === "financial-reconciliation-worker"
+  ) {
+    return {
+      category: "financial_reconciliation",
+      retrySafe: true,
+      reconciliationPath: "financial-reconciliation-sweep",
+      reason: "financial_artifact_repair_retry_exhausted",
+    };
+  }
+
   return {
     category: "operational",
     retrySafe: false,

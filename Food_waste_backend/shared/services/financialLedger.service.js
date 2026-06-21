@@ -39,10 +39,88 @@ function getPlatformCommissionPercent() {
   return DEFAULT_COMMISSION_PERCENT;
 }
 
+function normalizeCommissionPercent(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.round(parsed * 1000) / 1000
+    : getPlatformCommissionPercent();
+}
+
+function isPresent(value) {
+  return value !== null && value !== undefined;
+}
+
+function buildPaymentFinancialTerms({
+  foodAmount,
+  foodAmountSnapshot,
+  commissionPercent = getPlatformCommissionPercent(),
+  commissionAmount,
+  providerAmount,
+  platformAmount,
+} = {}) {
+  const frozenFoodAmount = roundMoney(foodAmountSnapshot ?? foodAmount);
+  const frozenCommissionPercent = normalizeCommissionPercent(commissionPercent);
+  const computedCommission = roundMoney(
+    frozenFoodAmount * (frozenCommissionPercent / 100)
+  );
+  const frozenCommissionAmount = isPresent(commissionAmount)
+    ? roundMoney(commissionAmount)
+    : computedCommission;
+  const frozenProviderAmount = isPresent(providerAmount)
+    ? roundMoney(providerAmount)
+    : roundMoney(Math.max(frozenFoodAmount - frozenCommissionAmount, 0));
+  const frozenPlatformAmount = isPresent(platformAmount)
+    ? roundMoney(platformAmount)
+    : frozenCommissionAmount;
+
+  return {
+    commission_percent: frozenCommissionPercent,
+    commission_amount: frozenCommissionAmount,
+    provider_amount: frozenProviderAmount,
+    food_amount_snapshot: frozenFoodAmount,
+    platform_amount: frozenPlatformAmount,
+  };
+}
+
+function resolveSettlementFinancialTerms({ payment = {}, paymentOwnership }) {
+  if (isPresent(payment.commission_percent)) {
+    const missing = [
+      "commission_amount",
+      "provider_amount",
+      "food_amount_snapshot",
+      "platform_amount",
+    ].filter((key) => !isPresent(payment[key]));
+
+    if (missing.length) {
+      throw new Error(
+        `Payment financial snapshot is incomplete: ${missing.join(", ")}`
+      );
+    }
+
+    return {
+      ...buildPaymentFinancialTerms({
+        foodAmountSnapshot: payment.food_amount_snapshot,
+        commissionPercent: payment.commission_percent,
+        commissionAmount: payment.commission_amount,
+        providerAmount: payment.provider_amount,
+        platformAmount: payment.platform_amount,
+      }),
+      terms_source: "payment_creation_snapshot",
+    };
+  }
+
+  return {
+    ...buildPaymentFinancialTerms({
+      foodAmount: paymentOwnership?.food_amount ?? payment.food_amount,
+      commissionPercent: getPlatformCommissionPercent(),
+    }),
+    terms_source: "legacy_env_fallback",
+  };
+}
+
 function buildSettlementAllocationSnapshot({
   payment = {},
   paymentOwnership,
-  commissionPercent = getPlatformCommissionPercent(),
   settlementVersion = SETTLEMENT_VERSION,
   metadata = {},
 }) {
@@ -56,14 +134,18 @@ function buildSettlementAllocationSnapshot({
     throw new Error("payment_ownership id is required");
   }
 
-  const foodAmount = roundMoney(paymentOwnership.food_amount ?? payment.food_amount);
+  const financialTerms = resolveSettlementFinancialTerms({
+    payment,
+    paymentOwnership,
+  });
+  const foodAmount = financialTerms.food_amount_snapshot;
   const depositAmount = roundMoney(
     paymentOwnership.deposit_amount ?? payment.reliability_deposit_amount
   );
   const taxAmount = roundMoney(payment.tax_amount || 0);
-  const commission = roundMoney(foodAmount * (Number(commissionPercent) / 100));
-  const providerAmount = roundMoney(Math.max(foodAmount - commission, 0));
-  const platformAmount = roundMoney(commission);
+  const commission = financialTerms.commission_amount;
+  const providerAmount = financialTerms.provider_amount;
+  const platformAmount = financialTerms.platform_amount;
   const totalAmount = roundMoney(foodAmount + depositAmount + taxAmount);
   const currency = normalizeCurrency(paymentOwnership.currency || payment.currency);
   const reservationId = String(paymentOwnership.reservation_id);
@@ -74,7 +156,7 @@ function buildSettlementAllocationSnapshot({
     payment_id: payment.id || null,
     payment_session_id: paymentSessionId,
     payment_ownership_id: paymentOwnership.id,
-    commission_percent: Number(commissionPercent),
+    commission_percent: financialTerms.commission_percent,
     commission_amount: commission,
     provider_amount: providerAmount,
     platform_amount: platformAmount,
@@ -92,7 +174,7 @@ function buildSettlementAllocationSnapshot({
     ].join(":"),
     metadata: {
       source: "financial_integrity_f4",
-      commission_source: "PLATFORM_COMMISSION_PERCENT",
+      commission_source: financialTerms.terms_source,
       payment_id: payment.id || null,
       order_id: payment.order_id || null,
       ...metadata,
@@ -698,6 +780,7 @@ async function getFinancialDiagnostics({ client = pool } = {}) {
 
 module.exports = {
   SETTLEMENT_VERSION,
+  buildPaymentFinancialTerms,
   buildSettlementAllocationSnapshot,
   ensureSettlementAccountingSchema,
   getFinancialDiagnostics,

@@ -69,6 +69,19 @@ test("financial queue dead letters are classified as replay-safe", () => {
   assert.equal(payment.category, "financial_payment");
   assert.equal(payment.retrySafe, true);
   assert.equal(payment.reconciliationPath, "payment-reconciliation-sweep");
+
+  const financialRepair = classifyDeadLetter(
+    "financial-reconciliation-worker",
+    { name: "financial-reconciliation-sweep" },
+    new Error("db retry exhausted")
+  );
+
+  assert.equal(financialRepair.category, "financial_reconciliation");
+  assert.equal(financialRepair.retrySafe, true);
+  assert.equal(
+    financialRepair.reconciliationPath,
+    "financial-reconciliation-sweep"
+  );
 });
 
 function repoFile(...segments) {
@@ -122,6 +135,28 @@ test("createPayment keeps attempt transitions inside the caller transaction", ()
   assert.match(service, /markPaymentOrderAttemptGatewayCreated\(\{\s+client,/s);
   assert.match(service, /markPaymentOrderAttemptDbInserted\(\{\s+client,\s*orderId/s);
   assert.match(service, /markPaymentOrderAttemptFailed\(\{\s+client,\s*orderId,\s*err/s);
+});
+
+test("createPayment freezes payment financial terms before settlement", () => {
+  const service = repoFile(
+    "Food_waste_backend",
+    "shared",
+    "services",
+    "payment.service.js"
+  );
+  const reconciliation = repoFile(
+    "Food_waste_backend",
+    "shared",
+    "services",
+    "paymentReconciliation.service.js"
+  );
+
+  assert.match(service, /buildPaymentFinancialTerms\(\{\s*foodAmount\s*\}\)/);
+  assert.match(service, /commission_percent,\s*commission_amount,\s*provider_amount,/);
+  assert.match(service, /food_amount_snapshot,\s*platform_amount/);
+  assert.match(service, /commissionAmount:\s*financialTerms\.commission_amount/);
+  assert.match(reconciliation, /commission_percent:\s*financialTerms\.commission_percent/);
+  assert.match(reconciliation, /food_amount_snapshot:\s*financialTerms\.food_amount_snapshot/);
 });
 
 test("recovery sweep delays live payment creation states", () => {

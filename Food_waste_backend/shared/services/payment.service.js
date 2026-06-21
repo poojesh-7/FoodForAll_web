@@ -27,6 +27,9 @@ const {
 const {
   markFinancialOperationStatus,
 } = require("./refundExecution.service");
+const {
+  buildPaymentFinancialTerms,
+} = require("./financialLedger.service");
 
 function roundMoney(value) {
   const number = Number(value);
@@ -57,12 +60,36 @@ async function createPayment({
     returnUrl.searchParams.set("reservation_id", String(reservations[0].id));
   }
 
+  const fallbackFoodAmount =
+    reservations.length === 1 ? roundMoney(totalFoodAmount ?? totalAmount) : 0;
+  const fallbackDepositAmount =
+    reservations.length === 1 ? roundMoney(reliabilityDepositAmount) : 0;
+  const reservationsWithFinancialTerms = reservations.map((reservation) => {
+    const foodAmount = getReservationComponent(
+      reservation,
+      "food_amount",
+      fallbackFoodAmount
+    );
+    const depositAmount = getReservationComponent(
+      reservation,
+      "reliability_deposit_amount",
+      fallbackDepositAmount
+    );
+
+    return {
+      ...reservation,
+      food_amount: foodAmount,
+      reliability_deposit_amount: depositAmount,
+      financial_terms: buildPaymentFinancialTerms({ foodAmount }),
+    };
+  });
+
   try {
     await recordPaymentOrderAttempt({
       client,
       orderId,
       user,
-      reservations,
+      reservations: reservationsWithFinancialTerms,
       amount: totalAmount,
       currency: "INR",
     });
@@ -70,7 +97,7 @@ async function createPayment({
     logger.payment("Payment order creation initiated", {
       userId: user?.id,
       orderId,
-      reservationIds: reservations.map((reservation) => reservation.id),
+      reservationIds: reservationsWithFinancialTerms.map((reservation) => reservation.id),
       amount: totalAmount,
     });
     const response = await cashfree.PGCreateOrder({
@@ -95,12 +122,7 @@ async function createPayment({
       gatewayResponse: response.data,
     });
 
-    const fallbackFoodAmount =
-      reservations.length === 1 ? roundMoney(totalFoodAmount ?? totalAmount) : 0;
-    const fallbackDepositAmount =
-      reservations.length === 1 ? roundMoney(reliabilityDepositAmount) : 0;
-
-    for (const reservation of reservations) {
+    for (const reservation of reservationsWithFinancialTerms) {
       const foodAmount = getReservationComponent(
         reservation,
         "food_amount",
@@ -112,13 +134,17 @@ async function createPayment({
         fallbackDepositAmount
       );
       const rowAmount = roundMoney(foodAmount + depositAmount);
+      const financialTerms =
+        reservation.financial_terms || buildPaymentFinancialTerms({ foodAmount });
 
       const paymentRow = await client.query(
         `
         INSERT INTO payments
         (reservation_id, order_id, payment_session_id, amount, status,
-         food_amount, reliability_deposit_amount, reliability_deposit_status)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7)
+         food_amount, reliability_deposit_amount, reliability_deposit_status,
+         commission_percent, commission_amount, provider_amount,
+         food_amount_snapshot, platform_amount)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING *
         `,
         [
@@ -129,6 +155,11 @@ async function createPayment({
           foodAmount,
           depositAmount,
           depositAmount > 0 ? "held" : "not_required",
+          financialTerms.commission_percent,
+          financialTerms.commission_amount,
+          financialTerms.provider_amount,
+          financialTerms.food_amount_snapshot,
+          financialTerms.platform_amount,
         ]
       );
 
@@ -140,10 +171,15 @@ async function createPayment({
         payment: paymentRow.rows[0],
         foodAmount,
         depositAmount,
+        commissionAmount: financialTerms.commission_amount,
         currency: "INR",
         sourceMetadata: {
           order_id: orderId,
           payment_session_id: paymentSessionId,
+          commission_percent: financialTerms.commission_percent,
+          provider_amount: financialTerms.provider_amount,
+          food_amount_snapshot: financialTerms.food_amount_snapshot,
+          platform_amount: financialTerms.platform_amount,
         },
       });
     }
@@ -152,7 +188,7 @@ async function createPayment({
 
     const expiryTime = new Date(Date.now() + operationalPolicy.payment.holdTimeoutMs);
 
-    for (const reservation of reservations) {
+    for (const reservation of reservationsWithFinancialTerms) {
       await client.query(
         `UPDATE reservations SET payment_expires_at=$1 WHERE id=$2`,
         [expiryTime, reservation.id]
@@ -163,7 +199,9 @@ async function createPayment({
       .add(
         "payment-timeout",
         {
-          reservationIds: reservations.map((reservation) => reservation.id),
+          reservationIds: reservationsWithFinancialTerms.map(
+            (reservation) => reservation.id
+          ),
           userId: user?.id,
           orderId,
           paymentSessionId,
@@ -177,7 +215,9 @@ async function createPayment({
         logger.error("Payment timeout enqueue failed; reconciliation sweep will recover", {
           err,
           orderId,
-          reservationIds: reservations.map((reservation) => reservation.id),
+          reservationIds: reservationsWithFinancialTerms.map(
+            (reservation) => reservation.id
+          ),
         });
         void recordAlert({
           alertKey: "payment:timeout_enqueue_failure",
@@ -186,7 +226,9 @@ async function createPayment({
           message: "Payment timeout queue enqueue failed",
           metadata: {
             orderId,
-            reservationIds: reservations.map((reservation) => reservation.id),
+            reservationIds: reservationsWithFinancialTerms.map(
+              (reservation) => reservation.id
+            ),
             message: err?.message,
           },
         });
@@ -198,7 +240,9 @@ async function createPayment({
       eventName: "payment_initiated",
       metadata: {
         orderId,
-        reservationIds: reservations.map((reservation) => reservation.id),
+        reservationIds: reservationsWithFinancialTerms.map(
+          (reservation) => reservation.id
+        ),
         amount: roundMoney(totalAmount),
       },
     });
@@ -223,7 +267,9 @@ async function createPayment({
     logger.error("Cashfree order creation failed", {
       err,
       userId: user?.id,
-      reservationIds: reservations.map((reservation) => reservation.id),
+      reservationIds: reservationsWithFinancialTerms.map(
+        (reservation) => reservation.id
+      ),
       amount: totalAmount,
     });
     void recordAlert({
@@ -234,7 +280,9 @@ async function createPayment({
       metadata: {
         orderId,
         userId: user?.id,
-        reservationIds: reservations.map((reservation) => reservation.id),
+        reservationIds: reservationsWithFinancialTerms.map(
+          (reservation) => reservation.id
+        ),
         message: err?.message,
       },
     });

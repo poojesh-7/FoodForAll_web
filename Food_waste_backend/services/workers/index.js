@@ -82,6 +82,7 @@ async function startWorkers() {
   require("../../workers/StartDeliveryTimeout.worker");
   require("../../workers/StartPickupTimeout.worker");
   require("../../workers/paymentTimeout.worker");
+  require("../../workers/financialReconciliation.worker");
   require("../../workers/refund.worker");
   require("../../workers/trust.worker");
   require("../../workers/operationalCleanup.worker");

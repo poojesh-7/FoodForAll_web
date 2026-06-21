@@ -20,6 +20,9 @@ const EXPECTED_DELAYED_JOBS = {
     "payment-timeout": "Payment hold timeout guard.",
     "payment-reconciliation-sweep": "Repeat payment recovery sweep.",
   },
+  "financial-reconciliation-queue": {
+    "financial-reconciliation-sweep": "Repeat financial artifact repair sweep.",
+  },
   "refund-queue": {
     "refund-reconciliation-sweep": "Repeat refund recovery sweep.",
   },

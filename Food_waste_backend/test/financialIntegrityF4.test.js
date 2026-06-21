@@ -4,11 +4,16 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  buildPaymentFinancialTerms,
   buildSettlementAllocationSnapshot,
   getPlatformCommissionPercent,
   recordFinancialOperationLedgerStatus,
   recordSettlementAllocation,
 } = require("../shared/services/financialLedger.service");
+const {
+  paidPaymentMissingArtifactsPredicate,
+  repairPaymentFinancialArtifactsInTransaction,
+} = require("../shared/services/financialReconciliation.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const NGO_ID = "22222222-2222-4222-8222-222222222222";
@@ -69,19 +74,37 @@ function operation(overrides = {}) {
   };
 }
 
-function createLedgerClient(seedOwnership = ownership()) {
+function createLedgerClient(seedOwnership = ownership(), seedPayment = payment()) {
   const allocations = new Map();
   const providerSettlements = new Map();
   const ledger = new Map();
   const terminal = new Map();
+  const paymentUpdates = [];
 
   return {
     allocations,
     providerSettlements,
     ledger,
     terminal,
+    paymentUpdates,
     async query(sql, params = []) {
       const text = String(sql);
+
+      if (text.includes("FROM payments p") && text.includes("JOIN reservations r")) {
+        return {
+          rows: [
+            {
+              ...seedPayment,
+              reservation_user_id: USER_ID,
+              listing_id: "44444444-4444-4444-8444-444444444444",
+              pickup_type: "self",
+              reservation_status: "reserved",
+              reservation_payment_status: "paid",
+              provider_id: PROVIDER_ID,
+            },
+          ],
+        };
+      }
 
       if (text.includes("FROM payment_ownership")) {
         return { rows: seedOwnership ? [seedOwnership] : [] };
@@ -165,36 +188,61 @@ function createLedgerClient(seedOwnership = ownership()) {
         return { rows: [] };
       }
 
+      if (text.includes("UPDATE payments")) {
+        paymentUpdates.push({ params, text });
+        return { rowCount: 1, rows: [] };
+      }
+
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
 }
 
-test("F4 allocation snapshots freeze configured commission at transaction time", () => {
+test("T-FIN-1 allocation snapshots use payment creation commission terms", () => {
   const previous = process.env.PLATFORM_COMMISSION_PERCENT;
   process.env.PLATFORM_COMMISSION_PERCENT = "5";
-  const first = buildSettlementAllocationSnapshot({
+  const frozenTerms = buildPaymentFinancialTerms({ foodAmount: 100 });
+
+  process.env.PLATFORM_COMMISSION_PERCENT = "10";
+  const frozen = buildSettlementAllocationSnapshot({
+    payment: payment(frozenTerms),
+    paymentOwnership: ownership(),
+  });
+
+  const legacy = buildSettlementAllocationSnapshot({
     payment: payment(),
     paymentOwnership: ownership(),
   });
 
-  process.env.PLATFORM_COMMISSION_PERCENT = "8";
-  const second = buildSettlementAllocationSnapshot({
-    payment: payment(),
-    paymentOwnership: ownership(),
-  });
-
-  assert.equal(getPlatformCommissionPercent(), 8);
-  assert.equal(first.commission_percent, 5);
-  assert.equal(first.commission_amount, 5);
-  assert.equal(first.provider_amount, 95);
-  assert.equal(second.commission_percent, 8);
-  assert.equal(second.commission_amount, 8);
-  assert.equal(second.provider_amount, 92);
-  assert.equal(first.settlement_version, 1);
+  assert.equal(getPlatformCommissionPercent(), 10);
+  assert.equal(frozen.commission_percent, 5);
+  assert.equal(frozen.commission_amount, 5);
+  assert.equal(frozen.provider_amount, 95);
+  assert.equal(frozen.platform_amount, 5);
+  assert.equal(frozen.food_amount, 100);
+  assert.equal(frozen.metadata.commission_source, "payment_creation_snapshot");
+  assert.equal(legacy.commission_percent, 10);
+  assert.equal(legacy.commission_amount, 10);
+  assert.equal(legacy.provider_amount, 90);
+  assert.equal(legacy.metadata.commission_source, "legacy_env_fallback");
+  assert.equal(frozen.settlement_version, 1);
 
   if (previous === undefined) delete process.env.PLATFORM_COMMISSION_PERCENT;
   else process.env.PLATFORM_COMMISSION_PERCENT = previous;
+});
+
+test("T-FIN-1 partial payment commission snapshots are rejected", () => {
+  assert.throws(
+    () =>
+      buildSettlementAllocationSnapshot({
+        payment: payment({
+          commission_percent: 5,
+          commission_amount: 5,
+        }),
+        paymentOwnership: ownership(),
+      }),
+    /Payment financial snapshot is incomplete/
+  );
 });
 
 test("F4 user successful pickup creates payment, commission, deposit, and settlement ledger entries", async () => {
@@ -212,6 +260,55 @@ test("F4 user successful pickup creates payment, commission, deposit, and settle
   ]);
   assert.equal(client.allocations.size, 1);
   assert.equal(client.providerSettlements.size, 1);
+});
+
+test("T-FIN-1 reconciliation repair recreates missing settlement artifacts without duplicates", async () => {
+  const client = createLedgerClient(
+    ownership(),
+    payment(buildPaymentFinancialTerms({ foodAmount: 100 }))
+  );
+
+  await repairPaymentFinancialArtifactsInTransaction({
+    client,
+    paymentId: PAYMENT_ID,
+    ensureSchema: false,
+  });
+  assert.equal(client.allocations.size, 1);
+  assert.equal(client.providerSettlements.size, 1);
+  assert.equal(client.ledger.size, 5);
+
+  client.allocations.clear();
+  client.providerSettlements.clear();
+  client.ledger.clear();
+
+  await repairPaymentFinancialArtifactsInTransaction({
+    client,
+    paymentId: PAYMENT_ID,
+    ensureSchema: false,
+  });
+  assert.equal(client.allocations.size, 1);
+  assert.equal(client.providerSettlements.size, 1);
+  assert.equal(client.ledger.size, 5);
+
+  await repairPaymentFinancialArtifactsInTransaction({
+    client,
+    paymentId: PAYMENT_ID,
+    ensureSchema: false,
+  });
+  assert.equal(client.allocations.size, 1);
+  assert.equal(client.providerSettlements.size, 1);
+  assert.equal(client.ledger.size, 5);
+  assert.ok(client.paymentUpdates.length >= 3);
+});
+
+test("T-FIN-1 reconciliation scan targets paid payments missing required artifacts", () => {
+  const predicate = paidPaymentMissingArtifactsPredicate("p");
+
+  assert.match(predicate, /p\.status='paid'/);
+  assert.match(predicate, /payment_ownership/);
+  assert.match(predicate, /settlement_allocation_snapshots/);
+  assert.match(predicate, /provider_settlements/);
+  assert.match(predicate, /financial_ledger_entries/);
 });
 
 test("F4 user cancellation emits one terminal payment refund across duplicate replay", async () => {
@@ -330,7 +427,13 @@ test("F4 migration and schema declare immutable ledger and settlement readiness 
     path.resolve(__dirname, "../migrations/013_financial_settlement_accounting_f4.up.sql"),
     "utf8"
   );
-  const schema = fs.readFileSync(path.resolve(__dirname, "../../schema.sql"), "utf8");
+  const schemaPath = path.resolve(__dirname, "../../schema.sql");
+  const schema = fs.readFileSync(
+    fs.existsSync(schemaPath)
+      ? schemaPath
+      : path.resolve(__dirname, "../../schema_db_2.sql"),
+    "utf8"
+  );
 
   for (const table of [
     "financial_ledger_entries",
@@ -346,4 +449,32 @@ test("F4 migration and schema declare immutable ledger and settlement readiness 
   assert.match(migration, /prevent_financial_ledger_mutation/);
   assert.match(migration, /idx_financial_refund_terminal_once/);
   assert.match(migration, /idx_financial_ledger_entries_idempotency_key/);
+});
+
+test("T-FIN-1 migration adds nullable payment financial term snapshots", () => {
+  const migration = fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../migrations/034_financial_integrity_hardening_tfin1.up.sql"
+    ),
+    "utf8"
+  );
+  const rollback = fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../migrations/034_financial_integrity_hardening_tfin1.down.sql"
+    ),
+    "utf8"
+  );
+
+  for (const column of [
+    "commission_percent",
+    "commission_amount",
+    "provider_amount",
+    "food_amount_snapshot",
+    "platform_amount",
+  ]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`));
+    assert.match(rollback, new RegExp(`DROP COLUMN IF EXISTS ${column}`));
+  }
 });

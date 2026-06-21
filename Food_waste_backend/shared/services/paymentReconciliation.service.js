@@ -49,6 +49,7 @@ const {
   prepareLifecycleAccounting,
 } = require("./lifecycleAccounting.service");
 const {
+  buildPaymentFinancialTerms,
   ensureSettlementAccountingSchema,
   recordSettlementAllocation,
 } = require("./financialLedger.service");
@@ -185,7 +186,12 @@ async function ensurePaymentHardeningSchema(_client = pool) {
         ADD COLUMN IF NOT EXISTS reliability_deposit_refund_attempts INTEGER DEFAULT 0,
         ADD COLUMN IF NOT EXISTS payment_terminal_at TIMESTAMP NULL,
         ADD COLUMN IF NOT EXISTS refund_terminal_at TIMESTAMP NULL,
-        ADD COLUMN IF NOT EXISTS financial_state_version INTEGER NOT NULL DEFAULT 0
+        ADD COLUMN IF NOT EXISTS financial_state_version INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS commission_percent NUMERIC(6,3) NULL,
+        ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(12,2) NULL,
+        ADD COLUMN IF NOT EXISTS provider_amount NUMERIC(12,2) NULL,
+        ADD COLUMN IF NOT EXISTS food_amount_snapshot NUMERIC(12,2) NULL,
+        ADD COLUMN IF NOT EXISTS platform_amount NUMERIC(12,2) NULL
       `);
 
       await client.query(`
@@ -801,16 +807,27 @@ async function recordWebhookAuditSafe(event, processingStatus, options = {}) {
 }
 
 function reservationAttemptSnapshot(reservations) {
-  return (reservations || []).map((reservation) => ({
-    id: reservation.id,
-    listing_id: reservation.listing_id,
-    user_id: reservation.user_id,
-    pickup_type: reservation.pickup_type,
-    food_amount: roundMoney(reservation.food_amount),
-    reliability_deposit_amount: roundMoney(
-      reservation.reliability_deposit_amount
-    ),
-  }));
+  return (reservations || []).map((reservation) => {
+    const foodAmount = roundMoney(reservation.food_amount);
+    const financialTerms =
+      reservation.financial_terms || buildPaymentFinancialTerms({ foodAmount });
+
+    return {
+      id: reservation.id,
+      listing_id: reservation.listing_id,
+      user_id: reservation.user_id,
+      pickup_type: reservation.pickup_type,
+      food_amount: foodAmount,
+      reliability_deposit_amount: roundMoney(
+        reservation.reliability_deposit_amount
+      ),
+      commission_percent: financialTerms.commission_percent,
+      commission_amount: financialTerms.commission_amount,
+      provider_amount: financialTerms.provider_amount,
+      food_amount_snapshot: financialTerms.food_amount_snapshot,
+      platform_amount: financialTerms.platform_amount,
+    };
+  });
 }
 
 async function recordPaymentOrderAttempt({
@@ -2501,6 +2518,16 @@ async function materializeMissingPaymentsForAttempt(attempt, paymentDetails = {}
         const foodAmount = roundMoney(item.food_amount);
         const depositAmount = roundMoney(item.reliability_deposit_amount);
         const amount = roundMoney(foodAmount + depositAmount);
+        const financialTerms =
+          item.commission_percent !== null && item.commission_percent !== undefined
+            ? buildPaymentFinancialTerms({
+                foodAmountSnapshot: item.food_amount_snapshot,
+                commissionPercent: item.commission_percent,
+                commissionAmount: item.commission_amount,
+                providerAmount: item.provider_amount,
+                platformAmount: item.platform_amount,
+              })
+            : buildPaymentFinancialTerms({ foodAmount });
 
         const inserted = await client.query(
           `
@@ -2513,9 +2540,14 @@ async function materializeMissingPaymentsForAttempt(attempt, paymentDetails = {}
             food_amount,
             reliability_deposit_amount,
             reliability_deposit_status,
+            commission_percent,
+            commission_amount,
+            provider_amount,
+            food_amount_snapshot,
+            platform_amount,
             reconciliation_status
           )
-          VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,'recovered_missing_payment_row')
+          VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12,'recovered_missing_payment_row')
           RETURNING *
           `,
           [
@@ -2526,6 +2558,11 @@ async function materializeMissingPaymentsForAttempt(attempt, paymentDetails = {}
             foodAmount,
             depositAmount,
             depositAmount > 0 ? "held" : "not_required",
+            financialTerms.commission_percent,
+            financialTerms.commission_amount,
+            financialTerms.provider_amount,
+            financialTerms.food_amount_snapshot,
+            financialTerms.platform_amount,
           ]
         );
 
@@ -2547,11 +2584,16 @@ async function materializeMissingPaymentsForAttempt(attempt, paymentDetails = {}
           payment: inserted.rows[0],
           foodAmount,
           depositAmount,
+          commissionAmount: financialTerms.commission_amount,
           currency: attempt.currency || "INR",
           sourceMetadata: {
             order_id: attempt.order_id,
             payment_session_id: attempt.payment_session_id,
             recovery_source: "payment_order_attempt",
+            commission_percent: financialTerms.commission_percent,
+            provider_amount: financialTerms.provider_amount,
+            food_amount_snapshot: financialTerms.food_amount_snapshot,
+            platform_amount: financialTerms.platform_amount,
           },
         });
       }

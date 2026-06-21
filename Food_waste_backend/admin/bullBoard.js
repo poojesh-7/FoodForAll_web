@@ -9,6 +9,7 @@ const deliveryQueue = require("../queues/delivery.queue");
 const alertQueue = require("../queues/expiryAlert.queue");
 const notificationQueue = require("../queues/notification.queue");
 const paymentQueue = require("../queues/payment.queue");
+const financialReconciliationQueue = require("../queues/financialReconciliation.queue");
 const refundQueue = require("../queues/refund.queue");
 const trustQueue = require("../queues/trust.queue");
 const operationalCleanupQueue = require("../queues/operationalCleanup.queue");
@@ -25,6 +26,7 @@ createBullBoard({
     new BullMQAdapter(deliveryQueue),
     new BullMQAdapter(notificationQueue),
     new BullMQAdapter(paymentQueue),
+    new BullMQAdapter(financialReconciliationQueue),
     new BullMQAdapter(refundQueue),
     new BullMQAdapter(trustQueue),
     new BullMQAdapter(operationalCleanupQueue),

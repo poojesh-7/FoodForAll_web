@@ -25,6 +25,24 @@ test("classifies expected future delayed jobs as valid", () => {
   assert.equal(result.expected_delay, true);
 });
 
+test("classifies financial reconciliation sweeps as expected delayed jobs", () => {
+  const now = Date.UTC(2026, 5, 10, 8, 0, 0);
+  const result = classifyDelayedJob(
+    "financial-reconciliation-queue",
+    {
+      name: "financial-reconciliation-sweep",
+      timestamp: now,
+      delay: 30 * 60 * 1000,
+      attemptsMade: 0,
+      opts: { attempts: 5 },
+    },
+    now
+  );
+
+  assert.equal(result.delayed_classification, "valid");
+  assert.equal(result.expected_delay, true);
+});
+
 test("classifies BullMQ backoff delays as retry pending", () => {
   const now = Date.UTC(2026, 5, 10, 8, 0, 0);
   const result = classifyDelayedJob(

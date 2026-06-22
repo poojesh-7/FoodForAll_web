@@ -5,6 +5,7 @@ const {
 const { withTransaction } = require("../utils/transaction");
 const {
   ensureSettlementAccountingSchema,
+  recordProviderSettlementPaidLedger,
 } = require("./financialLedger.service");
 
 const ACCOUNT_TYPES = new Set(["UPI", "BANK"]);
@@ -654,7 +655,20 @@ async function transitionProviderSettlementStatus({
       ]
     );
 
-    return serializeSettlement(result.rows[0]);
+    const updated = result.rows[0];
+
+    if (nextStatus === "paid") {
+      await recordProviderSettlementPaidLedger({
+        client: db,
+        settlement: updated,
+        metadata: {
+          source: "manual_provider_settlement_transition",
+          admin_id: adminId || null,
+        },
+      });
+    }
+
+    return serializeSettlement(updated);
   };
 
   if (client) return transitionSettlementStatus(client);

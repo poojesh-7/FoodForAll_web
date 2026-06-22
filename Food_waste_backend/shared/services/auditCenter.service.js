@@ -74,8 +74,8 @@ const SOURCE_INVENTORY = [
   },
   {
     domain: "financial",
-    source: "financial_ledger_entries, provider_settlements, settlement_batches, financial_state_transitions",
-    reuse: "Ledger, settlement, refund, webhook audit, and reconciliation event sources.",
+    source: "financial_ledger_entries, financial_accounting_classifications, provider_settlements, settlement_batches, financial_state_transitions",
+    reuse: "Ledger, accounting classification, settlement, refund, webhook audit, and reconciliation event sources.",
     status: "reused",
   },
   {
@@ -112,7 +112,7 @@ const ANALYSIS = {
     "Trust: trust_events plus admin_trust_actions; trust_event_effects is summarized as supporting lineage.",
     "Moderation and appeals: existing event tables remain the authoritative source of lifecycle changes.",
     "Incidents: incident_events is the authoritative response timeline, with incident_records, notes, and postmortems as supporting records.",
-    "Financial: immutable ledger, settlement snapshots, terminal refund records, webhook audit log, and state transitions are reused directly.",
+    "Financial: immutable ledger, accounting classifications, settlement snapshots, terminal refund records, webhook audit log, and state transitions are reused directly.",
     "Governance: dashboard/intelligence/business metrics services remain informational-only and are referenced as derived sources.",
     "Compliance: compliance_events is the immutable source for retention policy, privacy, deletion, and archival actions.",
   ],
@@ -128,6 +128,7 @@ const ANALYSIS = {
     "Migration 022 adds audit timeline indexes only; it creates no new mutable audit record table.",
     "Migration 023 adds immutable incident management tables for T7.3.",
     "Migration 025 adds retention policies, deletion request workflow records, archive records, and immutable compliance_events.",
+    "Migration 036 adds accounting classifications and gateway fee storage as visibility-only financial reporting fields.",
   ],
 };
 
@@ -746,7 +747,21 @@ function financialLedgerSource() {
       fle.reservation_id::text AS target_id,
       fle.reservation_id::text AS target_label,
       fle.event_type::text AS event_type,
-      CONCAT(fle.event_type, ' ', fle.amount, ' ', fle.currency)::text AS details,
+      CONCAT_WS(
+        ' | ',
+        CONCAT(fle.event_type, ' ', fle.amount, ' ', fle.currency),
+        CASE acct.resolved_accounting_category
+          WHEN 'platform_commission_revenue' THEN 'Commission Revenue'
+          WHEN 'gateway_fee_expense' THEN 'Gateway Fee Expense'
+          WHEN 'reliability_deposit_held' THEN 'Deposit Held'
+          WHEN 'reliability_deposit_refunded' THEN 'Deposit Refunded'
+          WHEN 'reliability_deposit_retained' THEN 'Deposit Retained'
+          WHEN 'provider_settlement_liability' THEN 'Provider Liability'
+          WHEN 'provider_settlement_paid' THEN 'Provider Paid'
+          WHEN 'refund_expense' THEN 'Refund'
+          ELSE NULL
+        END
+      )::text AS details,
       'financial_ledger_entries'::text AS source_table,
       fle.id::text AS source_event_id,
       fle.id::text AS source_record_id,
@@ -769,12 +784,49 @@ function financialLedgerSource() {
         'refund_id', fle.refund_id,
         'source_type', fle.source_type,
         'source_id', fle.source_id,
+        'accounting_category', acct.resolved_accounting_category,
+        'accounting_category_label',
+          CASE acct.resolved_accounting_category
+            WHEN 'platform_commission_revenue' THEN 'Commission Revenue'
+            WHEN 'gateway_fee_expense' THEN 'Gateway Fee Expense'
+            WHEN 'reliability_deposit_held' THEN 'Deposit Held'
+            WHEN 'reliability_deposit_refunded' THEN 'Deposit Refunded'
+            WHEN 'reliability_deposit_retained' THEN 'Deposit Retained'
+            WHEN 'provider_settlement_liability' THEN 'Provider Liability'
+            WHEN 'provider_settlement_paid' THEN 'Provider Paid'
+            WHEN 'refund_expense' THEN 'Refund'
+            ELSE NULL
+          END,
         'idempotency_key', fle.idempotency_key,
         'metadata', fle.metadata
       ) AS metadata,
-      CONCAT_WS(' ', fle.id, fle.reservation_id, fle.payment_id, fle.payment_session_id, fle.provider_settlement_id, fle.settlement_batch_id, fle.event_type, fle.refund_id, fle.source_type, fle.source_id, fle.idempotency_key)::text AS search_text
+      CONCAT_WS(' ', fle.id, fle.reservation_id, fle.payment_id, fle.payment_session_id, fle.provider_settlement_id, fle.settlement_batch_id, fle.event_type, acct.resolved_accounting_category, fle.refund_id, fle.source_type, fle.source_id, fle.idempotency_key)::text AS search_text
     FROM financial_ledger_entries fle
     LEFT JOIN users actor ON actor.id = fle.actor_user_id
+    LEFT JOIN LATERAL (
+      SELECT accounting_category
+      FROM financial_accounting_classifications fac
+      WHERE fac.financial_ledger_entry_id=fle.id
+      ORDER BY fac.created_at DESC, fac.id DESC
+      LIMIT 1
+    ) fac ON true
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(
+        fac.accounting_category,
+        fle.accounting_category,
+        CASE fle.event_type
+          WHEN 'platform_commission' THEN 'platform_commission_revenue'
+          WHEN 'gateway_fee_recorded' THEN 'gateway_fee_expense'
+          WHEN 'deposit_collected' THEN 'reliability_deposit_held'
+          WHEN 'deposit_refunded' THEN 'reliability_deposit_refunded'
+          WHEN 'deposit_retained' THEN 'reliability_deposit_retained'
+          WHEN 'settlement_allocated' THEN 'provider_settlement_liability'
+          WHEN 'provider_settlement_paid' THEN 'provider_settlement_paid'
+          WHEN 'refund_issued' THEN 'refund_expense'
+          ELSE NULL
+        END
+      ) AS resolved_accounting_category
+    ) acct
   `;
 }
 

@@ -11,6 +11,9 @@ const {
   prepareRefundExecution,
   validateRefundPlan,
 } = require("../shared/services/refundExecution.service");
+const {
+  ACCOUNTING_CATEGORIES,
+} = require("../shared/services/financialLedger.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const PROVIDER_ID = "33333333-3333-4333-8333-333333333333";
@@ -62,6 +65,9 @@ function depositPlan() {
 
 function createOperationClient() {
   const operations = new Map();
+  const ledger = new Map();
+  const classifications = new Map();
+  const terminal = new Map();
 
   function rowFromInsert(params) {
     return {
@@ -91,6 +97,9 @@ function createOperationClient() {
 
   return {
     operations,
+    ledger,
+    classifications,
+    terminal,
     async query(sql, params = []) {
       const text = String(sql);
 
@@ -99,6 +108,79 @@ function createOperationClient() {
         if (operations.has(row.idempotency_key)) return { rows: [] };
         operations.set(row.idempotency_key, row);
         return { rows: [row] };
+      }
+
+      if (text.includes("INSERT INTO financial_ledger_entries")) {
+        const key = params[18];
+        if (ledger.has(key)) return { rows: [] };
+        const row = {
+          id: `ledger_${ledger.size + 1}`,
+          reservation_id: params[0],
+          payment_id: params[1],
+          payment_session_id: params[2],
+          payment_ownership_id: params[3],
+          settlement_allocation_id: params[4],
+          provider_settlement_id: params[5],
+          settlement_batch_id: params[6],
+          event_type: params[7],
+          amount: params[8],
+          currency: params[9],
+          actor_user_id: params[10],
+          actor_role: params[11],
+          counterparty_user_id: params[12],
+          counterparty_role: params[13],
+          refund_id: params[14],
+          source_type: params[15],
+          source_id: params[16],
+          accounting_category: params[17],
+          idempotency_key: key,
+          metadata: JSON.parse(params[19] || "{}"),
+        };
+        ledger.set(key, row);
+        return { rows: [{ ...row }] };
+      }
+
+      if (
+        text.includes("FROM financial_ledger_entries") &&
+        text.includes("WHERE idempotency_key=$1")
+      ) {
+        return { rows: [ledger.get(params[0])].filter(Boolean).map((row) => ({ ...row })) };
+      }
+
+      if (text.includes("INSERT INTO financial_accounting_classifications")) {
+        const key = params[12];
+        if (classifications.has(key)) return { rows: [] };
+        const row = {
+          id: `classification_${classifications.size + 1}`,
+          financial_ledger_entry_id: params[0],
+          reservation_id: params[1],
+          payment_id: params[2],
+          payment_session_id: params[3],
+          provider_settlement_id: params[4],
+          accounting_category: params[5],
+          source_event_type: params[6],
+          amount: params[7],
+          currency: params[8],
+          refund_id: params[9],
+          source_type: params[10],
+          source_id: params[11],
+          idempotency_key: key,
+          metadata: JSON.parse(params[13] || "{}"),
+        };
+        classifications.set(key, row);
+        return { rows: [{ ...row }] };
+      }
+
+      if (text.includes("INSERT INTO financial_refund_terminal_records")) {
+        const key = params[7];
+        if (!terminal.has(key)) {
+          terminal.set(key, {
+            refund_type: params[2],
+            terminal_status: params[4],
+            amount: params[5],
+          });
+        }
+        return { rows: [] };
       }
 
       if (text.includes("FROM financial_operations")) {
@@ -202,6 +284,10 @@ test("refund execution is idempotent across retries and terminal duplicates", as
   assert.equal(replay.duplicatePrevented, true);
   assert.equal(replay.shouldExecute, false);
   assert.equal(client.operations.size, 1);
+  assert.deepEqual(
+    Array.from(client.classifications.values()).map((row) => row.accounting_category),
+    [ACCOUNTING_CATEGORIES.REFUND_EXPENSE]
+  );
 });
 
 test("concurrent duplicate preparation creates one financial operation", async () => {
@@ -254,6 +340,10 @@ test("webhook replay status updates are safe and repeatable", async () => {
   assert.equal(replay.length, 1);
   assert.equal(replay[0].status, "succeeded");
   assert.equal(replay[0].metadata.source, "cashfree_webhook_replay");
+  assert.deepEqual(
+    Array.from(client.classifications.values()).map((row) => row.accounting_category),
+    [ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_REFUNDED]
+  );
 });
 
 test("refund execution rejects provider refund ownership", () => {

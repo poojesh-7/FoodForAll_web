@@ -118,6 +118,17 @@ function complianceExecutionLines(event: AuditCenterEvent) {
   return lines;
 }
 
+function financialAccountingLines(event: AuditCenterEvent) {
+  if (event.domain !== "financial") return [];
+  const metadata = metadataObject(event.metadata);
+  const category = metadata?.accounting_category;
+  if (!category) return [];
+
+  return [
+    `Category: ${displayValue(metadata?.accounting_category_label || label(category))}`,
+  ];
+}
+
 function parseDomains(value: string | null) {
   const domains = String(value || "")
     .split(",")
@@ -289,6 +300,7 @@ function EventDetails({ event }: { event: AuditCenterEvent | null }) {
     return <AdminStateBlock title="Select an audit event." />;
   }
   const executionLines = complianceExecutionLines(event);
+  const accountingLines = financialAccountingLines(event);
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -377,6 +389,19 @@ function EventDetails({ event }: { event: AuditCenterEvent | null }) {
           </p>
           <ul className="mt-2 space-y-1 text-sm text-zinc-700">
             {executionLines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {accountingLines.length ? (
+        <div className="border-t border-zinc-100 p-4">
+          <p className="text-xs font-medium uppercase text-zinc-500">
+            Financial Classification
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-zinc-700">
+            {accountingLines.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>

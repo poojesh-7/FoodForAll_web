@@ -105,6 +105,20 @@ test("audit center filters normalize domain and export bounds", () => {
   assert.equal(filters.limit, 5000);
 });
 
+test("audit center financial source exposes accounting classifications", async () => {
+  const client = createClient();
+
+  await getAuditCenter({
+    client,
+    domains: "financial",
+    limit: 10,
+  });
+
+  assert.match(client.calls[0].sql, /financial_accounting_classifications/);
+  assert.match(client.calls[0].sql, /accounting_category/);
+  assert.match(client.calls[0].sql, /accounting_category_label/);
+});
+
 test("audit export CSV keeps lineage while removing sensitive metadata", () => {
   const metadata = sanitizeMetadata({
     idempotency_key: "idem-ok",

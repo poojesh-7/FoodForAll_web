@@ -4,11 +4,15 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  ACCOUNTING_CATEGORIES,
   buildPaymentFinancialTerms,
   buildSettlementAllocationSnapshot,
+  getFinancialSummary,
   getPlatformCommissionPercent,
   recordFinancialOperationLedgerStatus,
+  recordProviderSettlementPaidLedger,
   recordSettlementAllocation,
+  repairMissingAccountingClassificationsForPayment,
 } = require("../shared/services/financialLedger.service");
 const {
   paidPaymentMissingArtifactsPredicate,
@@ -78,6 +82,7 @@ function createLedgerClient(seedOwnership = ownership(), seedPayment = payment()
   const allocations = new Map();
   const providerSettlements = new Map();
   const ledger = new Map();
+  const classifications = new Map();
   const terminal = new Map();
   const paymentUpdates = [];
 
@@ -85,6 +90,7 @@ function createLedgerClient(seedOwnership = ownership(), seedPayment = payment()
     allocations,
     providerSettlements,
     ledger,
+    classifications,
     terminal,
     paymentUpdates,
     async query(sql, params = []) {
@@ -164,15 +170,78 @@ function createLedgerClient(seedOwnership = ownership(), seedPayment = payment()
       }
 
       if (text.includes("INSERT INTO financial_ledger_entries")) {
-        const key = params[17];
+        const key = params[18];
         if (ledger.has(key)) return { rows: [] };
         const row = {
+          id: `ledger-${ledger.size + 1}`,
+          reservation_id: params[0],
+          payment_id: params[1],
+          payment_session_id: params[2],
+          payment_ownership_id: params[3],
+          settlement_allocation_id: params[4],
+          provider_settlement_id: params[5],
+          settlement_batch_id: params[6],
           event_type: params[7],
           amount: params[8],
+          currency: params[9],
+          actor_user_id: params[10],
+          actor_role: params[11],
+          counterparty_user_id: params[12],
+          counterparty_role: params[13],
           refund_id: params[14],
+          source_type: params[15],
+          source_id: params[16],
+          accounting_category: params[17],
           idempotency_key: key,
+          metadata: JSON.parse(params[19] || "{}"),
         };
         ledger.set(key, row);
+        return { rows: [row] };
+      }
+
+      if (
+        text.includes("FROM financial_ledger_entries") &&
+        text.includes("WHERE idempotency_key=$1")
+      ) {
+        return { rows: [ledger.get(params[0])].filter(Boolean) };
+      }
+
+      if (
+        text.includes("FROM financial_ledger_entries") &&
+        text.includes("event_type = ANY")
+      ) {
+        const eventTypes = new Set(params[2] || []);
+        return {
+          rows: Array.from(ledger.values()).filter(
+            (row) =>
+              row.reservation_id === params[0] &&
+              row.payment_session_id === params[1] &&
+              eventTypes.has(row.event_type)
+          ),
+        };
+      }
+
+      if (text.includes("INSERT INTO financial_accounting_classifications")) {
+        const key = params[12];
+        if (classifications.has(key)) return { rows: [] };
+        const row = {
+          id: `classification-${classifications.size + 1}`,
+          financial_ledger_entry_id: params[0],
+          reservation_id: params[1],
+          payment_id: params[2],
+          payment_session_id: params[3],
+          provider_settlement_id: params[4],
+          accounting_category: params[5],
+          source_event_type: params[6],
+          amount: params[7],
+          currency: params[8],
+          refund_id: params[9],
+          source_type: params[10],
+          source_id: params[11],
+          idempotency_key: key,
+          metadata: JSON.parse(params[13] || "{}"),
+        };
+        classifications.set(key, row);
         return { rows: [row] };
       }
 
@@ -194,6 +263,93 @@ function createLedgerClient(seedOwnership = ownership(), seedPayment = payment()
       }
 
       throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+}
+
+function classificationCategories(client) {
+  return Array.from(client.classifications.values())
+    .map((row) => row.accounting_category)
+    .sort();
+}
+
+function createFinancialSummaryClient() {
+  const calls = [];
+
+  return {
+    calls,
+    async query(sql, params = []) {
+      const text = String(sql);
+      calls.push({ sql: text, params });
+
+      if (text.includes("WITH categorized AS")) {
+        return {
+          rows: [
+            {
+              accounting_category: ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE,
+              total: "10.00",
+              count: 1,
+              currency: "INR",
+              last_recorded_at: "2026-06-22T10:00:00.000Z",
+            },
+            {
+              accounting_category: ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_HELD,
+              total: "20.00",
+              count: 1,
+              currency: "INR",
+              last_recorded_at: "2026-06-22T10:01:00.000Z",
+            },
+            {
+              accounting_category: ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
+              total: "5.00",
+              count: 1,
+              currency: "INR",
+              last_recorded_at: "2026-06-22T10:02:00.000Z",
+            },
+          ],
+        };
+      }
+
+      if (
+        text.includes("FROM provider_settlements") &&
+        text.includes("pending_count")
+      ) {
+        return {
+          rows: [
+            {
+              pending: "95.00",
+              paid: "190.00",
+              pending_count: 1,
+              paid_count: 2,
+            },
+          ],
+        };
+      }
+
+      if (
+        text.includes("FROM payments") &&
+        text.includes("gateway_fee_amount")
+      ) {
+        return {
+          rows: [
+            {
+              gateway_fee_amount: "2.50",
+              gateway_tax_amount: "0.45",
+              recorded_count: 1,
+              last_recorded_at: "2026-06-22T10:03:00.000Z",
+            },
+          ],
+        };
+      }
+
+      if (
+        text.includes("FROM financial_ledger_entries fle") &&
+        text.includes("recent")
+      ) {
+        return { rows: [] };
+      }
+
+      return { rows: [] };
     },
   };
 }
@@ -258,6 +414,11 @@ test("F4 user successful pickup creates payment, commission, deposit, and settle
     "platform_commission",
     "settlement_allocated",
   ]);
+  assert.deepEqual(classificationCategories(client), [
+    ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE,
+    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_LIABILITY,
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_HELD,
+  ].sort());
   assert.equal(client.allocations.size, 1);
   assert.equal(client.providerSettlements.size, 1);
 });
@@ -276,10 +437,12 @@ test("T-FIN-1 reconciliation repair recreates missing settlement artifacts witho
   assert.equal(client.allocations.size, 1);
   assert.equal(client.providerSettlements.size, 1);
   assert.equal(client.ledger.size, 5);
+  assert.equal(client.classifications.size, 3);
 
   client.allocations.clear();
   client.providerSettlements.clear();
   client.ledger.clear();
+  client.classifications.clear();
 
   await repairPaymentFinancialArtifactsInTransaction({
     client,
@@ -289,6 +452,7 @@ test("T-FIN-1 reconciliation repair recreates missing settlement artifacts witho
   assert.equal(client.allocations.size, 1);
   assert.equal(client.providerSettlements.size, 1);
   assert.equal(client.ledger.size, 5);
+  assert.equal(client.classifications.size, 3);
 
   await repairPaymentFinancialArtifactsInTransaction({
     client,
@@ -298,6 +462,7 @@ test("T-FIN-1 reconciliation repair recreates missing settlement artifacts witho
   assert.equal(client.allocations.size, 1);
   assert.equal(client.providerSettlements.size, 1);
   assert.equal(client.ledger.size, 5);
+  assert.equal(client.classifications.size, 3);
   assert.ok(client.paymentUpdates.length >= 3);
 });
 
@@ -336,6 +501,9 @@ test("F4 user cancellation emits one terminal payment refund across duplicate re
 
   assert.equal(client.ledger.size, 1);
   assert.equal(Array.from(client.ledger.values())[0].event_type, "refund_issued");
+  assert.deepEqual(classificationCategories(client), [
+    ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
+  ]);
   assert.equal(client.terminal.size, 1);
 });
 
@@ -358,6 +526,9 @@ test("F4 user failed pickup and NGO deposit retention emit deposit_retained", as
     });
 
     assert.equal(Array.from(client.ledger.values())[0].event_type, "deposit_retained");
+    assert.deepEqual(classificationCategories(client), [
+      ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_RETAINED,
+    ]);
     assert.equal(Array.from(client.terminal.values())[0].terminal_status, "retained");
   }
 });
@@ -386,6 +557,9 @@ test("F4 NGO successful delivery and deposit refund emit deposit_refunded", asyn
   const row = Array.from(client.ledger.values())[0];
   assert.equal(row.event_type, "deposit_refunded");
   assert.equal(row.amount, 50);
+  assert.deepEqual(classificationCategories(client), [
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_REFUNDED,
+  ]);
   assert.equal(client.terminal.size, 1);
 });
 
@@ -420,6 +594,79 @@ test("F4 refund and reconciliation replays record failed and retried states idem
 
   const events = Array.from(client.ledger.values()).map((row) => row.event_type).sort();
   assert.deepEqual(events, ["refund_failed", "refund_retried"]);
+});
+
+test("T-FIN-2.1 provider settlement paid ledger is classified idempotently", async () => {
+  const client = createLedgerClient();
+  const settlement = {
+    id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    provider_id: PROVIDER_ID,
+    reservation_id: RESERVATION_ID,
+    payment_id: PAYMENT_ID,
+    payment_session_id: SESSION_ID,
+    settlement_allocation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    amount: 95,
+    currency: "INR",
+    status: "paid",
+    paid_at: "2026-06-22T10:00:00.000Z",
+    payment_reference: "manual-ref",
+    processed_by: USER_ID,
+  };
+
+  await recordProviderSettlementPaidLedger({ client, settlement });
+  await recordProviderSettlementPaidLedger({ client, settlement });
+
+  assert.equal(client.ledger.size, 1);
+  assert.equal(
+    Array.from(client.ledger.values())[0].event_type,
+    "provider_settlement_paid"
+  );
+  assert.deepEqual(classificationCategories(client), [
+    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID,
+  ]);
+});
+
+test("T-FIN-2.1 reconciliation repairs missing classifications without duplicate ledgers", async () => {
+  const client = createLedgerClient();
+  await recordSettlementAllocation({ client, payment: payment() });
+
+  const originalLedgerSize = client.ledger.size;
+  client.classifications.clear();
+
+  const firstRepair = await repairMissingAccountingClassificationsForPayment({
+    client,
+    payment: payment(),
+  });
+  const secondRepair = await repairMissingAccountingClassificationsForPayment({
+    client,
+    payment: payment(),
+  });
+
+  assert.equal(client.ledger.size, originalLedgerSize);
+  assert.equal(firstRepair.length, 3);
+  assert.equal(secondRepair.length, 0);
+  assert.deepEqual(classificationCategories(client), [
+    ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE,
+    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_LIABILITY,
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_HELD,
+  ].sort());
+});
+
+test("T-FIN-2.1 financial summary keeps deposits separate from revenue and settlements", async () => {
+  const client = createFinancialSummaryClient();
+
+  const summary = await getFinancialSummary({ client, limit: 5 });
+
+  assert.equal(summary.informational_only, true);
+  assert.equal(summary.mutation_api, false);
+  assert.equal(summary.totals.total_commission_revenue, 10);
+  assert.equal(summary.totals.total_deposits_held, 20);
+  assert.equal(summary.totals.total_provider_liabilities, 95);
+  assert.equal(summary.totals.total_provider_paid, 190);
+  assert.equal(summary.deposits.separated_from_commission_revenue, true);
+  assert.equal(summary.deposits.separated_from_provider_settlements, true);
+  assert.equal(summary.provider_settlements.excludes_deposits, true);
+  assert.equal(summary.gateway_fees.gst_calculated, false);
 });
 
 test("F4 migration and schema declare immutable ledger and settlement readiness structures", () => {
@@ -477,4 +724,30 @@ test("T-FIN-1 migration adds nullable payment financial term snapshots", () => {
     assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`));
     assert.match(rollback, new RegExp(`DROP COLUMN IF EXISTS ${column}`));
   }
+});
+
+test("T-FIN-2.1 migration adds accounting buckets and gateway fee storage", () => {
+  const migration = fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../migrations/036_financial_accounting_buckets_tfin21.up.sql"
+    ),
+    "utf8"
+  );
+  const rollback = fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../migrations/036_financial_accounting_buckets_tfin21.down.sql"
+    ),
+    "utf8"
+  );
+
+  assert.match(migration, /financial_accounting_classifications/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS accounting_category/);
+  assert.match(migration, /gateway_fee_amount/);
+  assert.match(migration, /gateway_tax_amount/);
+  assert.match(migration, /gateway_fee_recorded_at/);
+  assert.match(migration, /provider_settlement_paid/);
+  assert.match(rollback, /DROP TABLE IF EXISTS financial_accounting_classifications/);
+  assert.match(rollback, /DROP COLUMN IF EXISTS gateway_fee_amount/);
 });

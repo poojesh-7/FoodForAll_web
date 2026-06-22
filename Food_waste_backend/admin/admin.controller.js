@@ -15,6 +15,7 @@ const { getMetricsSnapshot } = require("../shared/services/metrics.service");
 const { getPaymentHealth } = require("../shared/services/paymentMonitoring.service");
 const {
   getFinancialDiagnostics,
+  getFinancialSummary,
 } = require("../shared/services/financialLedger.service");
 const {
   listAdminProviderSettlements,
@@ -1003,6 +1004,20 @@ exports.getFinancialDiagnostics = async (req, res) => {
       adminId: req.user?.id,
     });
     res.status(500).json({ error: "Failed to fetch financial diagnostics" });
+  }
+};
+
+exports.getFinancialSummary = async (req, res) => {
+  try {
+    const summary = await getFinancialSummary({ limit: req.query.limit });
+    res.json({ summary });
+  } catch (err) {
+    logger.error("Failed to fetch financial summary", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(500).json({ error: "Failed to fetch financial summary" });
   }
 };
 

@@ -143,8 +143,8 @@ async function createPayment({
         (reservation_id, order_id, payment_session_id, amount, status,
          food_amount, reliability_deposit_amount, reliability_deposit_status,
          commission_percent, commission_amount, provider_amount,
-         food_amount_snapshot, platform_amount)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12)
+         food_amount_snapshot, platform_amount, gateway_provider, gateway_order_id)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         RETURNING *
         `,
         [
@@ -160,6 +160,8 @@ async function createPayment({
           financialTerms.provider_amount,
           financialTerms.food_amount_snapshot,
           financialTerms.platform_amount,
+          "cashfree",
+          orderId,
         ]
       );
 

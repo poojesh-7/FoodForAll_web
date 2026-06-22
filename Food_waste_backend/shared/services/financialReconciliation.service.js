@@ -7,6 +7,7 @@ const { withTransaction } = require("../utils/transaction");
 const {
   ensureSettlementAccountingSchema,
   recordSettlementAllocation,
+  repairMissingAccountingClassificationsForPayment,
 } = require("./financialLedger.service");
 const {
   createFinancialOwnershipSnapshot,
@@ -28,6 +29,18 @@ function positiveLimit(value) {
   return Number.isFinite(parsed) && parsed > 0
     ? Math.min(Math.floor(parsed), 500)
     : DEFAULT_RECONCILIATION_LIMIT;
+}
+
+function ledgerCategoryMatchSql(ledgerAlias, category) {
+  return `(
+    ${ledgerAlias}.accounting_category='${category}'
+    OR EXISTS (
+      SELECT 1
+      FROM financial_accounting_classifications fac
+      WHERE fac.financial_ledger_entry_id=${ledgerAlias}.id
+      AND fac.accounting_category='${category}'
+    )
+  )`;
 }
 
 function paidPaymentMissingArtifactsPredicate(paymentAlias = "p") {
@@ -87,6 +100,7 @@ function paidPaymentMissingArtifactsPredicate(paymentAlias = "p") {
           FROM financial_ledger_entries fle
           WHERE fle.settlement_allocation_id=sas.id
           AND fle.event_type='platform_commission'
+          AND ${ledgerCategoryMatchSql("fle", "platform_commission_revenue")}
         )
       )
       OR EXISTS (
@@ -100,6 +114,7 @@ function paidPaymentMissingArtifactsPredicate(paymentAlias = "p") {
           FROM financial_ledger_entries fle
           WHERE fle.settlement_allocation_id=sas.id
           AND fle.event_type='deposit_collected'
+          AND ${ledgerCategoryMatchSql("fle", "reliability_deposit_held")}
         )
       )
       OR EXISTS (
@@ -124,6 +139,7 @@ function paidPaymentMissingArtifactsPredicate(paymentAlias = "p") {
           FROM financial_ledger_entries fle
           WHERE fle.provider_settlement_id=ps.id
           AND fle.event_type='settlement_allocated'
+          AND ${ledgerCategoryMatchSql("fle", "provider_settlement_liability")}
         )
       )
     )
@@ -147,7 +163,12 @@ async function ensureFinancialReconciliationSchema(client = pool) {
       ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(12,2) NULL,
       ADD COLUMN IF NOT EXISTS provider_amount NUMERIC(12,2) NULL,
       ADD COLUMN IF NOT EXISTS food_amount_snapshot NUMERIC(12,2) NULL,
-      ADD COLUMN IF NOT EXISTS platform_amount NUMERIC(12,2) NULL
+      ADD COLUMN IF NOT EXISTS platform_amount NUMERIC(12,2) NULL,
+      ADD COLUMN IF NOT EXISTS gateway_provider TEXT NULL,
+      ADD COLUMN IF NOT EXISTS gateway_order_id TEXT NULL,
+      ADD COLUMN IF NOT EXISTS gateway_fee_amount NUMERIC(12,2) NULL,
+      ADD COLUMN IF NOT EXISTS gateway_tax_amount NUMERIC(12,2) NULL,
+      ADD COLUMN IF NOT EXISTS gateway_fee_recorded_at TIMESTAMP NULL
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_payments_paid_financial_reconciliation
@@ -308,6 +329,12 @@ async function repairPaymentFinancialArtifactsInTransaction({
     throw new Error("settlement allocation repair did not produce a snapshot");
   }
 
+  const repairedClassifications =
+    await repairMissingAccountingClassificationsForPayment({
+      client,
+      payment,
+    });
+
   await client.query(
     `
     UPDATE payments
@@ -329,6 +356,7 @@ async function repairPaymentFinancialArtifactsInTransaction({
     allocationId: settlement.allocation.id,
     providerSettlementId: settlement.providerSettlement?.id || null,
     allocationInserted: settlement.inserted,
+    accountingClassificationsRepaired: repairedClassifications.length,
   };
 }
 
@@ -392,6 +420,8 @@ async function repairPaidPaymentFinancialArtifacts({
         reason: result.reason || null,
         allocation_id: result.allocationId || null,
         provider_settlement_id: result.providerSettlementId || null,
+        accounting_classifications_repaired:
+          result.accountingClassificationsRepaired || 0,
       },
       emitAudit
     );

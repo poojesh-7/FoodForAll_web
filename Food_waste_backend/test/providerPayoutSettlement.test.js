@@ -10,12 +10,17 @@ const {
   transitionProviderSettlementStatus,
   validatePayoutAccountInput,
 } = require("../shared/services/providerPayout.service");
+const {
+  ACCOUNTING_CATEGORIES,
+} = require("../shared/services/financialLedger.service");
 
 const PROVIDER_ID = "33333333-3333-4333-8333-333333333333";
 const ADMIN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 function createProviderFinanceClient() {
   const accounts = [];
+  const ledger = new Map();
+  const classifications = new Map();
   const settlements = new Map([
     [
       "settlement_pending",
@@ -84,6 +89,8 @@ function createProviderFinanceClient() {
 
   return {
     accounts,
+    ledger,
+    classifications,
     settlements,
     async query(sql, params = []) {
       const text = String(sql);
@@ -118,6 +125,67 @@ function createProviderFinanceClient() {
           updated_at: `2026-01-0${accounts.length + 1}T00:00:00.000Z`,
         };
         accounts.push(row);
+        return { rows: [{ ...row }] };
+      }
+
+      if (text.includes("INSERT INTO financial_ledger_entries")) {
+        const key = params[18];
+        if (ledger.has(key)) return { rows: [] };
+        const row = {
+          id: `ledger_${ledger.size + 1}`,
+          reservation_id: params[0],
+          payment_id: params[1],
+          payment_session_id: params[2],
+          payment_ownership_id: params[3],
+          settlement_allocation_id: params[4],
+          provider_settlement_id: params[5],
+          settlement_batch_id: params[6],
+          event_type: params[7],
+          amount: params[8],
+          currency: params[9],
+          actor_user_id: params[10],
+          actor_role: params[11],
+          counterparty_user_id: params[12],
+          counterparty_role: params[13],
+          refund_id: params[14],
+          source_type: params[15],
+          source_id: params[16],
+          accounting_category: params[17],
+          idempotency_key: key,
+          metadata: JSON.parse(params[19] || "{}"),
+        };
+        ledger.set(key, row);
+        return { rows: [{ ...row }] };
+      }
+
+      if (
+        text.includes("FROM financial_ledger_entries") &&
+        text.includes("WHERE idempotency_key=$1")
+      ) {
+        return { rows: [ledger.get(params[0])].filter(Boolean).map((row) => ({ ...row })) };
+      }
+
+      if (text.includes("INSERT INTO financial_accounting_classifications")) {
+        const key = params[12];
+        if (classifications.has(key)) return { rows: [] };
+        const row = {
+          id: `classification_${classifications.size + 1}`,
+          financial_ledger_entry_id: params[0],
+          reservation_id: params[1],
+          payment_id: params[2],
+          payment_session_id: params[3],
+          provider_settlement_id: params[4],
+          accounting_category: params[5],
+          source_event_type: params[6],
+          amount: params[7],
+          currency: params[8],
+          refund_id: params[9],
+          source_type: params[10],
+          source_id: params[11],
+          idempotency_key: key,
+          metadata: JSON.parse(params[13] || "{}"),
+        };
+        classifications.set(key, row);
         return { rows: [{ ...row }] };
       }
 
@@ -289,6 +357,12 @@ test("T-FIN-2 manual settlement transitions are replay-safe updates", async () =
   assert.equal(paid.payment_reference, "UTR123456");
   assert.equal(replay.id, paid.id);
   assert.equal(failed.status, "failed");
+  assert.equal(client.ledger.size, 1);
+  assert.equal(Array.from(client.ledger.values())[0].event_type, "provider_settlement_paid");
+  assert.deepEqual(
+    Array.from(client.classifications.values()).map((row) => row.accounting_category),
+    [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID]
+  );
   await assert.rejects(
     () =>
       transitionProviderSettlementStatus({

@@ -10,6 +10,9 @@ import type {
   AdminProviderSettlementConsoleResponse,
   AdminOperationalAlert,
   AdminOperationalAlertsResponse,
+  AdminFinancialSummaryData,
+  AdminFinancialSummaryQuery,
+  AdminFinancialSummaryResponse,
   AdminPaymentHealth,
   AdminPaymentHealthResponse,
   AdminQueueHealth,
@@ -137,6 +140,7 @@ export type AdminGovernanceIntelligence = GovernanceIntelligenceData;
 export type AdminGovernanceDashboard = GovernanceDashboardData;
 export type AdminAuditCenter = AuditCenterData;
 export type AdminBusinessMetrics = BusinessMetricsData;
+export type AdminFinancialSummary = AdminFinancialSummaryData;
 export type AdminComplianceDashboard = ComplianceDashboardData;
 export type AdminComplianceRequestDetail = ComplianceDeletionRequestDetail;
 export type AdminIncidentCenter = IncidentCenterData;
@@ -265,6 +269,16 @@ export async function getPaymentHealth(): Promise<AdminPaymentHealth> {
   >("/admin/payments/health");
 
   return getEnvelopeData<{ payments: AdminPaymentHealth }>(data).payments;
+}
+
+export async function getFinancialSummary(
+  params: AdminFinancialSummaryQuery = {}
+): Promise<AdminFinancialSummary> {
+  const { data } = await api.get<
+    AdminFinancialSummaryResponse | { summary: AdminFinancialSummary }
+  >("/admin/payments/financial-summary", { params });
+
+  return getEnvelopeData<{ summary: AdminFinancialSummary }>(data).summary;
 }
 
 export async function getOperationalAlerts(): Promise<AdminOperationalAlert[]> {
@@ -782,6 +796,7 @@ export const adminService = {
   getQueueHealth,
   retryFailedQueueJob,
   getPaymentHealth,
+  getFinancialSummary,
   getOperationalAlerts,
   getSecurityEvents,
   getOperationalMonitoring,

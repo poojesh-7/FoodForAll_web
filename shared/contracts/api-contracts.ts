@@ -2846,6 +2846,90 @@ export interface AdminPaymentHealth {
   webhooks?: DbRow;
   stale_sessions?: DbRow[];
 }
+export type FinancialAccountingCategory =
+  | "platform_commission_revenue"
+  | "gateway_fee_expense"
+  | "reliability_deposit_held"
+  | "reliability_deposit_refunded"
+  | "reliability_deposit_retained"
+  | "provider_settlement_liability"
+  | "provider_settlement_paid"
+  | "refund_expense";
+export interface AdminFinancialSummaryQuery {
+  limit?: number | string;
+}
+export interface FinancialCategoryTotal {
+  accounting_category: FinancialAccountingCategory | string;
+  label: string;
+  total: number | string;
+  count: number | string;
+  currency: string;
+  last_recorded_at?: ISODateString | null;
+}
+export interface FinancialSummaryEntry {
+  id: DbId;
+  reservation_id: DbId;
+  payment_id?: DbId | null;
+  payment_session_id: string;
+  provider_settlement_id?: DbId | null;
+  event_type: string;
+  accounting_category: FinancialAccountingCategory | string;
+  accounting_category_label: string;
+  amount: number | string;
+  currency: string;
+  refund_id?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  created_at?: ISODateString | null;
+}
+export interface AdminFinancialSummaryData {
+  generated_at: ISODateString;
+  currency: string;
+  informational_only: boolean;
+  mutation_api: boolean;
+  totals: {
+    total_commission_revenue: number | string;
+    total_deposits_held: number | string;
+    total_deposits_refunded: number | string;
+    total_deposits_retained: number | string;
+    total_provider_liabilities: number | string;
+    total_provider_paid: number | string;
+    total_refund_volume: number | string;
+    total_gateway_fee_expense: number | string;
+  };
+  revenue: {
+    commission_revenue: number | string;
+  };
+  deposits: {
+    held: number | string;
+    refunded: number | string;
+    retained: number | string;
+    separated_from_commission_revenue: boolean;
+    separated_from_provider_settlements: boolean;
+  };
+  provider_settlements: {
+    pending: number | string;
+    paid: number | string;
+    pending_count: number | string;
+    paid_count: number | string;
+    liability_recognized: number | string;
+    paid_classified: number | string;
+    excludes_deposits: boolean;
+  };
+  refunds: {
+    total_refund_amount: number | string;
+  };
+  gateway_fees: {
+    classified_expense: number | string;
+    gateway_fee_amount: number | string;
+    gateway_tax_amount: number | string;
+    recorded_count: number | string;
+    last_recorded_at?: ISODateString | null;
+    gst_calculated: boolean;
+  };
+  classification_totals: FinancialCategoryTotal[];
+  recent_entries: FinancialSummaryEntry[];
+}
 export interface AdminOperationalAlert {
   id: DbId;
   alert_key: string;
@@ -2961,6 +3045,8 @@ export interface AdminSecurityEvent {
 export type AdminOperationalSummaryResponse = ApiResponse<AdminOperationalSummary>;
 export type AdminQueueHealthResponse = ApiResponse<AdminQueueHealthData>;
 export type AdminPaymentHealthResponse = ApiResponse<{ payments: AdminPaymentHealth }>;
+export type AdminFinancialSummaryResponse =
+  ApiResponse<{ summary: AdminFinancialSummaryData }>;
 export type AdminOperationalAlertsResponse = ApiResponse<{ alerts: AdminOperationalAlert[] }>;
 export type OperationalMonitoringResponse = ApiResponse<{ monitoring: OperationalMonitoringData }>;
 export type AdminSecurityEventsResponse = ApiResponse<{ events: AdminSecurityEvent[] }>;
@@ -3729,6 +3815,16 @@ export const apiContracts = {
       request: { params: "NoRequestParams", query: "ProviderReportsAdminQuery", body: "NoRequestBody" },
       response: "ProviderReportsAdminResponse",
       statusCodes: [200, 401, 403, 500],
+    },
+    {
+      method: "GET",
+      path: "/api/v1/admin/payments/financial-summary",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin"],
+      request: { params: "NoRequestParams", query: "AdminFinancialSummaryQuery", body: "NoRequestBody" },
+      response: "AdminFinancialSummaryResponse",
+      statusCodes: [200, 401, 403, 500],
+      notes: "Read-only T-FIN-2.1 financial accounting summary. It exposes accounting visibility only and does not mutate payouts, refunds, taxes, or settlements.",
     },
     {
       method: "GET",

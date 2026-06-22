@@ -8,6 +8,7 @@ const navItems = [
   { href: "/admin/monitoring", label: "Monitoring" },
   { href: "/admin/incidents", label: "Incidents" },
   { href: "/admin/business-metrics", label: "Business Metrics" },
+  { href: "/admin/financials", label: "Financials" },
   { href: "/admin/settlements", label: "Settlements" },
   { href: "/admin/compliance", label: "Compliance" },
   { href: "/admin/governance-dashboard", label: "Governance" },

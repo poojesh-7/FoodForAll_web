@@ -21,6 +21,7 @@ router.get("/operations/summary", adminCtrl.getOperationalSummary);
 router.get("/operations/alerts", adminCtrl.getOperationalAlerts);
 router.get("/operations/security-events", adminCtrl.getSecurityEvents);
 router.get("/payments/health", adminCtrl.getPaymentHealth);
+router.get("/payments/financial-summary", adminCtrl.getFinancialSummary);
 router.get("/payments/financial-diagnostics", adminCtrl.getFinancialDiagnostics);
 router.get("/settlements", adminCtrl.getProviderSettlementConsole);
 router.patch("/settlements/:id/paid", adminActionLimiter, adminCtrl.markProviderSettlementPaid);

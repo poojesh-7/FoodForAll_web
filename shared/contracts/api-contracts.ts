@@ -757,6 +757,9 @@ export interface AdminProviderSettlementConsoleData {
 export interface AdminProviderSettlementConsoleQuery {
   status?: "pending" | "paid" | "failed" | "all" | string;
   limit?: string | number;
+  search?: string;
+  providerId?: DbId;
+  provider_id?: DbId;
 }
 
 export interface UpdateProviderSettlementStatusRequest {

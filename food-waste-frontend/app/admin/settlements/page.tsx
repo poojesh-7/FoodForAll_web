@@ -9,6 +9,7 @@ import { adminService } from "@/services/admin.service";
 import type {
   AdminProviderSettlementConsoleData,
   AdminProviderSettlementRow,
+  AdminProviderSettlementSummaryRow,
   DbId,
   ProviderPayoutAccount,
 } from "@shared/contracts/api-contracts";
@@ -60,6 +61,11 @@ function payoutAccountLabel(account: ProviderPayoutAccount | null) {
   ].filter(Boolean).join(" | ");
 }
 
+function payoutAccountStatus(account: ProviderPayoutAccount | null) {
+  if (!account) return "Not added";
+  return account.is_verified ? "Verified" : "Unverified";
+}
+
 function draftFor(
   drafts: Record<string, SettlementDraft>,
   settlement: AdminProviderSettlementRow
@@ -72,6 +78,8 @@ function draftFor(
 
 export default function AdminSettlementsPage() {
   const [filter, setFilter] = useState<SettlementFilter>("pending");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [consoleData, setConsoleData] =
     useState<AdminProviderSettlementConsoleData | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SettlementDraft>>({});
@@ -86,6 +94,9 @@ export default function AdminSettlementsPage() {
       setError("");
       const result = await adminService.getProviderSettlementConsole({
         status: filter,
+        search: searchQuery.trim() || undefined,
+        providerId: selectedProviderId || undefined,
+        limit: 500,
       });
       setConsoleData(result);
       setDrafts((current) => {
@@ -106,7 +117,7 @@ export default function AdminSettlementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, searchQuery, selectedProviderId]);
 
   useEffect(() => {
     let active = true;
@@ -117,6 +128,35 @@ export default function AdminSettlementsPage() {
       active = false;
     };
   }, [loadSettlements]);
+
+  function handleSearchChange(value: string) {
+    setSearchQuery(value);
+    setSelectedProviderId(null);
+    setConsoleData((current) =>
+      current ? { ...current, settlements: [] } : current
+    );
+  }
+
+  function handleFilterChange(value: SettlementFilter) {
+    setFilter(value);
+    setConsoleData((current) =>
+      current ? { ...current, settlements: [] } : current
+    );
+  }
+
+  function selectProvider(providerId: string) {
+    setSelectedProviderId(providerId);
+    setConsoleData((current) =>
+      current ? { ...current, settlements: [] } : current
+    );
+  }
+
+  function clearSelectedProvider() {
+    setSelectedProviderId(null);
+    setConsoleData((current) =>
+      current ? { ...current, settlements: [] } : current
+    );
+  }
 
   function updateDraft(
     settlementId: DbId,
@@ -180,13 +220,20 @@ export default function AdminSettlementsPage() {
     }
   }
 
-  const settlements = consoleData?.settlements || [];
   const providerSummary = consoleData?.summary || [];
-  const totalAmountDue = providerSummary.reduce(
+  const selectedProvider = selectedProviderId
+    ? providerSummary.find((row) => String(row.provider_id) === selectedProviderId) ||
+      null
+    : null;
+  const metricSummary: AdminProviderSettlementSummaryRow[] = selectedProvider
+    ? [selectedProvider]
+    : providerSummary;
+  const settlements = selectedProvider ? consoleData?.settlements || [] : [];
+  const totalAmountDue = metricSummary.reduce(
     (sum, row) => sum + Number(row.amount_due || 0),
     0
   );
-  const pendingSettlementCount = providerSummary.reduce(
+  const pendingSettlementCount = metricSummary.reduce(
     (sum, row) => sum + Number(row.pending_settlements || 0),
     0
   );
@@ -199,28 +246,40 @@ export default function AdminSettlementsPage() {
       {error && <AdminStateBlock title={error} tone="error" />}
       {success && <AdminStateBlock title={success} />}
 
-      <section className="flex flex-wrap gap-2 rounded-lg border border-zinc-200 bg-white p-2 shadow-sm">
-        {FILTERS.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            onClick={() => setFilter(item.value)}
-            className={`rounded-md px-3 py-2 text-sm font-medium ${
-              filter === item.value
-                ? "bg-zinc-950 text-white"
-                : "text-zinc-700 hover:bg-zinc-100"
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+      <section className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <label className="block max-w-xl text-sm">
+          <span className="font-medium text-zinc-700">Provider search</span>
+          <input
+            value={searchQuery}
+            onChange={(event) => handleSearchChange(event.target.value)}
+            placeholder="Search provider, restaurant, or payout account"
+            className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+          />
+        </label>
+
+        <div className="flex flex-wrap gap-2">
+          {FILTERS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => handleFilterChange(item.value)}
+              className={`rounded-md px-3 py-2 text-sm font-medium ${
+                filter === item.value
+                  ? "bg-zinc-950 text-white"
+                  : "text-zinc-700 hover:bg-zinc-100"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <AdminMetricCard
           label="Providers"
-          value={providerSummary.length}
-          detail="Providers in current filter"
+          value={metricSummary.length}
+          detail={selectedProvider ? "Selected provider" : "Matching providers"}
         />
         <AdminMetricCard
           label="Amount Due"
@@ -235,15 +294,24 @@ export default function AdminSettlementsPage() {
         <AdminMetricCard
           label="Rows Shown"
           value={settlements.length}
-          detail={label(filter)}
+          detail={selectedProvider ? label(filter) : "Select provider"}
         />
       </section>
 
       <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
         <div className="border-b border-zinc-200 px-4 py-3">
           <h2 className="text-base font-semibold text-zinc-950">
-            Provider Payout Overview
+            Provider Summary
           </h2>
+          {selectedProvider && (
+            <button
+              type="button"
+              onClick={clearSelectedProvider}
+              className="mt-2 text-sm font-medium text-zinc-700 underline-offset-4 hover:underline"
+            >
+              Clear selected provider
+            </button>
+          )}
         </div>
         {loading ? (
           <div className="p-4">
@@ -251,7 +319,7 @@ export default function AdminSettlementsPage() {
           </div>
         ) : providerSummary.length === 0 ? (
           <div className="p-4">
-            <AdminStateBlock title="No providers match this filter." />
+            <AdminStateBlock title="No providers match this search." />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -259,32 +327,58 @@ export default function AdminSettlementsPage() {
               <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
                 <tr>
                   <th className="px-4 py-3">Provider</th>
-                  <th className="px-4 py-3">Amount Due</th>
-                  <th className="px-4 py-3">Pending Settlements</th>
+                  <th className="px-4 py-3">Pending Amount</th>
+                  <th className="px-4 py-3">Pending Count</th>
                   <th className="px-4 py-3">Last Settlement</th>
-                  <th className="px-4 py-3">Payout Account</th>
+                  <th className="px-4 py-3">Payout Account Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {providerSummary.map((row) => (
-                  <tr key={String(row.provider_id)}>
-                    <td className="px-4 py-3 font-medium text-zinc-950">
-                      {providerName(row)}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {formatCurrency(row.amount_due)}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {row.pending_settlements}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {formatDateTimeOrFallback(row.last_settlement_at ?? null)}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {payoutAccountLabel(row.payout_account)}
-                    </td>
-                  </tr>
-                ))}
+                {providerSummary.map((row) => {
+                  const rowProviderId = String(row.provider_id);
+                  const selected = rowProviderId === selectedProviderId;
+                  return (
+                    <tr
+                      key={rowProviderId}
+                      className={selected ? "bg-zinc-50" : "hover:bg-zinc-50"}
+                    >
+                      <td className="px-4 py-3 font-medium text-zinc-950">
+                        <button
+                          type="button"
+                          onClick={() => selectProvider(rowProviderId)}
+                          className="text-left font-medium text-zinc-950 underline-offset-4 hover:underline"
+                        >
+                          {providerName(row)}
+                        </button>
+                        {row.restaurant_name &&
+                          row.restaurant_name !== row.provider_name && (
+                            <p className="mt-1 text-xs font-normal text-zinc-500">
+                              {row.provider_name ||
+                                row.provider_phone ||
+                                "Provider"}
+                            </p>
+                          )}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {formatCurrency(row.amount_due)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {row.pending_settlements} pending
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {formatDateTimeOrFallback(row.last_settlement_at ?? null)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        <p className="font-medium text-zinc-800">
+                          {payoutAccountStatus(row.payout_account)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {payoutAccountLabel(row.payout_account)}
+                        </p>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -294,12 +388,20 @@ export default function AdminSettlementsPage() {
       <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
         <div className="border-b border-zinc-200 px-4 py-3">
           <h2 className="text-base font-semibold text-zinc-950">
-            Settlement Actions
+            {selectedProvider
+              ? `${providerName(selectedProvider)} Settlement Details`
+              : "Settlement Details"}
           </h2>
         </div>
-        {settlements.length === 0 ? (
+        {!selectedProvider ? (
           <div className="p-4">
-            <AdminStateBlock title="No settlement rows to show." />
+            <AdminStateBlock title="Select a provider to view settlement details." />
+          </div>
+        ) : settlements.length === 0 ? (
+          <div className="p-4">
+            <AdminStateBlock
+              title={`No ${label(filter).toLowerCase()} settlement rows for this provider.`}
+            />
           </div>
         ) : (
           <div className="overflow-x-auto">

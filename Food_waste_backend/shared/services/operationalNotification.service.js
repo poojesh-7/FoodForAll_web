@@ -11,6 +11,7 @@ async function enqueueNotification({
   title = "Operational update",
   message,
   data = {},
+  idempotencyKey = null,
   queue = null,
 }) {
   if (!userId) return null;
@@ -22,7 +23,17 @@ async function enqueueNotification({
     title,
     message,
     data,
+    idempotencyKey,
   });
+}
+
+function formatSettlementAmount(value, currency = "INR") {
+  const amount = Number(value || 0);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: currency || "INR",
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(amount) ? amount : 0);
 }
 
 async function getAdminUserIds({ client = pool } = {}) {
@@ -266,6 +277,89 @@ async function notifyProviderReportSubmittedAgainstProvider({
   });
 }
 
+async function notifyProviderSettlementProcessed({
+  settlement,
+  queue = null,
+}) {
+  if (!settlement?.provider_id) return null;
+
+  return enqueueNotification({
+    userId: settlement.provider_id,
+    type: "provider_settlement_paid",
+    title: "Settlement Processed",
+    message: [
+      `Your settlement of ${formatSettlementAmount(
+        settlement.amount,
+        settlement.currency
+      )} has been marked paid.`,
+      "",
+      "Reference:",
+      settlement.payment_reference || "-",
+    ].join("\n"),
+    data: {
+      settlement_id: settlement.id,
+      payment_reference: settlement.payment_reference || null,
+      amount: settlement.amount,
+      currency: settlement.currency || "INR",
+      href: "/dashboard",
+    },
+    idempotencyKey: settlement.id
+      ? `provider_settlement_paid:${settlement.id}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider settlement paid notification failed", {
+      err,
+      settlementId: settlement.id,
+      providerId: settlement.provider_id,
+    });
+  });
+}
+
+async function notifyProviderSettlementFailed({
+  settlement,
+  queue = null,
+}) {
+  if (!settlement?.provider_id) return null;
+
+  const reason = trimSettlementReason(settlement.notes) || "No reason provided.";
+
+  return enqueueNotification({
+    userId: settlement.provider_id,
+    type: "provider_settlement_failed",
+    title: "Settlement Failed",
+    message: [
+      "Settlement processing failed.",
+      "",
+      "Reason:",
+      reason,
+    ].join("\n"),
+    data: {
+      settlement_id: settlement.id,
+      payment_reference: settlement.payment_reference || null,
+      amount: settlement.amount,
+      currency: settlement.currency || "INR",
+      reason,
+      href: "/dashboard",
+    },
+    idempotencyKey: settlement.id
+      ? `provider_settlement_failed:${settlement.id}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider settlement failed notification failed", {
+      err,
+      settlementId: settlement.id,
+      providerId: settlement.provider_id,
+    });
+  });
+}
+
+function trimSettlementReason(value) {
+  const reason = String(value || "").trim();
+  return reason ? reason.slice(0, 500) : "";
+}
+
 module.exports = {
   enqueueNotification,
   getAdminUserIds,
@@ -276,6 +370,8 @@ module.exports = {
   notifyNgoVerificationApproved,
   notifyNgoVerificationRejected,
   notifyProviderReportSubmittedAgainstProvider,
+  notifyProviderSettlementFailed,
+  notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
 };

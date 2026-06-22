@@ -9,6 +9,8 @@ const {
   notifyNgoVerificationApproved,
   notifyNgoVerificationRejected,
   notifyProviderReportSubmittedAgainstProvider,
+  notifyProviderSettlementFailed,
+  notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
 } = require("../shared/services/operationalNotification.service");
@@ -204,4 +206,55 @@ test("NGO verification decisions notify only the NGO account", async () => {
     assert.equal(queue.jobs[0].data.message, expectedMessage);
     assert.equal(queue.jobs[0].data.data.ngo_id, NGO_ID);
   }
+});
+
+test("provider settlement decisions notify only the provider account", async () => {
+  const paidQueue = createQueueStub();
+  const failedQueue = createQueueStub();
+
+  await notifyProviderSettlementProcessed({
+    settlement: {
+      id: "settlement-paid",
+      provider_id: PROVIDER_ID,
+      amount: 438.9,
+      currency: "INR",
+      payment_reference: "UTR123",
+    },
+    queue: paidQueue,
+  });
+  await notifyProviderSettlementFailed({
+    settlement: {
+      id: "settlement-failed",
+      provider_id: PROVIDER_ID,
+      amount: 57,
+      currency: "INR",
+      notes: "Bank transfer rejected",
+    },
+    queue: failedQueue,
+  });
+
+  assert.equal(paidQueue.jobs.length, 1);
+  assert.equal(paidQueue.jobs[0].name, "notify-user");
+  assert.equal(paidQueue.jobs[0].data.userId, PROVIDER_ID);
+  assert.equal(paidQueue.jobs[0].data.type, "provider_settlement_paid");
+  assert.equal(paidQueue.jobs[0].data.title, "Settlement Processed");
+  assert.match(
+    paidQueue.jobs[0].data.message,
+    /Your settlement of \u20b9438\.90 has been marked paid\./
+  );
+  assert.match(paidQueue.jobs[0].data.message, /Reference:\nUTR123/);
+  assert.equal(
+    paidQueue.jobs[0].data.idempotencyKey,
+    "provider_settlement_paid:settlement-paid"
+  );
+
+  assert.equal(failedQueue.jobs.length, 1);
+  assert.equal(failedQueue.jobs[0].data.userId, PROVIDER_ID);
+  assert.equal(failedQueue.jobs[0].data.type, "provider_settlement_failed");
+  assert.equal(failedQueue.jobs[0].data.title, "Settlement Failed");
+  assert.match(
+    failedQueue.jobs[0].data.message,
+    /Settlement processing failed\.\n\nReason:\nBank transfer rejected/
+  );
+  assert.equal(failedQueue.jobs[0].data.data.reason, "Bank transfer rejected");
 });

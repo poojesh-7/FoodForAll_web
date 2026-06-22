@@ -415,6 +415,29 @@ function normalizeAdminSettlementFilter(value) {
     : "pending";
 }
 
+function normalizeAdminSettlementSearch(value) {
+  const search = trimText(value || "", 120);
+  if (!search) return null;
+
+  return `%${search.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+function adminSettlementSearchCondition(parameterIndex) {
+  return `
+    CONCAT_WS(
+      ' ',
+      u.name,
+      u.phone,
+      r.restaurant_name,
+      ppa.account_type,
+      ppa.upi_id,
+      ppa.account_holder_name,
+      ppa.bank_account_number,
+      ppa.ifsc_code
+    ) ILIKE $${parameterIndex} ESCAPE '\\'
+  `;
+}
+
 function adminSettlementStatusesForFilter(filter) {
   if (filter === "pending") return PENDING_SETTLEMENT_STATUSES;
   if (filter === "paid") return PAID_SETTLEMENT_STATUSES;
@@ -449,9 +472,9 @@ function payoutAccountSummary(row) {
   return account;
 }
 
-function serializeAdminSettlement(row) {
+function serializeAdminSettlementSummary(row) {
   return {
-    ...serializeSettlement(row),
+    provider_id: row.provider_id,
     provider_name: row.provider_name || row.restaurant_name || row.provider_phone || "Provider",
     provider_phone: row.provider_phone || null,
     restaurant_name: row.restaurant_name || null,
@@ -462,30 +485,19 @@ function serializeAdminSettlement(row) {
   };
 }
 
-function summarizeAdminSettlements(rows) {
-  const summary = new Map();
-
-  for (const row of rows) {
-    if (summary.has(row.provider_id)) continue;
-    summary.set(row.provider_id, {
-      provider_id: row.provider_id,
-      provider_name: row.provider_name,
-      provider_phone: row.provider_phone,
-      restaurant_name: row.restaurant_name,
-      amount_due: row.amount_due,
-      pending_settlements: row.pending_settlements,
-      last_settlement_at: row.last_settlement_at,
-      payout_account: row.payout_account,
-    });
-  }
-
-  return Array.from(summary.values());
+function serializeAdminSettlement(row) {
+  return {
+    ...serializeSettlement(row),
+    ...serializeAdminSettlementSummary(row),
+  };
 }
 
 async function listAdminProviderSettlements({
   client = pool,
   status = "pending",
   limit = DEFAULT_ADMIN_SETTLEMENT_LIMIT,
+  search,
+  providerId,
   ensureSchema = true,
 } = {}) {
   if (ensureSchema) {
@@ -494,6 +506,62 @@ async function listAdminProviderSettlements({
 
   const filter = normalizeAdminSettlementFilter(status);
   const filterStatuses = adminSettlementStatusesForFilter(filter);
+  const searchPattern = normalizeAdminSettlementSearch(search);
+  const selectedProviderId = trimText(providerId || "", 80) || null;
+  const rowLimit = normalizeLimit(limit);
+
+  const summaryResult = await client.query(
+    `
+    WITH provider_due AS (
+      SELECT
+        provider_id,
+        COALESCE(SUM(amount) FILTER (
+          WHERE status = ANY($1::text[])
+        ), 0)::numeric AS amount_due,
+        COUNT(*) FILTER (
+          WHERE status = ANY($1::text[])
+        )::int AS pending_settlements,
+        MAX(COALESCE(paid_at, updated_at, created_at)) AS last_settlement_at
+      FROM provider_settlements
+      GROUP BY provider_id
+    ),
+    active_accounts AS (
+      SELECT DISTINCT ON (provider_id) *
+      FROM provider_payout_accounts
+      WHERE is_active=true
+      ORDER BY provider_id, created_at DESC, id DESC
+    )
+    SELECT
+      pd.provider_id,
+      u.name AS provider_name,
+      u.phone AS provider_phone,
+      r.restaurant_name,
+      COALESCE(pd.amount_due, 0) AS amount_due,
+      COALESCE(pd.pending_settlements, 0) AS pending_settlements,
+      pd.last_settlement_at,
+      ppa.id AS payout_account_id,
+      ppa.account_type AS payout_account_type,
+      ppa.upi_id AS payout_upi_id,
+      ppa.account_holder_name AS payout_account_holder_name,
+      ppa.bank_account_number AS payout_bank_account_number,
+      ppa.ifsc_code AS payout_ifsc_code,
+      ppa.is_verified AS payout_is_verified,
+      ppa.created_at AS payout_created_at,
+      ppa.updated_at AS payout_updated_at
+    FROM provider_due pd
+    JOIN users u ON u.id=pd.provider_id
+    LEFT JOIN restaurants r ON r.user_id=pd.provider_id
+    LEFT JOIN active_accounts ppa ON ppa.provider_id=pd.provider_id
+    WHERE ($3::text IS NULL OR ${adminSettlementSearchCondition(3)})
+    ORDER BY
+      COALESCE(pd.pending_settlements, 0) DESC,
+      COALESCE(pd.amount_due, 0) DESC,
+      pd.last_settlement_at DESC NULLS LAST,
+      LOWER(COALESCE(r.restaurant_name, u.name, u.phone, 'provider')) ASC
+    LIMIT $2::int
+    `,
+    [PENDING_SETTLEMENT_STATUSES, rowLimit, searchPattern]
+  );
 
   const result = await client.query(
     `
@@ -539,6 +607,8 @@ async function listAdminProviderSettlements({
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=ps.provider_id
     WHERE ps.status = ANY($3::text[])
+      AND ($5::text IS NULL OR ${adminSettlementSearchCondition(5)})
+      AND ($6::text IS NULL OR ps.provider_id::text=$6)
     ORDER BY
       CASE
         WHEN ps.status = ANY($2::text[]) THEN 0
@@ -550,10 +620,12 @@ async function listAdminProviderSettlements({
     LIMIT $1::int
     `,
     [
-      normalizeLimit(limit),
+      rowLimit,
       PENDING_SETTLEMENT_STATUSES,
       filterStatuses,
       FAILED_SETTLEMENT_STATUSES,
+      searchPattern,
+      selectedProviderId,
     ]
   );
 
@@ -561,7 +633,7 @@ async function listAdminProviderSettlements({
 
   return {
     filter,
-    summary: summarizeAdminSettlements(settlements),
+    summary: summaryResult.rows.map(serializeAdminSettlementSummary),
     settlements,
   };
 }

@@ -39,6 +39,8 @@ const {
   notifyAdminsModerationCaseEscalated,
   notifyNgoVerificationApproved,
   notifyNgoVerificationRejected,
+  notifyProviderSettlementFailed,
+  notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
 } = require("../shared/services/operationalNotification.service");
@@ -1162,10 +1164,17 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
 };
 
 exports.getProviderSettlementConsole = async (req, res) => {
+  const providerId = req.query.providerId || req.query.provider_id;
+  if (providerId && !isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is invalid" });
+  }
+
   try {
     const settlements = await listAdminProviderSettlements({
       status: req.query.status,
       limit: req.query.limit,
+      search: req.query.search,
+      providerId,
     });
     res.json({ settlements });
   } catch (err) {
@@ -1236,6 +1245,12 @@ async function transitionProviderSettlementFromAdmin(req, res, status) {
         money_movement_executed_by_system: false,
       }
     );
+
+    if (status === "paid") {
+      void notifyProviderSettlementProcessed({ settlement });
+    } else {
+      void notifyProviderSettlementFailed({ settlement });
+    }
 
     res.json({
       message: `Settlement marked ${status}`,

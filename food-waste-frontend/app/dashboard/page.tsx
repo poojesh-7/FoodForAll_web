@@ -135,7 +135,8 @@ export default function DashboardPage() {
     }
 
     loadAnalytics();
-
+    if (!active) return;
+    
     return () => {
       active = false;
     };

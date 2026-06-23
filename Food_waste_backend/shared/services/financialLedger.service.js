@@ -1285,7 +1285,10 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         COALESCE(SUM(amount), 0)::numeric AS total,
         COUNT(*)::int AS count,
         COALESCE(MAX(currency), 'INR') AS currency,
-        MAX(created_at) AS last_recorded_at
+        CASE
+          WHEN MAX(created_at) IS NULL THEN NULL
+          ELSE to_char(MAX(created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_recorded_at
       FROM categorized
       GROUP BY accounting_category
       ORDER BY accounting_category
@@ -1318,7 +1321,10 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
              OR gateway_fee_amount IS NOT NULL
              OR gateway_tax_amount IS NOT NULL
         )::int AS recorded_count,
-        MAX(gateway_fee_recorded_at) AS last_recorded_at
+        CASE
+          WHEN MAX(gateway_fee_recorded_at) IS NULL THEN NULL
+          ELSE to_char(MAX(gateway_fee_recorded_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_recorded_at
       FROM payments
     `),
     client.query(
@@ -1336,7 +1342,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         fle.refund_id,
         fle.source_type,
         fle.source_id,
-        fle.created_at
+        to_char(fle.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
       FROM financial_ledger_entries fle
       LEFT JOIN LATERAL (
         SELECT accounting_category

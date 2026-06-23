@@ -229,7 +229,18 @@ async function listProviderPayoutAccounts({
 
   const result = await client.query(
     `
-    SELECT *
+    SELECT
+      id,
+      provider_id,
+      account_type,
+      upi_id,
+      account_holder_name,
+      bank_account_number,
+      ifsc_code,
+      is_active,
+      is_verified,
+      ${sqlTimestampUtc("created_at")} AS created_at,
+      ${sqlTimestampUtc("updated_at")} AS updated_at
     FROM provider_payout_accounts
     WHERE provider_id=$1
     ORDER BY is_active DESC, created_at DESC, id DESC
@@ -355,6 +366,14 @@ function serializeSettlement(row) {
   };
 }
 
+function sqlTimestampUtc(columnName) {
+  return `to_char(${columnName}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+}
+
+function sqlNullableTimestampUtc(columnName) {
+  return `CASE WHEN ${columnName} IS NULL THEN NULL ELSE ${sqlTimestampUtc(columnName)} END`;
+}
+
 async function getProviderSettlementSummary({
   client = pool,
   providerId,
@@ -387,7 +406,26 @@ async function getProviderSettlementSummary({
     ),
     client.query(
       `
-      SELECT *
+      SELECT
+        id,
+        provider_id,
+        reservation_id,
+        payment_id,
+        payment_session_id,
+        settlement_allocation_id,
+        settlement_batch_id,
+        amount,
+        commission_amount,
+        currency,
+        status,
+        ${sqlNullableTimestampUtc("paid_at")} AS paid_at,
+        payment_reference,
+        notes,
+        processed_by,
+        idempotency_key,
+        metadata,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
       FROM provider_settlements
       WHERE provider_id=$1
       ORDER BY COALESCE(paid_at, updated_at, created_at) DESC, id DESC
@@ -521,12 +559,26 @@ async function listAdminProviderSettlements({
         COUNT(*) FILTER (
           WHERE status = ANY($1::text[])
         )::int AS pending_settlements,
-        MAX(COALESCE(paid_at, updated_at, created_at)) AS last_settlement_at
+        CASE
+          WHEN MAX(COALESCE(paid_at, updated_at, created_at)) IS NULL THEN NULL
+          ELSE to_char(MAX(COALESCE(paid_at, updated_at, created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_settlement_at
       FROM provider_settlements
       GROUP BY provider_id
     ),
     active_accounts AS (
-      SELECT DISTINCT ON (provider_id) *
+      SELECT DISTINCT ON (provider_id)
+        id,
+        provider_id,
+        account_type,
+        upi_id,
+        account_holder_name,
+        bank_account_number,
+        ifsc_code,
+        is_active,
+        is_verified,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
       FROM provider_payout_accounts
       WHERE is_active=true
       ORDER BY provider_id, created_at DESC, id DESC
@@ -574,18 +626,50 @@ async function listAdminProviderSettlements({
         COUNT(*) FILTER (
           WHERE status = ANY($2::text[])
         )::int AS pending_settlements,
-        MAX(COALESCE(paid_at, updated_at, created_at)) AS last_settlement_at
+        CASE
+          WHEN MAX(COALESCE(paid_at, updated_at, created_at)) IS NULL THEN NULL
+          ELSE to_char(MAX(COALESCE(paid_at, updated_at, created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_settlement_at
       FROM provider_settlements
       GROUP BY provider_id
     ),
     active_accounts AS (
-      SELECT DISTINCT ON (provider_id) *
+      SELECT DISTINCT ON (provider_id)
+        id,
+        provider_id,
+        account_type,
+        upi_id,
+        account_holder_name,
+        bank_account_number,
+        ifsc_code,
+        is_active,
+        is_verified,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
       FROM provider_payout_accounts
       WHERE is_active=true
       ORDER BY provider_id, created_at DESC, id DESC
     )
     SELECT
-      ps.*,
+      ps.id,
+      ps.provider_id,
+      ps.reservation_id,
+      ps.payment_id,
+      ps.payment_session_id,
+      ps.settlement_allocation_id,
+      ps.settlement_batch_id,
+      ps.amount,
+      ps.commission_amount,
+      ps.currency,
+      ps.status,
+      ${sqlNullableTimestampUtc("ps.paid_at")} AS paid_at,
+      ps.payment_reference,
+      ps.notes,
+      ps.processed_by,
+      ps.idempotency_key,
+      ps.metadata,
+      ${sqlTimestampUtc("ps.created_at")} AS created_at,
+      ${sqlTimestampUtc("ps.updated_at")} AS updated_at,
       u.name AS provider_name,
       u.phone AS provider_phone,
       r.restaurant_name,
@@ -715,7 +799,26 @@ async function transitionProviderSettlementStatus({
           processed_by=$6,
           updated_at=NOW()
       WHERE id=$1
-      RETURNING *
+      RETURNING
+        id,
+        provider_id,
+        reservation_id,
+        payment_id,
+        payment_session_id,
+        settlement_allocation_id,
+        settlement_batch_id,
+        amount,
+        commission_amount,
+        currency,
+        status,
+        ${sqlNullableTimestampUtc("paid_at")} AS paid_at,
+        payment_reference,
+        notes,
+        processed_by,
+        idempotency_key,
+        metadata,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
       `,
       [
         settlementId,
@@ -769,7 +872,26 @@ async function updateProviderSettlementNotes({
       UPDATE provider_settlements
       SET notes=$2, processed_by=$3, updated_at=NOW()
       WHERE id=$1
-      RETURNING *
+      RETURNING
+        id,
+        provider_id,
+        reservation_id,
+        payment_id,
+        payment_session_id,
+        settlement_allocation_id,
+        settlement_batch_id,
+        amount,
+        commission_amount,
+        currency,
+        status,
+        ${sqlNullableTimestampUtc("paid_at")} AS paid_at,
+        payment_reference,
+        notes,
+        processed_by,
+        idempotency_key,
+        metadata,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
       `,
       [settlementId, settlementNotes || null, adminId || null]
     );

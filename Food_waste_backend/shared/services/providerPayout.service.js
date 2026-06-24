@@ -1,20 +1,34 @@
 const pool = require("../config/db");
-const {
-  shouldSkipRuntimeSchemaMutation,
-} = require("../config/runtimeSchema");
+const { shouldSkipRuntimeSchemaMutation } = require("../config/runtimeSchema");
 const { withTransaction } = require("../utils/transaction");
 const {
   ensureSettlementAccountingSchema,
   recordProviderSettlementPaidLedger,
 } = require("./financialLedger.service");
+const { recordOperationalEvent } = require("./observability.service");
 
 const ACCOUNT_TYPES = new Set(["UPI", "BANK"]);
 const VERIFICATION_STATUSES = new Set(["pending", "verified", "rejected"]);
 const DEFAULT_VERIFICATION_STATUS = "pending";
-const PENDING_SETTLEMENT_STATUSES = ["pending", "processing", "allocated", "batched"];
+const PENDING_SETTLEMENT_STATUSES = [
+  "pending",
+  "processing",
+  "allocated",
+  "batched",
+];
 const PAID_SETTLEMENT_STATUSES = ["paid", "settled"];
 const FAILED_SETTLEMENT_STATUSES = ["failed", "cancelled"];
-const FINAL_SETTLEMENT_STATUSES = ["pending", "processing", "paid", "failed", "cancelled"];
+const OUTSTANDING_SETTLEMENT_STATUSES = [
+  ...PENDING_SETTLEMENT_STATUSES,
+  ...FAILED_SETTLEMENT_STATUSES,
+];
+const FINAL_SETTLEMENT_STATUSES = [
+  "pending",
+  "processing",
+  "paid",
+  "failed",
+  "cancelled",
+];
 const DEFAULT_ADMIN_SETTLEMENT_LIMIT = 100;
 
 let schemaReady;
@@ -43,7 +57,9 @@ function normalizeLimit(value, fallback = DEFAULT_ADMIN_SETTLEMENT_LIMIT) {
 }
 
 function validatePayoutAccountInput(input = {}) {
-  const accountType = normalizeAccountType(input.account_type || input.accountType);
+  const accountType = normalizeAccountType(
+    input.account_type || input.accountType,
+  );
   if (!ACCOUNT_TYPES.has(accountType)) {
     throw serviceError("Payout account type must be UPI or BANK.");
   }
@@ -65,13 +81,16 @@ function validatePayoutAccountInput(input = {}) {
 
   const accountHolderName = trimText(
     input.account_holder_name || input.accountHolderName,
-    160
+    160,
   );
   const bankAccountNumber = trimText(
     input.bank_account_number || input.bankAccountNumber,
-    40
+    40,
   ).replace(/\s+/g, "");
-  const ifscCode = trimText(input.ifsc_code || input.ifscCode, 20).toUpperCase();
+  const ifscCode = trimText(
+    input.ifsc_code || input.ifscCode,
+    20,
+  ).toUpperCase();
 
   if (accountHolderName.length < 2) {
     throw serviceError("Account holder name is required.");
@@ -221,7 +240,9 @@ function serializePayoutAccount(row) {
   const bankAccountNumber = row.bank_account_number
     ? String(row.bank_account_number)
     : null;
-  const verificationStatus = String(row.verification_status || "pending").toLowerCase();
+  const verificationStatus = String(
+    row.verification_status || "pending",
+  ).toLowerCase();
   const isVerified =
     verificationStatus === "verified" || Boolean(row.is_verified);
 
@@ -281,7 +302,7 @@ async function listProviderPayoutAccounts({
     WHERE provider_id=$1
     ORDER BY is_active DESC, created_at DESC, id DESC
     `,
-    [providerId]
+    [providerId],
   );
   const accounts = result.rows.map(serializePayoutAccount);
 
@@ -309,7 +330,7 @@ async function replaceProviderPayoutAccount({
       SET is_active=false, updated_at=NOW()
       WHERE provider_id=$1 AND is_active=true
       `,
-      [providerId]
+      [providerId],
     );
 
     const inserted = await db.query(
@@ -329,7 +350,7 @@ async function replaceProviderPayoutAccount({
         sanitized.account_holder_name,
         sanitized.bank_account_number,
         sanitized.ifsc_code,
-      ]
+      ],
     );
 
     return serializePayoutAccount(inserted.rows[0]);
@@ -367,7 +388,7 @@ async function verifyProviderPayoutAccount({
       WHERE id=$1 AND is_active=true
       RETURNING *
       `,
-      [payoutAccountId, adminId || null]
+      [payoutAccountId, adminId || null],
     );
 
     return serializePayoutAccount(result.rows[0] || null);
@@ -408,7 +429,11 @@ async function rejectProviderPayoutAccount({
       WHERE id=$1 AND is_active=true
       RETURNING *
       `,
-      [payoutAccountId, adminId || null, rejectionReason || "Rejected by admin"]
+      [
+        payoutAccountId,
+        adminId || null,
+        rejectionReason || "Rejected by admin",
+      ],
     );
 
     return serializePayoutAccount(result.rows[0] || null);
@@ -439,7 +464,7 @@ async function deactivateProviderPayoutAccount({
       WHERE provider_id=$1 AND is_active=true
       RETURNING *
       `,
-      [providerId]
+      [providerId],
     );
 
     return serializePayoutAccount(result.rows[0] || null);
@@ -518,7 +543,7 @@ async function getProviderSettlementSummary({
       FROM provider_settlements
       WHERE provider_id=$1
       `,
-      [providerId, PENDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES]
+      [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
     client.query(
       `
@@ -547,7 +572,7 @@ async function getProviderSettlementSummary({
       ORDER BY COALESCE(paid_at, updated_at, created_at) DESC, id DESC
       LIMIT $2
       `,
-      [providerId, normalizeLimit(limit, 50)]
+      [providerId, normalizeLimit(limit, 50)],
     ),
   ]);
 
@@ -563,7 +588,9 @@ async function getProviderSettlementSummary({
 }
 
 function normalizeAdminSettlementFilter(value) {
-  const filter = String(value || "pending").trim().toLowerCase();
+  const filter = String(value || "pending")
+    .trim()
+    .toLowerCase();
   return ["pending", "paid", "failed", "all"].includes(filter)
     ? filter
     : "pending";
@@ -577,8 +604,16 @@ function normalizeAdminSettlementSearch(value) {
 }
 
 function normalizeAdminVerificationFilter(value) {
-  const filter = String(value || "all").trim().toLowerCase();
-  return ["all", "verified", "pending_review", "rejected", "no_account"].includes(filter)
+  const filter = String(value || "all")
+    .trim()
+    .toLowerCase();
+  return [
+    "all",
+    "verified",
+    "pending_review",
+    "rejected",
+    "no_account",
+  ].includes(filter)
     ? filter
     : "all";
 }
@@ -636,7 +671,7 @@ function adminSettlementStatusesForFilter(filter) {
       ...PAID_SETTLEMENT_STATUSES,
       ...FAILED_SETTLEMENT_STATUSES,
       ...FINAL_SETTLEMENT_STATUSES,
-    ])
+    ]),
   );
 }
 
@@ -666,7 +701,11 @@ function payoutAccountSummary(row) {
 function serializeAdminSettlementSummary(row) {
   return {
     provider_id: row.provider_id,
-    provider_name: row.provider_name || row.restaurant_name || row.provider_phone || "Provider",
+    provider_name:
+      row.provider_name ||
+      row.restaurant_name ||
+      row.provider_phone ||
+      "Provider",
     provider_phone: row.provider_phone || null,
     restaurant_name: row.restaurant_name || null,
     amount_due: Number(row.amount_due || 0),
@@ -700,7 +739,8 @@ async function listAdminProviderSettlements({
 
   const filter = normalizeAdminSettlementFilter(status);
   const filterStatuses = adminSettlementStatusesForFilter(filter);
-  const verificationFilter = normalizeAdminVerificationFilter(verificationStatus);
+  const verificationFilter =
+    normalizeAdminVerificationFilter(verificationStatus);
   const searchPattern = normalizeAdminSettlementSearch(search);
   const selectedProviderId = trimText(providerId || "", 80) || null;
   const rowLimit = normalizeLimit(limit);
@@ -778,7 +818,12 @@ async function listAdminProviderSettlements({
       LOWER(COALESCE(r.restaurant_name, u.name, u.phone, 'provider')) ASC
     LIMIT $2::int
     `,
-    [PENDING_SETTLEMENT_STATUSES, rowLimit, searchPattern, verificationFilter]
+    [
+      OUTSTANDING_SETTLEMENT_STATUSES,
+      rowLimit,
+      searchPattern,
+      verificationFilter,
+    ],
   );
 
   const result = await client.query(
@@ -886,7 +931,7 @@ async function listAdminProviderSettlements({
       searchPattern,
       selectedProviderId,
       verificationFilter,
-    ]
+    ],
   );
 
   const settlements = result.rows.map(serializeAdminSettlement);
@@ -915,7 +960,7 @@ async function loadSettlementForUpdate(client, settlementId) {
     WHERE id=$1
     FOR UPDATE
     `,
-    [settlementId]
+    [settlementId],
   );
 
   return result.rows[0] || null;
@@ -944,7 +989,7 @@ async function loadActiveProviderPayoutAccount(client, providerId) {
     ORDER BY created_at DESC, id DESC
     LIMIT 1
     `,
-    [providerId]
+    [providerId],
   );
 
   return result.rows[0] || null;
@@ -960,7 +1005,9 @@ async function transitionProviderSettlementStatus({
   notes,
   ensureSchema = true,
 } = {}) {
-  const nextStatus = String(status || "").trim().toLowerCase();
+  const nextStatus = String(status || "")
+    .trim()
+    .toLowerCase();
   if (!["paid", "failed"].includes(nextStatus)) {
     throw serviceError("Settlement can only be marked paid or failed.");
   }
@@ -974,7 +1021,11 @@ async function transitionProviderSettlementStatus({
     if (!current) return null;
 
     if (current.status === "paid" && nextStatus === "failed") {
-      throw serviceError("Paid settlement cannot be marked failed.", 409, "SETTLEMENT_ALREADY_PAID");
+      throw serviceError(
+        "Paid settlement cannot be marked failed.",
+        409,
+        "SETTLEMENT_ALREADY_PAID",
+      );
     }
 
     const reference = trimText(paymentReference || "", 120);
@@ -986,13 +1037,19 @@ async function transitionProviderSettlementStatus({
     }
 
     if (nextStatus === "paid") {
-      const activeAccount = await loadActiveProviderPayoutAccount(db, current.provider_id);
+      const activeAccount = await loadActiveProviderPayoutAccount(
+        db,
+        current.provider_id,
+      );
       if (!activeAccount) {
         throw serviceError("Provider has not configured a payout account.");
       }
 
-      const verificationStatus = String(activeAccount.verification_status || "pending").toLowerCase();
-      const isVerified = verificationStatus === "verified" || Boolean(activeAccount.is_verified);
+      const verificationStatus = String(
+        activeAccount.verification_status || "pending",
+      ).toLowerCase();
+      const isVerified =
+        verificationStatus === "verified" || Boolean(activeAccount.is_verified);
 
       if (!isVerified) {
         if (verificationStatus === "rejected") {
@@ -1049,7 +1106,7 @@ async function transitionProviderSettlementStatus({
         reference,
         settlementNotes,
         adminId || null,
-      ]
+      ],
     );
 
     const updated = result.rows[0];
@@ -1068,12 +1125,39 @@ async function transitionProviderSettlementStatus({
     return serializeSettlement(updated);
   };
 
-  if (client) return transitionSettlementStatus(client);
+  const transitionAndReport = async (db) => {
+    const settlement = await transitionSettlementStatus(db);
+    return settlement;
+  };
 
-  return withTransaction(pool, transitionSettlementStatus, {
-    name: "transition_provider_settlement_status",
-    maxAttempts: 3,
-  });
+  let settlement;
+
+  if (client) {
+    settlement = await transitionAndReport(client);
+  } else {
+    settlement = await withTransaction(pool, transitionAndReport, {
+      name: "transition_provider_settlement_status",
+      maxAttempts: 3,
+    });
+  }
+
+  if (settlement && nextStatus === "failed") {
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "provider_settlement_failed",
+      metadata: {
+        settlement_id: settlement.id,
+        provider_id: settlement.provider_id,
+        amount: Number(settlement.amount || 0),
+        payment_reference: settlement.payment_reference || null,
+        admin_id: adminId || null,
+        notes: settlement.notes || null,
+      },
+    });
+  }
+
+  return settlement;
 }
 
 async function updateProviderSettlementNotes({
@@ -1115,7 +1199,7 @@ async function updateProviderSettlementNotes({
         ${sqlTimestampUtc("created_at")} AS created_at,
         ${sqlTimestampUtc("updated_at")} AS updated_at
       `,
-      [settlementId, settlementNotes || null, adminId || null]
+      [settlementId, settlementNotes || null, adminId || null],
     );
 
     return result.rows[0] ? serializeSettlement(result.rows[0]) : null;

@@ -1,14 +1,8 @@
 const pool = require("../config/db");
-const {
-  shouldSkipRuntimeSchemaMutation,
-} = require("../config/runtimeSchema");
+const { shouldSkipRuntimeSchemaMutation } = require("../config/runtimeSchema");
 const logger = require("../utils/logger");
-const {
-  incrementCounter,
-} = require("./metrics.service");
-const {
-  recordAlert,
-} = require("./observability.service");
+const { incrementCounter } = require("./metrics.service");
+const { recordAlert } = require("./observability.service");
 const {
   getFinancialOwnership,
   roundMoney,
@@ -27,7 +21,7 @@ const ACCOUNTING_CATEGORIES = Object.freeze({
   REFUND_EXPENSE: "refund_expense",
 });
 const ACCOUNTING_CATEGORY_VALUES = Object.freeze(
-  Object.values(ACCOUNTING_CATEGORIES)
+  Object.values(ACCOUNTING_CATEGORIES),
 );
 const ACCOUNTING_CATEGORY_SET = new Set(ACCOUNTING_CATEGORY_VALUES);
 const EVENT_ACCOUNTING_CATEGORIES = Object.freeze({
@@ -50,8 +44,18 @@ const ACCOUNTING_CATEGORY_LABELS = Object.freeze({
   [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID]: "Provider Paid",
   [ACCOUNTING_CATEGORIES.REFUND_EXPENSE]: "Refund",
 });
-const PENDING_SETTLEMENT_STATUSES = ["pending", "processing", "allocated", "batched"];
+const PENDING_SETTLEMENT_STATUSES = [
+  "pending",
+  "processing",
+  "allocated",
+  "batched",
+];
 const PAID_SETTLEMENT_STATUSES = ["paid", "settled"];
+const FAILED_SETTLEMENT_STATUSES = ["failed", "cancelled"];
+const OUTSTANDING_SETTLEMENT_STATUSES = [
+  ...PENDING_SETTLEMENT_STATUSES,
+  ...FAILED_SETTLEMENT_STATUSES,
+];
 
 let schemaReady;
 
@@ -93,7 +97,12 @@ function getPlatformCommissionPercent() {
   const raw = process.env.PLATFORM_COMMISSION_PERCENT;
   const parsed = Number(raw);
 
-  if (raw !== undefined && raw !== "" && Number.isFinite(parsed) && parsed >= 0) {
+  if (
+    raw !== undefined &&
+    raw !== "" &&
+    Number.isFinite(parsed) &&
+    parsed >= 0
+  ) {
     return Math.round(parsed * 1000) / 1000;
   }
 
@@ -122,7 +131,7 @@ function buildPaymentFinancialTerms({
   const frozenFoodAmount = roundMoney(foodAmountSnapshot ?? foodAmount);
   const frozenCommissionPercent = normalizeCommissionPercent(commissionPercent);
   const computedCommission = roundMoney(
-    frozenFoodAmount * (frozenCommissionPercent / 100)
+    frozenFoodAmount * (frozenCommissionPercent / 100),
   );
   const frozenCommissionAmount = isPresent(commissionAmount)
     ? roundMoney(commissionAmount)
@@ -154,7 +163,7 @@ function resolveSettlementFinancialTerms({ payment = {}, paymentOwnership }) {
 
     if (missing.length) {
       throw new Error(
-        `Payment financial snapshot is incomplete: ${missing.join(", ")}`
+        `Payment financial snapshot is incomplete: ${missing.join(", ")}`,
       );
     }
 
@@ -201,14 +210,16 @@ function buildSettlementAllocationSnapshot({
   });
   const foodAmount = financialTerms.food_amount_snapshot;
   const depositAmount = roundMoney(
-    paymentOwnership.deposit_amount ?? payment.reliability_deposit_amount
+    paymentOwnership.deposit_amount ?? payment.reliability_deposit_amount,
   );
   const taxAmount = roundMoney(payment.tax_amount || 0);
   const commission = financialTerms.commission_amount;
   const providerAmount = financialTerms.provider_amount;
   const platformAmount = financialTerms.platform_amount;
   const totalAmount = roundMoney(foodAmount + depositAmount + taxAmount);
-  const currency = normalizeCurrency(paymentOwnership.currency || payment.currency);
+  const currency = normalizeCurrency(
+    paymentOwnership.currency || payment.currency,
+  );
   const reservationId = String(paymentOwnership.reservation_id);
   const paymentSessionId = String(paymentOwnership.payment_session_id);
 
@@ -592,7 +603,7 @@ async function insertAllocationSnapshot(client, snapshot) {
       snapshot.settlement_version,
       snapshot.idempotency_key,
       JSON.stringify(snapshot.metadata || {}),
-    ]
+    ],
   );
 
   if (result.rows[0]) return { snapshot: result.rows[0], inserted: true };
@@ -604,7 +615,7 @@ async function insertAllocationSnapshot(client, snapshot) {
     WHERE idempotency_key=$1
     LIMIT 1
     `,
-    [snapshot.idempotency_key]
+    [snapshot.idempotency_key],
   );
 
   return { snapshot: existing.rows[0] || null, inserted: false };
@@ -618,7 +629,7 @@ async function recordAccountingClassification({
 } = {}) {
   const category = normalizeAccountingCategory(
     accountingCategory,
-    ledgerEntry?.event_type
+    ledgerEntry?.event_type,
   );
   if (!ledgerEntry?.id || !category) return null;
 
@@ -657,7 +668,7 @@ async function recordAccountingClassification({
         ledger_accounting_category: ledgerEntry.accounting_category || null,
         ...metadata,
       }),
-    ]
+    ],
   );
 
   const inserted = Boolean(result.rows[0]);
@@ -679,7 +690,7 @@ async function findLedgerEntryByIdempotencyKey(client, idempotencyKey) {
     WHERE idempotency_key=$1
     LIMIT 1
     `,
-    [idempotencyKey]
+    [idempotencyKey],
   );
 
   return existing.rows[0] || null;
@@ -688,7 +699,7 @@ async function findLedgerEntryByIdempotencyKey(client, idempotencyKey) {
 async function recordLedgerEntry({ client = pool, entry }) {
   const accountingCategory = normalizeAccountingCategory(
     entry.accounting_category,
-    entry.event_type
+    entry.event_type,
   );
   const result = await client.query(
     `
@@ -726,7 +737,7 @@ async function recordLedgerEntry({ client = pool, entry }) {
       accountingCategory,
       entry.idempotency_key,
       JSON.stringify(entry.metadata || {}),
-    ]
+    ],
   );
 
   const inserted = Boolean(result.rows[0]);
@@ -758,7 +769,13 @@ async function recordLedgerEntry({ client = pool, entry }) {
   return row;
 }
 
-function ledgerEntryForAllocation({ allocation, eventType, amount, suffix, metadata = {} }) {
+function ledgerEntryForAllocation({
+  allocation,
+  eventType,
+  amount,
+  suffix,
+  metadata = {},
+}) {
   return {
     reservation_id: allocation.reservation_id,
     payment_id: allocation.payment_id,
@@ -784,8 +801,15 @@ function ledgerEntryForAllocation({ allocation, eventType, amount, suffix, metad
   };
 }
 
-async function insertProviderSettlement({ client, allocation, paymentOwnership }) {
-  if (!paymentOwnership?.provider_id || roundMoney(allocation.provider_amount) <= 0) {
+async function insertProviderSettlement({
+  client,
+  allocation,
+  paymentOwnership,
+}) {
+  if (
+    !paymentOwnership?.provider_id ||
+    roundMoney(allocation.provider_amount) <= 0
+  ) {
     return null;
   }
 
@@ -817,20 +841,24 @@ async function insertProviderSettlement({ client, allocation, paymentOwnership }
       allocation.currency,
       idempotencyKey,
       JSON.stringify({ source: "settlement_allocation" }),
-    ]
+    ],
   );
 
   if (result.rows[0]) return result.rows[0];
 
   const existing = await client.query(
     `SELECT * FROM provider_settlements WHERE idempotency_key=$1 LIMIT 1`,
-    [idempotencyKey]
+    [idempotencyKey],
   );
 
   return existing.rows[0] || null;
 }
 
-async function loadPaymentOwnershipForLedger({ client, payment, paymentOwnership }) {
+async function loadPaymentOwnershipForLedger({
+  client,
+  payment,
+  paymentOwnership,
+}) {
   if (paymentOwnership) return paymentOwnership;
 
   const rows = await getFinancialOwnership({
@@ -861,7 +889,8 @@ async function recordSettlementAllocation({
       alertKey: `financial:f4:missing_ownership:${payment.id || payment.reservation_id}`,
       category: "payment",
       severity: "error",
-      message: "F4 settlement allocation skipped because ownership snapshot is missing",
+      message:
+        "F4 settlement allocation skipped because ownership snapshot is missing",
       metadata: {
         paymentId: payment.id,
         reservationId: payment.reservation_id,
@@ -878,7 +907,7 @@ async function recordSettlementAllocation({
   });
   const { snapshot: allocation, inserted } = await insertAllocationSnapshot(
     client,
-    draft
+    draft,
   );
 
   if (!allocation) return null;
@@ -977,8 +1006,14 @@ function refundTypeForOperation(operation) {
   return "payment";
 }
 
-async function insertRefundTerminalRecord({ client, operation, eventType, refundId }) {
-  const terminalStatus = eventType === "deposit_retained" ? "retained" : "refunded";
+async function insertRefundTerminalRecord({
+  client,
+  operation,
+  eventType,
+  refundId,
+}) {
+  const terminalStatus =
+    eventType === "deposit_retained" ? "retained" : "refunded";
   const refundType = refundTypeForOperation(operation);
   const idempotencyKey = [
     "refund_terminal",
@@ -1010,7 +1045,7 @@ async function insertRefundTerminalRecord({ client, operation, eventType, refund
         operation_id: operation.id,
         operation_type: operation.operation_type,
       }),
-    ]
+    ],
   );
 }
 
@@ -1060,7 +1095,11 @@ async function recordFinancialOperationLedgerStatus({
 
   const row = await recordLedgerEntry({ client, entry });
 
-  if (eventType === "deposit_retained" || eventType === "deposit_refunded" || eventType === "refund_issued") {
+  if (
+    eventType === "deposit_retained" ||
+    eventType === "deposit_refunded" ||
+    eventType === "refund_issued"
+  ) {
     await insertRefundTerminalRecord({
       client,
       operation,
@@ -1094,7 +1133,11 @@ async function recordProviderSettlementPaidLedger({
       counterparty_role: "provider",
       source_type: "provider_settlement",
       source_id: settlement.id,
-      idempotency_key: ["ledger", "provider_settlement_paid", settlement.id].join(":"),
+      idempotency_key: [
+        "ledger",
+        "provider_settlement_paid",
+        settlement.id,
+      ].join(":"),
       metadata: {
         status: settlement.status,
         paid_at: settlement.paid_at || null,
@@ -1115,7 +1158,11 @@ async function recordGatewayFeeExpense({
   metadata = {},
 } = {}) {
   const feeAmount = roundMoney(gatewayFeeAmount);
-  if (!payment?.reservation_id || !payment?.payment_session_id || feeAmount <= 0) {
+  if (
+    !payment?.reservation_id ||
+    !payment?.payment_session_id ||
+    feeAmount <= 0
+  ) {
     return null;
   }
 
@@ -1168,18 +1215,14 @@ async function repairMissingAccountingClassificationsForPayment({
     AND event_type = ANY($3::text[])
     ORDER BY created_at ASC, id ASC
     `,
-    [
-      reservationId,
-      paymentSessionId,
-      Object.keys(EVENT_ACCOUNTING_CATEGORIES),
-    ]
+    [reservationId, paymentSessionId, Object.keys(EVENT_ACCOUNTING_CATEGORIES)],
   );
   const repaired = [];
 
   for (const ledgerEntry of result.rows) {
     const category = normalizeAccountingCategory(
       ledgerEntry.accounting_category,
-      ledgerEntry.event_type
+      ledgerEntry.event_type,
     );
     if (!category) continue;
 
@@ -1228,7 +1271,7 @@ function categoryTotalMap(rows = []) {
         currency: "INR",
         last_recorded_at: null,
       },
-    ])
+    ]),
   );
 
   for (const row of rows) {
@@ -1310,7 +1353,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         )::int AS paid_count
       FROM provider_settlements
       `,
-      [PENDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES]
+      [OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
     client.query(`
       SELECT
@@ -1355,7 +1398,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       ORDER BY fle.created_at DESC, fle.id DESC
       LIMIT $1
       `,
-      [normalizedLimit]
+      [normalizedLimit],
     ),
   ]);
 
@@ -1364,35 +1407,35 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
   const gatewayRow = gatewayFees.rows[0] || {};
   const commissionRevenue = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE
+    ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE,
   );
   const depositsHeld = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_HELD
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_HELD,
   );
   const depositsRefunded = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_REFUNDED
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_REFUNDED,
   );
   const depositsRetained = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_RETAINED
+    ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_RETAINED,
   );
   const providerLiabilityRecognized = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_LIABILITY
+    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_LIABILITY,
   );
   const providerPaidClassified = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID
+    ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID,
   );
   const refundExpense = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.REFUND_EXPENSE
+    ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
   );
   const gatewayFeeExpense = amountForCategory(
     totals,
-    ACCOUNTING_CATEGORIES.GATEWAY_FEE_EXPENSE
+    ACCOUNTING_CATEGORIES.GATEWAY_FEE_EXPENSE,
   );
 
   return {
@@ -1449,7 +1492,9 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       provider_settlement_id: row.provider_settlement_id || null,
       event_type: row.event_type,
       accounting_category: row.accounting_category,
-      accounting_category_label: accountingCategoryLabel(row.accounting_category),
+      accounting_category_label: accountingCategoryLabel(
+        row.accounting_category,
+      ),
       amount: Number(row.amount || 0),
       currency: row.currency || "INR",
       refund_id: row.refund_id || null,
@@ -1500,7 +1545,7 @@ async function getFinancialDiagnostics({ client = pool } = {}) {
     commissionTotals: Number(ledger.rows[0]?.commission_total || 0),
     providerSettlements: Number(settlements.rows[0]?.provider_settlements || 0),
     providerSettlementTotals: Number(
-      settlements.rows[0]?.provider_settlement_total || 0
+      settlements.rows[0]?.provider_settlement_total || 0,
     ),
   };
 }

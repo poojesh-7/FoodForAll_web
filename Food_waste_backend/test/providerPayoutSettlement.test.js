@@ -57,7 +57,7 @@ function createProviderFinanceClient() {
         amount: 400,
         commission_amount: 20,
         currency: "INR",
-        status: "pending",
+        status: "failed",
         paid_at: null,
         payment_reference: null,
         notes: null,
@@ -199,7 +199,11 @@ function createProviderFinanceClient() {
         text.includes("FROM financial_ledger_entries") &&
         text.includes("WHERE idempotency_key=$1")
       ) {
-        return { rows: [ledger.get(params[0])].filter(Boolean).map((row) => ({ ...row })) };
+        return {
+          rows: [ledger.get(params[0])]
+            .filter(Boolean)
+            .map((row) => ({ ...row })),
+        };
       }
 
       if (text.includes("INSERT INTO financial_accounting_classifications")) {
@@ -231,13 +235,19 @@ function createProviderFinanceClient() {
         return {
           rows: accounts
             .filter((account) => account.provider_id === providerId)
-            .sort((left, right) => Number(right.is_active) - Number(left.is_active))
+            .sort(
+              (left, right) => Number(right.is_active) - Number(left.is_active),
+            )
             .map((account) => ({ ...account })),
         };
       }
 
       if (text.includes("FOR UPDATE")) {
-        return { rows: [settlements.get(params[0])].filter(Boolean).map((row) => ({ ...row })) };
+        return {
+          rows: [settlements.get(params[0])]
+            .filter(Boolean)
+            .map((row) => ({ ...row })),
+        };
       }
 
       if (text.includes("UPDATE provider_settlements")) {
@@ -262,7 +272,8 @@ function createProviderFinanceClient() {
         let paid = 0;
         for (const row of settlements.values()) {
           if (row.provider_id !== providerId) continue;
-          if (pendingStatuses.includes(row.status)) pending += Number(row.amount);
+          if (pendingStatuses.includes(row.status))
+            pending += Number(row.amount);
           if (paidStatuses.includes(row.status)) paid += Number(row.amount);
         }
         return {
@@ -293,16 +304,19 @@ function createProviderFinanceClient() {
 }
 
 test("T-FIN-2 validates UPI and bank payout account inputs", () => {
-  assert.deepEqual(validatePayoutAccountInput({
-    account_type: "upi",
-    upi_id: "Name@UPI",
-  }), {
-    account_type: "UPI",
-    upi_id: "name@upi",
-    account_holder_name: null,
-    bank_account_number: null,
-    ifsc_code: null,
-  });
+  assert.deepEqual(
+    validatePayoutAccountInput({
+      account_type: "upi",
+      upi_id: "Name@UPI",
+    }),
+    {
+      account_type: "UPI",
+      upi_id: "name@upi",
+      account_holder_name: null,
+      bank_account_number: null,
+      ifsc_code: null,
+    },
+  );
 
   assert.equal(
     validatePayoutAccountInput({
@@ -311,11 +325,11 @@ test("T-FIN-2 validates UPI and bank payout account inputs", () => {
       bank_account_number: "1234567890",
       ifsc_code: "hdfc0123456",
     }).ifsc_code,
-    "HDFC0123456"
+    "HDFC0123456",
   );
   assert.throws(
     () => validatePayoutAccountInput({ account_type: "UPI", upi_id: "bad" }),
-    /UPI id/
+    /UPI id/,
   );
 });
 
@@ -356,7 +370,10 @@ test("T-FIN-2 provider payout account replacement keeps history", async () => {
   assert.equal(deactivated.is_active, false);
   assert.equal(bank.account_type, "BANK");
   assert.equal(client.accounts.length, 3);
-  assert.equal(client.accounts.filter((account) => account.is_active).length, 1);
+  assert.equal(
+    client.accounts.filter((account) => account.is_active).length,
+    1,
+  );
   assert.equal(client.accounts[0].is_active, false);
   assert.equal(client.accounts[1].is_active, false);
 });
@@ -408,10 +425,15 @@ test("T-FIN-2 manual settlement transitions are replay-safe updates", async () =
   assert.equal(replay.id, paid.id);
   assert.equal(failed.status, "failed");
   assert.equal(client.ledger.size, 1);
-  assert.equal(Array.from(client.ledger.values())[0].event_type, "provider_settlement_paid");
+  assert.equal(
+    Array.from(client.ledger.values())[0].event_type,
+    "provider_settlement_paid",
+  );
   assert.deepEqual(
-    Array.from(client.classifications.values()).map((row) => row.accounting_category),
-    [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID]
+    Array.from(client.classifications.values()).map(
+      (row) => row.accounting_category,
+    ),
+    [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID],
   );
   await assert.rejects(
     () =>
@@ -422,7 +444,7 @@ test("T-FIN-2 manual settlement transitions are replay-safe updates", async () =
         adminId: ADMIN_ID,
         ensureSchema: false,
       }),
-    /Paid settlement/
+    /Paid settlement/,
   );
 });
 
@@ -497,7 +519,11 @@ test("T-FIN-2 payout account update resets verification status", async () => {
   assert.equal(updated.verified_by, null);
   assert.equal(updated.rejection_reason, null);
   assert.equal(client.accounts.filter((row) => row.is_active).length, 1);
-  assert.equal(client.accounts.filter((row) => row.is_active && row.id === original.id).length, 0);
+  assert.equal(
+    client.accounts.filter((row) => row.is_active && row.id === original.id)
+      .length,
+    0,
+  );
 });
 
 test("T-FIN-2 provider settlement earnings summary totals pending and paid", async () => {
@@ -515,6 +541,91 @@ test("T-FIN-2 provider settlement earnings summary totals pending and paid", asy
   assert.equal(summary.settlements.length, 3);
 });
 
+test("T-FIN-2 failed settlement remains outstanding and does not reduce amount due or pending earnings", async () => {
+  const client = createProviderFinanceClient();
+
+  const before = await getProviderSettlementSummary({
+    client,
+    providerId: PROVIDER_ID,
+    ensureSchema: false,
+  });
+
+  assert.equal(before.earnings.pending, 1650);
+  assert.equal(before.earnings.paid, 8430);
+
+  await transitionProviderSettlementStatus({
+    client,
+    settlementId: "settlement_pending",
+    status: "failed",
+    adminId: ADMIN_ID,
+    notes: "Bank transfer failed",
+    ensureSchema: false,
+  });
+
+  const after = await getProviderSettlementSummary({
+    client,
+    providerId: PROVIDER_ID,
+    ensureSchema: false,
+  });
+
+  assert.equal(after.earnings.pending, 1650);
+  assert.equal(after.earnings.paid, 8430);
+  assert.equal(after.settlements.length, 3);
+  assert.equal(
+    after.settlements.find((row) => row.id === "settlement_pending").status,
+    "failed",
+  );
+});
+
+test("T-FIN-2 marking paid moves outstanding amount from pending to paid", async () => {
+  const client = createProviderFinanceClient();
+
+  const account = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "manual@upi" },
+    ensureSchema: false,
+  });
+
+  await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
+  const before = await getProviderSettlementSummary({
+    client,
+    providerId: PROVIDER_ID,
+    ensureSchema: false,
+  });
+
+  assert.equal(before.earnings.pending, 1650);
+  assert.equal(before.earnings.paid, 8430);
+
+  await transitionProviderSettlementStatus({
+    client,
+    settlementId: "settlement_pending",
+    status: "paid",
+    adminId: ADMIN_ID,
+    paymentReference: "UTR123456",
+    ensureSchema: false,
+  });
+
+  const after = await getProviderSettlementSummary({
+    client,
+    providerId: PROVIDER_ID,
+    ensureSchema: false,
+  });
+
+  assert.equal(after.earnings.pending, 400);
+  assert.equal(after.earnings.paid, 9680);
+  assert.equal(
+    after.settlements.find((row) => row.id === "settlement_pending").status,
+    "paid",
+  );
+});
+
 test("T-FIN-2 marking paid requires a verified payout account", async () => {
   const client = createProviderFinanceClient();
 
@@ -528,7 +639,7 @@ test("T-FIN-2 marking paid requires a verified payout account", async () => {
         paymentReference: "UTR123456",
         ensureSchema: false,
       }),
-    /has not configured a payout account/
+    /has not configured a payout account/,
   );
 
   const account = await replaceProviderPayoutAccount({
@@ -548,7 +659,7 @@ test("T-FIN-2 marking paid requires a verified payout account", async () => {
         paymentReference: "UTR123456",
         ensureSchema: false,
       }),
-    /verification is pending/
+    /verification is pending/,
   );
 
   await rejectProviderPayoutAccount({
@@ -569,7 +680,7 @@ test("T-FIN-2 marking paid requires a verified payout account", async () => {
         paymentReference: "UTR123456",
         ensureSchema: false,
       }),
-    /has been rejected/
+    /has been rejected/,
   );
 
   await verifyProviderPayoutAccount({
@@ -610,23 +721,34 @@ test("T-FIN-2 migration declares payout accounts and manual settlement fields", 
   const migration = fs.readFileSync(
     path.resolve(
       __dirname,
-      "../migrations/035_provider_payout_manual_settlements_tfin2.up.sql"
+      "../migrations/035_provider_payout_manual_settlements_tfin2.up.sql",
     ),
-    "utf8"
+    "utf8",
   );
   const rollback = fs.readFileSync(
     path.resolve(
       __dirname,
-      "../migrations/035_provider_payout_manual_settlements_tfin2.down.sql"
+      "../migrations/035_provider_payout_manual_settlements_tfin2.down.sql",
     ),
-    "utf8"
+    "utf8",
   );
 
-  assert.match(migration, /CREATE TABLE IF NOT EXISTS provider_payout_accounts/);
+  assert.match(
+    migration,
+    /CREATE TABLE IF NOT EXISTS provider_payout_accounts/,
+  );
   assert.match(migration, /idx_provider_payout_accounts_one_active/);
-  for (const column of ["paid_at", "payment_reference", "notes", "processed_by"]) {
+  for (const column of [
+    "paid_at",
+    "payment_reference",
+    "notes",
+    "processed_by",
+  ]) {
     assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`));
     assert.match(rollback, new RegExp(`DROP COLUMN IF EXISTS ${column}`));
   }
-  assert.match(migration, /status IN \('pending','processing','paid','failed','cancelled'\)/);
+  assert.match(
+    migration,
+    /status IN \('pending','processing','paid','failed','cancelled'\)/,
+  );
 });

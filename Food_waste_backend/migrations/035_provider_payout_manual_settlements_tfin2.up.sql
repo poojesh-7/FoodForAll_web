@@ -10,10 +10,16 @@ CREATE TABLE IF NOT EXISTS provider_payout_accounts (
   ifsc_code TEXT NULL,
   is_active BOOLEAN NOT NULL DEFAULT true,
   is_verified BOOLEAN NOT NULL DEFAULT false,
+  verification_status TEXT NOT NULL DEFAULT 'pending',
+  verified_at TIMESTAMP NULL,
+  verified_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+  rejection_reason TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   CONSTRAINT provider_payout_accounts_type_valid
     CHECK (account_type IN ('UPI','BANK')),
+  CONSTRAINT provider_payout_accounts_verification_status_valid
+    CHECK (verification_status IN ('pending','verified','rejected')),
   CONSTRAINT provider_payout_accounts_upi_shape
     CHECK (
       account_type <> 'UPI'

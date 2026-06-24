@@ -43,6 +43,8 @@ const {
   notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
+  notifyProviderPayoutVerificationApproved,
+  notifyProviderPayoutVerificationRejected,
 } = require("../shared/services/operationalNotification.service");
 const {
   SUBJECT_TYPES,
@@ -1311,6 +1313,104 @@ exports.updateProviderSettlementNotes = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to update settlement notes",
+    });
+  }
+};
+
+exports.verifyProviderPayoutAccount = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Payout account id is required" });
+  }
+
+  try {
+    const account = await verifyProviderPayoutAccount({
+      payoutAccountId: id,
+      adminId: req.user.id,
+    });
+
+    if (!account) {
+      return res.status(404).json({ error: "Payout account not found" });
+    }
+
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "admin_verified_provider_payout_account",
+      metadata: {
+        adminId: req.user?.id,
+        payoutAccountId: account.id,
+        providerId: account.provider_id,
+      },
+    });
+
+    void notifyProviderPayoutVerificationApproved({
+      providerId: account.provider_id,
+      payoutAccountId: account.id,
+    });
+
+    res.json({ message: "Payout account verified", account });
+  } catch (err) {
+    logger.error("Provider payout account verification failed", {
+      err,
+      adminId: req.user?.id,
+      payoutAccountId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to verify payout account",
+    });
+  }
+};
+
+exports.rejectProviderPayoutAccount = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Payout account id is required" });
+  }
+
+  const reason = String(req.body?.reason || "Rejected by admin").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "Rejection reason is required" });
+  }
+
+  try {
+    const account = await rejectProviderPayoutAccount({
+      payoutAccountId: id,
+      adminId: req.user.id,
+      reason,
+    });
+
+    if (!account) {
+      return res.status(404).json({ error: "Payout account not found" });
+    }
+
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "warn",
+      eventName: "admin_rejected_provider_payout_account",
+      metadata: {
+        adminId: req.user?.id,
+        payoutAccountId: account.id,
+        providerId: account.provider_id,
+        rejectionReason: reason,
+      },
+    });
+
+    void notifyProviderPayoutVerificationRejected({
+      providerId: account.provider_id,
+      payoutAccountId: account.id,
+      reason,
+    });
+
+    res.json({ message: "Payout account rejected", account });
+  } catch (err) {
+    logger.error("Provider payout account rejection failed", {
+      err,
+      adminId: req.user?.id,
+      payoutAccountId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to reject payout account",
     });
   }
 };

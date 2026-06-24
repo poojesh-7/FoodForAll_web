@@ -673,6 +673,10 @@ export interface ProviderPayoutAccount extends DbRow {
   ifsc_code?: string | null;
   is_active: boolean;
   is_verified: boolean;
+  verification_status?: "pending" | "verified" | "rejected" | string;
+  verified_at?: ISODateString | null;
+  verified_by?: DbId | null;
+  rejection_reason?: string | null;
   created_at?: ISODateString | null;
   updated_at?: ISODateString | null;
 }
@@ -1302,6 +1306,11 @@ export interface RejectRestaurantRequest {
   reason?: string;
 }
 export type RejectRestaurantResponse = ApiResponse<EmptyData>;
+export interface RejectProviderPayoutAccountRequest {
+  reason?: string;
+}
+export type VerifyProviderPayoutAccountResponse = ApiResponse<{ account: ProviderPayoutAccount | null }>;
+export type RejectProviderPayoutAccountResponse = ApiResponse<{ account: ProviderPayoutAccount | null }>;
 export interface ProviderReportsAdminData {
   reports: ProviderReportRow[];
 }
@@ -3863,6 +3872,24 @@ export const apiContracts = {
       middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
       request: { params: "IdParams", query: "NoRequestQuery", body: "UpdateProviderSettlementNotesRequest" },
       response: "UpdateProviderSettlementResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/payout-accounts/:id/verify",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "NoRequestBody" },
+      response: "VerifyProviderPayoutAccountResponse",
+      statusCodes: [200, 400, 401, 403, 404, 500],
+    },
+    {
+      method: "PATCH",
+      path: "/api/v1/admin/payout-accounts/:id/reject",
+      auth: "protected",
+      middleware: ["authMiddleware", "requireAdmin", "adminActionLimiter"],
+      request: { params: "IdParams", query: "NoRequestQuery", body: "RejectProviderPayoutAccountRequest" },
+      response: "RejectProviderPayoutAccountResponse",
       statusCodes: [200, 400, 401, 403, 404, 500],
     },
     {

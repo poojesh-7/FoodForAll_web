@@ -9,6 +9,8 @@ const {
   replaceProviderPayoutAccount,
   transitionProviderSettlementStatus,
   validatePayoutAccountInput,
+  verifyProviderPayoutAccount,
+  rejectProviderPayoutAccount,
 } = require("../shared/services/providerPayout.service");
 const {
   ACCOUNTING_CATEGORIES,
@@ -96,13 +98,44 @@ function createProviderFinanceClient() {
       const text = String(sql);
 
       if (text.includes("UPDATE provider_payout_accounts")) {
-        const providerId = params[0];
         const updated = [];
-        for (const account of accounts) {
-          if (account.provider_id === providerId && account.is_active) {
-            account.is_active = false;
-            account.updated_at = `2026-01-0${accounts.length + 1}T00:00:00.000Z`;
-            updated.push({ ...account });
+        if (text.includes("SET is_active=false")) {
+          const providerId = params[0];
+          for (const account of accounts) {
+            if (account.provider_id === providerId && account.is_active) {
+              account.is_active = false;
+              account.updated_at = `2026-01-0${accounts.length + 1}T00:00:00.000Z`;
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("verification_status='verified'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.verification_status = "verified";
+              account.is_verified = true;
+              account.verified_at = "2026-01-05T00:00:00.000Z";
+              account.verified_by = adminId;
+              account.rejection_reason = null;
+              account.updated_at = "2026-01-05T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("verification_status='rejected'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          const reason = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.verification_status = "rejected";
+              account.is_verified = false;
+              account.verified_at = null;
+              account.verified_by = adminId;
+              account.rejection_reason = reason;
+              account.updated_at = "2026-01-05T00:00:00.000Z";
+              updated.push({ ...account });
+            }
           }
         }
         return text.includes("RETURNING *")
@@ -121,6 +154,10 @@ function createProviderFinanceClient() {
           ifsc_code: params[5],
           is_active: true,
           is_verified: false,
+          verification_status: "pending",
+          verified_at: null,
+          verified_by: null,
+          rejection_reason: null,
           created_at: `2026-01-0${accounts.length + 1}T00:00:00.000Z`,
           updated_at: `2026-01-0${accounts.length + 1}T00:00:00.000Z`,
         };
@@ -374,6 +411,42 @@ test("T-FIN-2 manual settlement transitions are replay-safe updates", async () =
       }),
     /Paid settlement/
   );
+});
+
+test("T-FIN-2 provider payout account verification updates status and metadata", async () => {
+  const client = createProviderFinanceClient();
+
+  const account = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "verify@upi" },
+    ensureSchema: false,
+  });
+
+  const verified = await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
+  assert.equal(verified.verification_status, "verified");
+  assert.equal(verified.is_verified, true);
+  assert.equal(verified.verified_by, ADMIN_ID);
+  assert.equal(verified.rejection_reason, null);
+
+  const rejected = await rejectProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    reason: "Missing bank proof",
+    ensureSchema: false,
+  });
+
+  assert.equal(rejected.verification_status, "rejected");
+  assert.equal(rejected.is_verified, false);
+  assert.equal(rejected.verified_by, ADMIN_ID);
+  assert.equal(rejected.rejection_reason, "Missing bank proof");
 });
 
 test("T-FIN-2 provider earnings reporting matches provider_settlements", async () => {

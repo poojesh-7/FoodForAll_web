@@ -9,6 +9,8 @@ const {
 } = require("./financialLedger.service");
 
 const ACCOUNT_TYPES = new Set(["UPI", "BANK"]);
+const VERIFICATION_STATUSES = new Set(["pending", "verified", "rejected"]);
+const DEFAULT_VERIFICATION_STATUS = "pending";
 const PENDING_SETTLEMENT_STATUSES = ["pending", "processing", "allocated", "batched"];
 const PAID_SETTLEMENT_STATUSES = ["paid", "settled"];
 const FAILED_SETTLEMENT_STATUSES = ["failed", "cancelled"];
@@ -113,10 +115,16 @@ async function ensureProviderPayoutSchema(client = pool) {
         ifsc_code TEXT NULL,
         is_active BOOLEAN NOT NULL DEFAULT true,
         is_verified BOOLEAN NOT NULL DEFAULT false,
+        verification_status TEXT NOT NULL DEFAULT 'pending',
+        verified_at TIMESTAMP NULL,
+        verified_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+        rejection_reason TEXT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT provider_payout_accounts_type_valid
           CHECK (account_type IN ('UPI','BANK')),
+        CONSTRAINT provider_payout_accounts_verification_status_valid
+          CHECK (verification_status IN ('pending','verified','rejected')),
         CONSTRAINT provider_payout_accounts_upi_shape
           CHECK (
             account_type <> 'UPI'
@@ -138,6 +146,19 @@ async function ensureProviderPayoutSchema(client = pool) {
             )
           )
       )
+    `);
+    await db.query(`
+      ALTER TABLE provider_payout_accounts
+      ADD COLUMN IF NOT EXISTS verification_status TEXT NOT NULL DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS verified_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL
+    `);
+    await db.query(`
+      ALTER TABLE provider_payout_accounts
+      DROP CONSTRAINT IF EXISTS provider_payout_accounts_verification_status_valid,
+      ADD CONSTRAINT provider_payout_accounts_verification_status_valid
+        CHECK (verification_status IN ('pending','verified','rejected'))
     `);
     await db.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_payout_accounts_one_active
@@ -200,6 +221,10 @@ function serializePayoutAccount(row) {
   const bankAccountNumber = row.bank_account_number
     ? String(row.bank_account_number)
     : null;
+  const verificationStatus = String(row.verification_status || "pending").toLowerCase();
+  const isVerified =
+    verificationStatus === "verified" || Boolean(row.is_verified);
+
   return {
     id: row.id,
     provider_id: row.provider_id,
@@ -212,7 +237,14 @@ function serializePayoutAccount(row) {
       : null,
     ifsc_code: row.ifsc_code || null,
     is_active: Boolean(row.is_active),
-    is_verified: Boolean(row.is_verified),
+    is_verified: isVerified,
+    verification_status:
+      verificationStatus === "verified" || verificationStatus === "rejected"
+        ? verificationStatus
+        : "pending",
+    verified_at: row.verified_at || null,
+    verified_by: row.verified_by || null,
+    rejection_reason: row.rejection_reason || null,
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
   };
@@ -239,6 +271,10 @@ async function listProviderPayoutAccounts({
       ifsc_code,
       is_active,
       is_verified,
+      verification_status,
+      verified_at,
+      verified_by,
+      rejection_reason,
       ${sqlTimestampUtc("created_at")} AS created_at,
       ${sqlTimestampUtc("updated_at")} AS updated_at
     FROM provider_payout_accounts
@@ -280,9 +316,10 @@ async function replaceProviderPayoutAccount({
       `
       INSERT INTO provider_payout_accounts (
         provider_id, account_type, upi_id, account_holder_name,
-        bank_account_number, ifsc_code, is_active, is_verified
+        bank_account_number, ifsc_code, is_active, is_verified,
+        verification_status, verified_at, verified_by, rejection_reason
       )
-      VALUES ($1,$2,$3,$4,$5,$6,true,false)
+      VALUES ($1,$2,$3,$4,$5,$6,true,false,'pending',NULL,NULL,NULL)
       RETURNING *
       `,
       [
@@ -302,6 +339,85 @@ async function replaceProviderPayoutAccount({
 
   return withTransaction(pool, replacePayoutAccount, {
     name: "replace_provider_payout_account",
+    maxAttempts: 3,
+  });
+}
+
+async function verifyProviderPayoutAccount({
+  client,
+  payoutAccountId,
+  adminId,
+  ensureSchema = true,
+} = {}) {
+  if (!payoutAccountId) {
+    throw serviceError("Payout account id is required.");
+  }
+
+  const verifyAccount = async (db) => {
+    if (ensureSchema) {
+      await ensureProviderPayoutSchema(db);
+    }
+
+    const result = await db.query(
+      `
+      UPDATE provider_payout_accounts
+      SET verification_status='verified', is_verified=true,
+          verified_at=NOW(), verified_by=$2,
+          rejection_reason=NULL, updated_at=NOW()
+      WHERE id=$1 AND is_active=true
+      RETURNING *
+      `,
+      [payoutAccountId, adminId || null]
+    );
+
+    return serializePayoutAccount(result.rows[0] || null);
+  };
+
+  if (client) return verifyAccount(client);
+
+  return withTransaction(pool, verifyAccount, {
+    name: "verify_provider_payout_account",
+    maxAttempts: 3,
+  });
+}
+
+async function rejectProviderPayoutAccount({
+  client,
+  payoutAccountId,
+  adminId,
+  reason,
+  ensureSchema = true,
+} = {}) {
+  if (!payoutAccountId) {
+    throw serviceError("Payout account id is required.");
+  }
+
+  const rejectionReason = trimText(reason || "Rejected by admin", 500);
+
+  const rejectAccount = async (db) => {
+    if (ensureSchema) {
+      await ensureProviderPayoutSchema(db);
+    }
+
+    const result = await db.query(
+      `
+      UPDATE provider_payout_accounts
+      SET verification_status='rejected', is_verified=false,
+          verified_at=NULL, verified_by=$2,
+          rejection_reason=$3, updated_at=NOW()
+      WHERE id=$1 AND is_active=true
+      RETURNING *
+      `,
+      [payoutAccountId, adminId || null, rejectionReason || "Rejected by admin"]
+    );
+
+    return serializePayoutAccount(result.rows[0] || null);
+  };
+
+  if (client) return rejectAccount(client);
+
+  return withTransaction(pool, rejectAccount, {
+    name: "reject_provider_payout_account",
     maxAttempts: 3,
   });
 }
@@ -503,6 +619,10 @@ function payoutAccountSummary(row) {
     ifsc_code: row.payout_ifsc_code,
     is_active: true,
     is_verified: row.payout_is_verified,
+    verification_status: row.payout_verification_status,
+    verified_at: row.payout_verified_at,
+    verified_by: row.payout_verified_by,
+    rejection_reason: row.payout_rejection_reason,
     created_at: row.payout_created_at,
     updated_at: row.payout_updated_at,
   });
@@ -518,6 +638,8 @@ function serializeAdminSettlementSummary(row) {
     restaurant_name: row.restaurant_name || null,
     amount_due: Number(row.amount_due || 0),
     pending_settlements: Number(row.pending_settlements || 0),
+    paid_settlements: Number(row.paid_settlements || 0),
+    failed_settlements: Number(row.failed_settlements || 0),
     last_settlement_at: row.last_settlement_at || null,
     payout_account: payoutAccountSummary(row),
   };
@@ -577,6 +699,10 @@ async function listAdminProviderSettlements({
         ifsc_code,
         is_active,
         is_verified,
+        verification_status,
+        verified_at,
+        verified_by,
+        rejection_reason,
         ${sqlTimestampUtc("created_at")} AS created_at,
         ${sqlTimestampUtc("updated_at")} AS updated_at
       FROM provider_payout_accounts
@@ -598,6 +724,10 @@ async function listAdminProviderSettlements({
       ppa.bank_account_number AS payout_bank_account_number,
       ppa.ifsc_code AS payout_ifsc_code,
       ppa.is_verified AS payout_is_verified,
+      ppa.verification_status AS payout_verification_status,
+      ppa.verified_at AS payout_verified_at,
+      ppa.verified_by AS payout_verified_by,
+      ppa.rejection_reason AS payout_rejection_reason,
       ppa.created_at AS payout_created_at,
       ppa.updated_at AS payout_updated_at
     FROM provider_due pd
@@ -644,6 +774,10 @@ async function listAdminProviderSettlements({
         ifsc_code,
         is_active,
         is_verified,
+        verification_status,
+        verified_at,
+        verified_by,
+        rejection_reason,
         ${sqlTimestampUtc("created_at")} AS created_at,
         ${sqlTimestampUtc("updated_at")} AS updated_at
       FROM provider_payout_accounts
@@ -683,6 +817,10 @@ async function listAdminProviderSettlements({
       ppa.bank_account_number AS payout_bank_account_number,
       ppa.ifsc_code AS payout_ifsc_code,
       ppa.is_verified AS payout_is_verified,
+      ppa.verification_status AS payout_verification_status,
+      ppa.verified_at AS payout_verified_at,
+      ppa.verified_by AS payout_verified_by,
+      ppa.rejection_reason AS payout_rejection_reason,
       ppa.created_at AS payout_created_at,
       ppa.updated_at AS payout_updated_at
     FROM provider_settlements ps
@@ -923,4 +1061,6 @@ module.exports = {
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
   validatePayoutAccountInput,
+  verifyProviderPayoutAccount,
+  rejectProviderPayoutAccount,
 };

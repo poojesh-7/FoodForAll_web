@@ -307,7 +307,16 @@ export default function DashboardPage() {
                         {displayAccount(payoutAccount)}
                       </p>
                       <p className="mt-1 text-xs font-medium text-zinc-500">
-                        Verified: {payoutAccount?.is_verified ? "Yes" : "No"}
+                        {(() => {
+                          if (!payoutAccount) return "No payout account";
+                          if (payoutAccount.verification_status === "verified" || payoutAccount.is_verified) {
+                            return "Verified";
+                          }
+                          if (payoutAccount.verification_status === "rejected") {
+                            return `Rejected${payoutAccount.rejection_reason ? `: ${payoutAccount.rejection_reason}` : ""}`;
+                          }
+                          return "Pending verification";
+                        })()}
                       </p>
                     </div>
                     {payoutAccount?.is_active && (

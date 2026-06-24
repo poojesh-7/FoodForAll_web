@@ -63,7 +63,13 @@ function payoutAccountLabel(account: ProviderPayoutAccount | null) {
 
 function payoutAccountStatus(account: ProviderPayoutAccount | null) {
   if (!account) return "Not added";
-  return account.is_verified ? "Verified" : "Unverified";
+  if (account.verification_status === "verified" || account.is_verified) {
+    return "Verified";
+  }
+  if (account.verification_status === "rejected") {
+    return "Rejected";
+  }
+  return "Pending verification";
 }
 
 function draftFor(

@@ -27,6 +27,8 @@ router.get("/settlements", adminCtrl.getProviderSettlementConsole);
 router.patch("/settlements/:id/paid", adminActionLimiter, adminCtrl.markProviderSettlementPaid);
 router.patch("/settlements/:id/failed", adminActionLimiter, adminCtrl.markProviderSettlementFailed);
 router.patch("/settlements/:id/notes", adminActionLimiter, adminCtrl.updateProviderSettlementNotes);
+router.patch("/payout-accounts/:id/verify", adminActionLimiter, adminCtrl.verifyProviderPayoutAccount);
+router.patch("/payout-accounts/:id/reject", adminActionLimiter, adminCtrl.rejectProviderPayoutAccount);
 router.get("/queues/health", adminCtrl.getQueueHealth);
 router.post("/queues/:queueName/jobs/:jobId/retry", adminActionLimiter, adminCtrl.retryFailedQueueJob);
 router.get("/trust/summary", adminCtrl.getTrustObservabilitySummary);

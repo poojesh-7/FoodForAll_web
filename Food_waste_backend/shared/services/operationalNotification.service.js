@@ -221,6 +221,66 @@ async function notifyProviderVerificationRejected({
   });
 }
 
+async function notifyProviderPayoutVerificationApproved({
+  providerId,
+  payoutAccountId,
+  queue = null,
+}) {
+  return enqueueNotification({
+    userId: providerId,
+    type: "provider_payout_verification_approved",
+    title: "Payout account verified",
+    message: "Your payout account has been verified and is ready for settlement.",
+    data: {
+      payout_account_id: payoutAccountId,
+      href: "/dashboard",
+    },
+    idempotencyKey: payoutAccountId
+      ? `provider_payout_verification_approved:${payoutAccountId}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider payout verification approval notification failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+}
+
+async function notifyProviderPayoutVerificationRejected({
+  providerId,
+  payoutAccountId,
+  reason,
+  queue = null,
+}) {
+  const message = reason
+    ? `Your payout account verification was rejected. Reason: ${reason}`
+    : "Your payout account verification was rejected.";
+
+  return enqueueNotification({
+    userId: providerId,
+    type: "provider_payout_verification_rejected",
+    title: "Payout account verification rejected",
+    message,
+    data: {
+      payout_account_id: payoutAccountId,
+      reason: reason || null,
+      href: "/dashboard",
+    },
+    idempotencyKey: payoutAccountId
+      ? `provider_payout_verification_rejected:${payoutAccountId}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider payout verification rejection notification failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+}
+
 async function notifyNgoVerificationApproved({ ngoUserId, ngoId, queue = null }) {
   return enqueueNotification({
     userId: ngoUserId,
@@ -374,4 +434,6 @@ module.exports = {
   notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
+  notifyProviderPayoutVerificationApproved,
+  notifyProviderPayoutVerificationRejected,
 };

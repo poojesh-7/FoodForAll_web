@@ -5,6 +5,7 @@ const {
   listProviderPayoutAccounts,
   replaceProviderPayoutAccount,
 } = require("../shared/services/providerPayout.service");
+const { recordOperationalEvent } = require("../shared/services/observability.service");
 
 exports.getMyPayoutAccounts = async (req, res) => {
   try {
@@ -25,10 +26,28 @@ exports.getMyPayoutAccounts = async (req, res) => {
 
 exports.replaceMyPayoutAccount = async (req, res) => {
   try {
+    const existing = await listProviderPayoutAccounts({
+      providerId: req.user.id,
+    });
+    const previousAccount = existing.active_account;
+
     const account = await replaceProviderPayoutAccount({
       providerId: req.user.id,
       payload: req.body,
     });
+
+    void recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "payout_account_updated",
+      metadata: {
+        providerId: req.user.id,
+        payoutAccountId: account.id,
+        previousVerificationStatus: previousAccount?.verification_status ?? null,
+        newVerificationStatus: account.verification_status ?? null,
+      },
+    });
+
     res.status(201).json({
       message: "Payout account saved",
       account,

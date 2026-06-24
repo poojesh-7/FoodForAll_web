@@ -51,6 +51,63 @@ function displayAccount(account: ProviderPayoutAccount | null) {
   ].filter(Boolean).join(" | ");
 }
 
+function payoutAccountTypeLabel(account: ProviderPayoutAccount | null) {
+  if (!account) return "None";
+  return account.account_type === "BANK" ? "Bank" : "UPI";
+}
+
+function payoutVerificationStatus(account: ProviderPayoutAccount | null) {
+  if (!account) return "No account";
+  if (account.verification_status === "verified" || account.is_verified) {
+    return "Verified";
+  }
+  if (account.verification_status === "rejected") {
+    return "Rejected";
+  }
+  return "Pending Review";
+}
+
+function payoutVerificationBanner(account: ProviderPayoutAccount | null) {
+  if (!account) {
+    return {
+      tone: "neutral",
+      message: "Add payout details to receive settlements once verified.",
+    };
+  }
+  if (account.verification_status === "verified" || account.is_verified) {
+    return {
+      tone: "success",
+      message:
+        "Your payout account is verified and eligible for settlements.",
+    };
+  }
+  if (account.verification_status === "rejected") {
+    return {
+      tone: "danger",
+      message:
+        "Your payout account was rejected. Please update the details and resubmit.",
+    };
+  }
+  return {
+    tone: "warning",
+    message:
+      "Your payout account is awaiting admin verification. Settlements cannot be paid until verification is completed.",
+  };
+}
+
+function settlementStatusChip(status: string) {
+  const normalized = String(status || "").toLowerCase();
+  const base = "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide";
+
+  if (normalized === "paid") {
+    return <span className={`${base} bg-emerald-100 text-emerald-800`}>Paid</span>;
+  }
+  if (normalized === "failed" || normalized === "cancelled") {
+    return <span className={`${base} bg-rose-100 text-rose-800`}>Failed</span>;
+  }
+  return <span className={`${base} bg-amber-100 text-amber-800`}>Pending</span>;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -297,38 +354,60 @@ export default function DashboardPage() {
                   <ProviderReputation summary={providerRatings} />
                 </div>
 
-                <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
+                <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+                    <div className="space-y-3">
                       <h2 className="text-base font-semibold text-zinc-950">
-                        Payment Details
+                        Payout Account
                       </h2>
-                      <p className="mt-1 text-sm text-zinc-600">
-                        {displayAccount(payoutAccount)}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-zinc-500">
-                        {(() => {
-                          if (!payoutAccount) return "No payout account";
-                          if (payoutAccount.verification_status === "verified" || payoutAccount.is_verified) {
-                            return "Verified";
-                          }
-                          if (payoutAccount.verification_status === "rejected") {
-                            return `Rejected${payoutAccount.rejection_reason ? `: ${payoutAccount.rejection_reason}` : ""}`;
-                          }
-                          return "Pending verification";
-                        })()}
+                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <div>
+                            <p className="text-xs uppercase text-zinc-500">Type</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-950">
+                              {payoutAccountTypeLabel(payoutAccount)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase text-zinc-500">Account</p>
+                            <p className="mt-1 text-sm text-zinc-950">
+                              {displayAccount(payoutAccount)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase text-zinc-500">Status</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-950">
+                              {payoutVerificationStatus(payoutAccount)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <div>
+                            <p className="text-xs uppercase text-zinc-500">Last Updated</p>
+                            <p className="mt-1 text-sm text-zinc-700">
+                              {payoutAccount?.updated_at
+                                ? formatDateTime(payoutAccount.updated_at)
+                                : "-"}
+                            </p>
+                          </div>
+                          {payoutAccount?.verified_at ? (
+                            <div>
+                              <p className="text-xs uppercase text-zinc-500">Verified At</p>
+                              <p className="mt-1 text-sm text-zinc-700">
+                                {formatDateTime(payoutAccount.verified_at)}
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                      <p className="text-sm font-semibold text-zinc-950">Verification Status</p>
+                      <p className="mt-2 text-sm text-zinc-700">
+                        {payoutVerificationBanner(payoutAccount).message}
                       </p>
                     </div>
-                    {payoutAccount?.is_active && (
-                      <button
-                        type="button"
-                        onClick={deactivatePayoutAccount}
-                        disabled={financialSubmitting}
-                        className="inline-flex min-h-10 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-800 disabled:opacity-50"
-                      >
-                        Deactivate
-                      </button>
-                    )}
                   </div>
 
                   {financialMessage && (
@@ -418,8 +497,8 @@ export default function DashboardPage() {
                   <h2 className="text-base font-semibold text-zinc-950">
                     Earnings
                   </h2>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Pending Earnings
                       </p>
@@ -427,12 +506,23 @@ export default function DashboardPage() {
                         {formatCurrency(financialSummary?.earnings.pending)}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Paid Earnings
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(financialSummary?.earnings.paid)}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                      <p className="text-sm font-medium text-zinc-600">
+                        Lifetime Earnings
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-950">
+                        {formatCurrency(
+                          (Number(financialSummary?.earnings.pending || 0) || 0) +
+                            (Number(financialSummary?.earnings.paid || 0) || 0)
+                        )}
                       </p>
                     </div>
                   </div>
@@ -476,8 +566,8 @@ export default function DashboardPage() {
                                 <td className="px-4 py-3 text-zinc-700">
                                   {settlement.payment_reference || "-"}
                                 </td>
-                                <td className="px-4 py-3 text-zinc-700">
-                                  {String(settlement.status).replace(/_/g, " ")}
+                                <td className="px-4 py-3">
+                                  {settlementStatusChip(settlement.status)}
                                 </td>
                               </tr>
                             ))}

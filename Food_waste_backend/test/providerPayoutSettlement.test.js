@@ -462,6 +462,59 @@ test("T-FIN-2 provider payout account verification updates status and metadata",
   assert.equal(rejected.rejection_reason, "Missing bank proof");
 });
 
+test("T-FIN-2 payout account update resets verification status", async () => {
+  const client = createProviderFinanceClient();
+
+  const original = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "verified@upi" },
+    ensureSchema: false,
+  });
+
+  await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: original.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
+  const updated = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: {
+      account_type: "BANK",
+      account_holder_name: "Verified Provider",
+      bank_account_number: "123456789012",
+      ifsc_code: "HDFC0123456",
+    },
+    ensureSchema: false,
+  });
+
+  assert.equal(updated.verification_status, "pending");
+  assert.equal(updated.is_verified, false);
+  assert.equal(updated.verified_at, null);
+  assert.equal(updated.verified_by, null);
+  assert.equal(updated.rejection_reason, null);
+  assert.equal(client.accounts.filter((row) => row.is_active).length, 1);
+  assert.equal(client.accounts.filter((row) => row.is_active && row.id === original.id).length, 0);
+});
+
+test("T-FIN-2 provider settlement earnings summary totals pending and paid", async () => {
+  const client = createProviderFinanceClient();
+
+  const summary = await getProviderSettlementSummary({
+    client,
+    providerId: PROVIDER_ID,
+    limit: 50,
+    ensureSchema: false,
+  });
+
+  assert.equal(summary.earnings.pending, 1650);
+  assert.equal(summary.earnings.paid, 8430);
+  assert.equal(summary.settlements.length, 3);
+});
+
 test("T-FIN-2 marking paid requires a verified payout account", async () => {
   const client = createProviderFinanceClient();
 

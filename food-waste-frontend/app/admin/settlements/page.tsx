@@ -6,6 +6,7 @@ import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import { formatDateTimeOrFallback } from "@/lib/dateTime";
 import { adminService } from "@/services/admin.service";
+import toast from "react-hot-toast";
 import type {
   AdminProviderSettlementConsoleData,
   AdminProviderSettlementRow,
@@ -118,6 +119,10 @@ export default function AdminSettlementsPage() {
     useState<AdminProviderSettlementConsoleData | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SettlementDraft>>({});
   const [loading, setLoading] = useState(true);
+  const [accountActionState, setAccountActionState] = useState<
+    | { id: string; type: "verify" | "reject" }
+    | null
+  >(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -216,17 +221,22 @@ export default function AdminSettlementsPage() {
       return;
     }
 
+    const stringId = String(accountId);
     try {
-      setLoading(true);
+      setAccountActionState({ id: stringId, type: "verify" });
       setError("");
-      setSuccess("");
+      setSuccess("Updating...");
       await adminService.verifyProviderPayoutAccount(accountId);
+      toast.success("Payout account verified.");
       setSuccess("Payout account verified.");
       await loadSettlements();
     } catch (err) {
-      setError(adminService.getErrorMessage(err));
+      const message = adminService.getErrorMessage(err);
+      setError(message);
+      setSuccess("");
+      toast.error(message);
     } finally {
-      setLoading(false);
+      setAccountActionState(null);
     }
   }
 
@@ -245,17 +255,22 @@ export default function AdminSettlementsPage() {
       return;
     }
 
+    const stringId = String(accountId);
     try {
-      setLoading(true);
+      setAccountActionState({ id: stringId, type: "reject" });
       setError("");
-      setSuccess("");
+      setSuccess("Updating...");
       await adminService.rejectProviderPayoutAccount(accountId, reason || "");
+      toast.success("Payout account rejected.");
       setSuccess("Payout account rejected.");
       await loadSettlements();
     } catch (err) {
-      setError(adminService.getErrorMessage(err));
+      const message = adminService.getErrorMessage(err);
+      setError(message);
+      setSuccess("");
+      toast.error(message);
     } finally {
-      setLoading(false);
+      setAccountActionState(null);
     }
   }
 
@@ -339,7 +354,13 @@ export default function AdminSettlementsPage() {
       description="Track provider earnings and manually record payout outcomes. No bank transfer is executed here."
     >
       {error && <AdminStateBlock title={error} tone="error" />}
-      {success && <AdminStateBlock title={success} />}
+      {success && !accountActionState && <AdminStateBlock title={success} />}
+      {accountActionState && (
+        <AdminStateBlock
+          title={`Status: ${accountActionState.type === "verify" ? "Updating verification" : "Updating rejection"}...`}
+          tone="info"
+        />
+      )}
 
       <section className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
         <label className="block max-w-xl text-sm">
@@ -558,18 +579,28 @@ export default function AdminSettlementsPage() {
                     <button
                       type="button"
                       onClick={() => handleVerifyPayoutAccount(selectedProvider.payout_account?.id)}
-                      className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700"
+                      disabled={Boolean(accountActionState)}
+                      className={`inline-flex min-h-9 items-center justify-center rounded-md px-3 text-sm font-medium text-white ${
+                        accountActionState?.type === "verify"
+                          ? "bg-emerald-700"
+                          : "bg-emerald-600 hover:bg-emerald-700"
+                      } disabled:opacity-50`}
                     >
-                      Verify
+                      {accountActionState?.type === "verify" ? "Verifying..." : "Verify"}
                     </button>
                   )}
                 {selectedProvider.payout_account && (
                   <button
                     type="button"
                     onClick={() => handleRejectPayoutAccount(selectedProvider.payout_account?.id)}
-                    className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100"
+                    disabled={Boolean(accountActionState)}
+                    className={`inline-flex min-h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${
+                      accountActionState?.type === "reject"
+                        ? "border-red-300 bg-red-100 text-red-700"
+                        : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                    } disabled:opacity-50`}
                   >
-                    {selectedProvider.payout_account.verification_status === "rejected" ? "Re-Verify" : "Reject"}
+                    {accountActionState?.type === "reject" ? "Rejecting..." : selectedProvider.payout_account.verification_status === "rejected" ? "Re-Verify" : "Reject"}
                   </button>
                 )}
               </div>

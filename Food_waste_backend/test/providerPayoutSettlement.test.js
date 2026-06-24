@@ -364,6 +364,19 @@ test("T-FIN-2 provider payout account replacement keeps history", async () => {
 test("T-FIN-2 manual settlement transitions are replay-safe updates", async () => {
   const client = createProviderFinanceClient();
 
+  const account = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "valid@upi" },
+    ensureSchema: false,
+  });
+  await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
   const paid = await transitionProviderSettlementStatus({
     client,
     settlementId: "settlement_pending",
@@ -447,6 +460,83 @@ test("T-FIN-2 provider payout account verification updates status and metadata",
   assert.equal(rejected.is_verified, false);
   assert.equal(rejected.verified_by, ADMIN_ID);
   assert.equal(rejected.rejection_reason, "Missing bank proof");
+});
+
+test("T-FIN-2 marking paid requires a verified payout account", async () => {
+  const client = createProviderFinanceClient();
+
+  await assert.rejects(
+    () =>
+      transitionProviderSettlementStatus({
+        client,
+        settlementId: "settlement_pending",
+        status: "paid",
+        adminId: ADMIN_ID,
+        paymentReference: "UTR123456",
+        ensureSchema: false,
+      }),
+    /has not configured a payout account/
+  );
+
+  const account = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "pending@upi" },
+    ensureSchema: false,
+  });
+
+  await assert.rejects(
+    () =>
+      transitionProviderSettlementStatus({
+        client,
+        settlementId: "settlement_pending",
+        status: "paid",
+        adminId: ADMIN_ID,
+        paymentReference: "UTR123456",
+        ensureSchema: false,
+      }),
+    /verification is pending/
+  );
+
+  await rejectProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    reason: "Invalid proof",
+    ensureSchema: false,
+  });
+
+  await assert.rejects(
+    () =>
+      transitionProviderSettlementStatus({
+        client,
+        settlementId: "settlement_pending",
+        status: "paid",
+        adminId: ADMIN_ID,
+        paymentReference: "UTR123456",
+        ensureSchema: false,
+      }),
+    /has been rejected/
+  );
+
+  await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
+  const paid = await transitionProviderSettlementStatus({
+    client,
+    settlementId: "settlement_pending",
+    status: "paid",
+    adminId: ADMIN_ID,
+    paymentReference: "UTR123456",
+    ensureSchema: false,
+  });
+
+  assert.equal(paid.status, "paid");
+  assert.equal(paid.payment_reference, "UTR123456");
 });
 
 test("T-FIN-2 provider earnings reporting matches provider_settlements", async () => {

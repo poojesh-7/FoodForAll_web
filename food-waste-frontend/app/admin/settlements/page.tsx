@@ -20,7 +20,16 @@ const FILTERS = [
   { value: "failed", label: "Failed" },
 ] as const;
 
+const VERIFICATION_FILTERS = [
+  { value: "all", label: "All Accounts" },
+  { value: "verified", label: "Verified" },
+  { value: "pending_review", label: "Pending Review" },
+  { value: "rejected", label: "Rejected" },
+  { value: "no_account", label: "No Account" },
+] as const;
+
 type SettlementFilter = (typeof FILTERS)[number]["value"];
+type VerificationFilter = (typeof VERIFICATION_FILTERS)[number]["value"];
 type SettlementDraft = {
   payment_reference: string;
   notes: string;
@@ -72,6 +81,24 @@ function payoutAccountStatus(account: ProviderPayoutAccount | null) {
   return "Pending verification";
 }
 
+function payoutAccountStatusMessage(account: ProviderPayoutAccount | null) {
+  if (!account) return "No payout account configured.";
+  if (account.verification_status === "verified" || account.is_verified) {
+    return "Provider payout account is verified.";
+  }
+  if (account.verification_status === "rejected") {
+    return account.rejection_reason || "Provider payout account has been rejected.";
+  }
+  return "Provider payout account verification is pending.";
+}
+
+function isPayoutAccountReady(account: ProviderPayoutAccount | null) {
+  return Boolean(
+    account &&
+      (account.verification_status === "verified" || account.is_verified)
+  );
+}
+
 function draftFor(
   drafts: Record<string, SettlementDraft>,
   settlement: AdminProviderSettlementRow
@@ -84,6 +111,7 @@ function draftFor(
 
 export default function AdminSettlementsPage() {
   const [filter, setFilter] = useState<SettlementFilter>("pending");
+  const [verificationFilter, setVerificationFilter] = useState<VerificationFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [consoleData, setConsoleData] =
@@ -100,6 +128,7 @@ export default function AdminSettlementsPage() {
       setError("");
       const result = await adminService.getProviderSettlementConsole({
         status: filter,
+        verificationStatus: verificationFilter,
         search: searchQuery.trim() || undefined,
         providerId: selectedProviderId || undefined,
         limit: 500,
@@ -123,7 +152,7 @@ export default function AdminSettlementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, searchQuery, selectedProviderId]);
+  }, [filter, searchQuery, selectedProviderId, verificationFilter]);
 
   useEffect(() => {
     let active = true;
@@ -181,9 +210,58 @@ export default function AdminSettlementsPage() {
     });
   }
 
+  async function handleVerifyPayoutAccount(accountId: DbId | null | undefined) {
+    if (!accountId) {
+      setError("No payout account available to verify.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      setSuccess("");
+      await adminService.verifyProviderPayoutAccount(accountId);
+      setSuccess("Payout account verified.");
+      await loadSettlements();
+    } catch (err) {
+      setError(adminService.getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRejectPayoutAccount(accountId: DbId | null | undefined) {
+    if (!accountId) {
+      setError("No payout account available to reject.");
+      return;
+    }
+
+    const reason = window.prompt(
+      "Enter rejection reason for the payout account:",
+      ""
+    )?.trim();
+
+    if (reason === null) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      setSuccess("");
+      await adminService.rejectProviderPayoutAccount(accountId, reason || "");
+      setSuccess("Payout account rejected.");
+      await loadSettlements();
+    } catch (err) {
+      setError(adminService.getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runSettlementAction(
     settlement: AdminProviderSettlementRow,
-    action: "paid" | "failed" | "notes"
+    action: "paid" | "failed"
   ) {
     const key = String(settlement.id);
     const draft = draftFor(drafts, settlement);
@@ -206,16 +284,11 @@ export default function AdminSettlementsPage() {
           notes,
         });
         setSuccess("Settlement marked paid.");
-      } else if (action === "failed") {
+      } else {
         await adminService.markProviderSettlementFailed(settlement.id, {
           notes,
         });
         setSuccess("Settlement marked failed.");
-      } else {
-        await adminService.updateProviderSettlementNotes(settlement.id, {
-          notes,
-        });
-        setSuccess("Settlement notes updated.");
       }
 
       await loadSettlements();
@@ -227,6 +300,22 @@ export default function AdminSettlementsPage() {
   }
 
   const providerSummary = consoleData?.summary || [];
+  const verificationCounts = providerSummary.reduce(
+    (counts, row) => {
+      const account = row.payout_account;
+      if (!account) {
+        counts.no_account += 1;
+      } else if (account.verification_status === "verified" || account.is_verified) {
+        counts.verified += 1;
+      } else if (account.verification_status === "rejected") {
+        counts.rejected += 1;
+      } else {
+        counts.pending += 1;
+      }
+      return counts;
+    },
+    { verified: 0, pending: 0, rejected: 0, no_account: 0 }
+  );
   const selectedProvider = selectedProviderId
     ? providerSummary.find((row) => String(row.provider_id) === selectedProviderId) ||
       null
@@ -279,9 +368,31 @@ export default function AdminSettlementsPage() {
             </button>
           ))}
         </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {VERIFICATION_FILTERS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => {
+                setVerificationFilter(item.value);
+                setSelectedProviderId(null);
+                setConsoleData((current) =>
+                  current ? { ...current, settlements: [] } : current
+                );
+              }}
+              className={`rounded-md px-3 py-2 text-sm font-medium ${
+                verificationFilter === item.value
+                  ? "bg-zinc-950 text-white"
+                  : "text-zinc-700 hover:bg-zinc-100"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <AdminMetricCard
           label="Providers"
           value={metricSummary.length}
@@ -298,9 +409,19 @@ export default function AdminSettlementsPage() {
           detail="Awaiting manual payout"
         />
         <AdminMetricCard
-          label="Rows Shown"
-          value={settlements.length}
-          detail={selectedProvider ? label(filter) : "Select provider"}
+          label="Verified Accounts"
+          value={verificationCounts.verified}
+          detail="Active verified accounts"
+        />
+        <AdminMetricCard
+          label="Pending Review"
+          value={verificationCounts.pending}
+          detail="Awaiting admin review"
+        />
+        <AdminMetricCard
+          label="Rejected Accounts"
+          value={verificationCounts.rejected}
+          detail="Rejected payout accounts"
         />
       </section>
 
@@ -398,6 +519,62 @@ export default function AdminSettlementsPage() {
               ? `${providerName(selectedProvider)} Settlement Details`
               : "Settlement Details"}
           </h2>
+          {selectedProvider && (
+            <div className="mt-3 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">Payout Account</p>
+                  <p className="text-sm text-zinc-700">
+                    {payoutAccountLabel(selectedProvider.payout_account)}
+                  </p>
+                </div>
+                <div className="text-sm text-zinc-700">
+                  <span className="font-semibold">Status:</span> {payoutAccountStatus(selectedProvider.payout_account)}
+                </div>
+              </div>
+              {selectedProvider.payout_account ? (
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs uppercase text-zinc-500">Verification</p>
+                    <p className="text-sm font-medium text-zinc-900">{payoutAccountStatus(selectedProvider.payout_account)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-zinc-500">Verified By</p>
+                    <p className="text-sm text-zinc-700">
+                      {selectedProvider.payout_account.verified_by || "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-zinc-500">Verified At</p>
+                    <p className="text-sm text-zinc-700">
+                      {formatDateTimeOrFallback(selectedProvider.payout_account.verified_at || null)}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {selectedProvider.payout_account &&
+                  selectedProvider.payout_account.verification_status !== "verified" && (
+                    <button
+                      type="button"
+                      onClick={() => handleVerifyPayoutAccount(selectedProvider.payout_account?.id)}
+                      className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700"
+                    >
+                      Verify
+                    </button>
+                  )}
+                {selectedProvider.payout_account && (
+                  <button
+                    type="button"
+                    onClick={() => handleRejectPayoutAccount(selectedProvider.payout_account?.id)}
+                    className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100"
+                  >
+                    {selectedProvider.payout_account.verification_status === "rejected" ? "Re-Verify" : "Reject"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         {!selectedProvider ? (
           <div className="p-4">
@@ -473,36 +650,53 @@ export default function AdminSettlementsPage() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-col gap-2">
-                          <button
-                            type="button"
-                            onClick={() => runSettlementAction(settlement, "paid")}
-                            disabled={paid || submittingId === `${rowKey}:paid`}
-                            className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:opacity-50"
-                          >
-                            {submittingId === `${rowKey}:paid`
-                              ? "Saving..."
-                              : "Mark Paid"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              runSettlementAction(settlement, "failed")
-                            }
-                            disabled={paid || submittingId === `${rowKey}:failed`}
-                            className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 disabled:opacity-50"
-                          >
-                            Mark Failed
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => runSettlementAction(settlement, "notes")}
-                            disabled={submittingId === `${rowKey}:notes`}
-                            className="inline-flex min-h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-800 disabled:opacity-50"
-                          >
-                            Add Notes
-                          </button>
-                        </div>
+                        {(() => {
+                          const payoutVerified = isPayoutAccountReady(
+                            settlement.payout_account
+                          );
+                          const markPaidDisabled =
+                            paid ||
+                            submittingId === `${rowKey}:paid` ||
+                            !payoutVerified;
+                          return (
+                            <div className="flex flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => runSettlementAction(settlement, "paid")}
+                                disabled={markPaidDisabled}
+                                title={
+                                  markPaidDisabled && !paid
+                                    ? payoutAccountStatusMessage(
+                                        settlement.payout_account
+                                      )
+                                    : undefined
+                                }
+                                className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:opacity-50"
+                              >
+                                {submittingId === `${rowKey}:paid`
+                                  ? "Saving..."
+                                  : "Mark Paid"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  runSettlementAction(settlement, "failed")
+                                }
+                                disabled={paid || submittingId === `${rowKey}:failed`}
+                                className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 disabled:opacity-50"
+                              >
+                                Mark Failed
+                              </button>
+                              {!paid && (
+                                <p className="text-xs text-zinc-500">
+                                  {payoutAccountStatusMessage(
+                                    settlement.payout_account
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );

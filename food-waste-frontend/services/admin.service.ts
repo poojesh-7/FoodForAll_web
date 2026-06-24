@@ -83,6 +83,9 @@ import type {
   UpdateProviderSettlementNotesRequest,
   UpdateProviderSettlementResponse,
   UpdateProviderSettlementStatusRequest,
+  ProviderPayoutAccount,
+  VerifyProviderPayoutAccountResponse,
+  RejectProviderPayoutAccountResponse,
 } from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
@@ -388,6 +391,28 @@ export async function markProviderSettlementFailed(
   payload: UpdateProviderSettlementStatusRequest = {}
 ): Promise<void> {
   await patchProviderSettlement(id, "failed", payload);
+}
+
+export async function verifyProviderPayoutAccount(
+  id: DbId
+): Promise<ProviderPayoutAccount | null> {
+  const { data } = await api.patch<VerifyProviderPayoutAccountResponse>(
+    `/admin/payout-accounts/${String(id)}/verify`
+  );
+
+  return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
+}
+
+export async function rejectProviderPayoutAccount(
+  id: DbId,
+  reason: string
+): Promise<ProviderPayoutAccount | null> {
+  const { data } = await api.patch<RejectProviderPayoutAccountResponse>(
+    `/admin/payout-accounts/${String(id)}/reject`,
+    { reason }
+  );
+
+  return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
 }
 
 export async function updateProviderSettlementNotes(
@@ -807,6 +832,8 @@ export const adminService = {
   markProviderSettlementPaid,
   markProviderSettlementFailed,
   updateProviderSettlementNotes,
+  verifyProviderPayoutAccount,
+  rejectProviderPayoutAccount,
   getModerationCase,
   getModerationAppeals,
   getGovernanceDashboard,

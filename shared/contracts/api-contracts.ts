@@ -760,6 +760,8 @@ export interface AdminProviderSettlementConsoleData {
 
 export interface AdminProviderSettlementConsoleQuery {
   status?: "pending" | "paid" | "failed" | "all" | string;
+  verificationStatus?: "all" | "verified" | "pending_review" | "rejected" | "no_account" | string;
+  verification_status?: "all" | "verified" | "pending_review" | "rejected" | "no_account" | string;
   limit?: string | number;
   search?: string;
   providerId?: DbId;

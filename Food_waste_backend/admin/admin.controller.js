@@ -21,6 +21,8 @@ const {
   listAdminProviderSettlements,
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
+  verifyProviderPayoutAccount,
+  rejectProviderPayoutAccount,
 } = require("../shared/services/providerPayout.service");
 const {
   dismissProviderReport,
@@ -1174,6 +1176,7 @@ exports.getProviderSettlementConsole = async (req, res) => {
   try {
     const settlements = await listAdminProviderSettlements({
       status: req.query.status,
+      verificationStatus: req.query.verificationStatus || req.query.verification_status,
       limit: req.query.limit,
       search: req.query.search,
       providerId,

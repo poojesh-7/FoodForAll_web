@@ -576,6 +576,39 @@ function normalizeAdminSettlementSearch(value) {
   return `%${search.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
+function normalizeAdminVerificationFilter(value) {
+  const filter = String(value || "all").trim().toLowerCase();
+  return ["all", "verified", "pending_review", "rejected", "no_account"].includes(filter)
+    ? filter
+    : "all";
+}
+
+function adminVerificationFilterCondition(parameterIndex) {
+  return `
+    (
+      $${parameterIndex}::text IS NULL
+      OR $${parameterIndex} = 'all'
+      OR (
+        $${parameterIndex} = 'verified'
+        AND ppa.verification_status = 'verified'
+      )
+      OR (
+        $${parameterIndex} = 'pending_review'
+        AND ppa.id IS NOT NULL
+        AND ppa.verification_status = 'pending'
+      )
+      OR (
+        $${parameterIndex} = 'rejected'
+        AND ppa.verification_status = 'rejected'
+      )
+      OR (
+        $${parameterIndex} = 'no_account'
+        AND ppa.id IS NULL
+      )
+    )
+  `;
+}
+
 function adminSettlementSearchCondition(parameterIndex) {
   return `
     CONCAT_WS(
@@ -655,6 +688,7 @@ function serializeAdminSettlement(row) {
 async function listAdminProviderSettlements({
   client = pool,
   status = "pending",
+  verificationStatus = "all",
   limit = DEFAULT_ADMIN_SETTLEMENT_LIMIT,
   search,
   providerId,
@@ -666,6 +700,7 @@ async function listAdminProviderSettlements({
 
   const filter = normalizeAdminSettlementFilter(status);
   const filterStatuses = adminSettlementStatusesForFilter(filter);
+  const verificationFilter = normalizeAdminVerificationFilter(verificationStatus);
   const searchPattern = normalizeAdminSettlementSearch(search);
   const selectedProviderId = trimText(providerId || "", 80) || null;
   const rowLimit = normalizeLimit(limit);
@@ -735,6 +770,7 @@ async function listAdminProviderSettlements({
     LEFT JOIN restaurants r ON r.user_id=pd.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=pd.provider_id
     WHERE ($3::text IS NULL OR ${adminSettlementSearchCondition(3)})
+      AND ${adminVerificationFilterCondition(4)}
     ORDER BY
       COALESCE(pd.pending_settlements, 0) DESC,
       COALESCE(pd.amount_due, 0) DESC,
@@ -742,7 +778,7 @@ async function listAdminProviderSettlements({
       LOWER(COALESCE(r.restaurant_name, u.name, u.phone, 'provider')) ASC
     LIMIT $2::int
     `,
-    [PENDING_SETTLEMENT_STATUSES, rowLimit, searchPattern]
+    [PENDING_SETTLEMENT_STATUSES, rowLimit, searchPattern, verificationFilter]
   );
 
   const result = await client.query(
@@ -831,6 +867,7 @@ async function listAdminProviderSettlements({
     WHERE ps.status = ANY($3::text[])
       AND ($5::text IS NULL OR ${adminSettlementSearchCondition(5)})
       AND ($6::text IS NULL OR ps.provider_id::text=$6)
+      AND ${adminVerificationFilterCondition(7)}
     ORDER BY
       CASE
         WHEN ps.status = ANY($2::text[]) THEN 0
@@ -848,6 +885,7 @@ async function listAdminProviderSettlements({
       FAILED_SETTLEMENT_STATUSES,
       searchPattern,
       selectedProviderId,
+      verificationFilter,
     ]
   );
 
@@ -878,6 +916,35 @@ async function loadSettlementForUpdate(client, settlementId) {
     FOR UPDATE
     `,
     [settlementId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function loadActiveProviderPayoutAccount(client, providerId) {
+  const result = await client.query(
+    `
+    SELECT
+      id,
+      provider_id,
+      account_type,
+      upi_id,
+      account_holder_name,
+      bank_account_number,
+      ifsc_code,
+      is_active,
+      is_verified,
+      verification_status,
+      verified_at,
+      verified_by,
+      rejection_reason
+    FROM provider_payout_accounts
+    WHERE provider_id=$1
+      AND is_active=true
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+    `,
+    [providerId]
   );
 
   return result.rows[0] || null;
@@ -916,6 +983,23 @@ async function transitionProviderSettlementStatus({
 
     if (nextStatus === "paid" && !reference && !current.payment_reference) {
       throw serviceError("Payment reference is required when marking paid.");
+    }
+
+    if (nextStatus === "paid") {
+      const activeAccount = await loadActiveProviderPayoutAccount(db, current.provider_id);
+      if (!activeAccount) {
+        throw serviceError("Provider has not configured a payout account.");
+      }
+
+      const verificationStatus = String(activeAccount.verification_status || "pending").toLowerCase();
+      const isVerified = verificationStatus === "verified" || Boolean(activeAccount.is_verified);
+
+      if (!isVerified) {
+        if (verificationStatus === "rejected") {
+          throw serviceError("Provider payout account has been rejected.");
+        }
+        throw serviceError("Provider payout account verification is pending.");
+      }
     }
 
     const result = await db.query(
@@ -1056,6 +1140,7 @@ module.exports = {
   getProviderSettlementSummary,
   listAdminProviderSettlements,
   listProviderPayoutAccounts,
+  loadActiveProviderPayoutAccount,
   normalizeSettlementStatus,
   replaceProviderPayoutAccount,
   transitionProviderSettlementStatus,

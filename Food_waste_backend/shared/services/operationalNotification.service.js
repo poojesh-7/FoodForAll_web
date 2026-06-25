@@ -44,7 +44,7 @@ async function getAdminUserIds({ client = pool } = {}) {
     WHERE role='admin'
     AND is_verified=true
     AND (banned_until IS NULL OR banned_until < NOW())
-    `
+    `,
   );
 
   return result.rows.map((row) => row.id);
@@ -84,8 +84,8 @@ async function notifyAdmins({
           type,
           ...logContext,
         });
-      })
-    )
+      }),
+    ),
   );
 
   return adminIds;
@@ -147,7 +147,9 @@ async function notifyAdminsProviderReportSubmitted({
       case_id: caseId,
       provider_id: providerId,
       reporter_id: reporterId,
-      href: caseId ? `/admin/moderation-cases/${caseId}` : "/admin/provider-reports",
+      href: caseId
+        ? `/admin/moderation-cases/${caseId}`
+        : "/admin/provider-reports",
     },
     client,
     queue,
@@ -230,7 +232,8 @@ async function notifyProviderPayoutVerificationApproved({
     userId: providerId,
     type: "provider_payout_verification_approved",
     title: "Payout account verified",
-    message: "Your payout account has been verified and is ready for settlement.",
+    message:
+      "Your payout account has been verified and is ready for settlement.",
     data: {
       payout_account_id: payoutAccountId,
       href: "/dashboard",
@@ -281,7 +284,75 @@ async function notifyProviderPayoutVerificationRejected({
   });
 }
 
-async function notifyNgoVerificationApproved({ ngoUserId, ngoId, queue = null }) {
+async function notifyProviderPayoutChangeApproved({
+  providerId,
+  payoutAccountId,
+  reason,
+  queue = null,
+}) {
+  return enqueueNotification({
+    userId: providerId,
+    type: "provider_payout_change_approved",
+    title: "Payout account change request approved",
+    message: reason
+      ? `Your payout account change request has been approved. ${reason}`
+      : "Your payout account change request has been approved.",
+    data: {
+      payout_account_id: payoutAccountId,
+      reason: reason || null,
+      href: "/dashboard",
+    },
+    idempotencyKey: payoutAccountId
+      ? `provider_payout_change_approved:${payoutAccountId}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider payout change approval notification failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+}
+
+async function notifyProviderPayoutChangeRejected({
+  providerId,
+  payoutAccountId,
+  reason,
+  queue = null,
+}) {
+  const message = reason
+    ? `Your payout account change request was rejected. Reason: ${reason}`
+    : "Your payout account change request was rejected.";
+
+  return enqueueNotification({
+    userId: providerId,
+    type: "provider_payout_change_rejected",
+    title: "Payout account change request rejected",
+    message,
+    data: {
+      payout_account_id: payoutAccountId,
+      reason: reason || null,
+      href: "/dashboard",
+    },
+    idempotencyKey: payoutAccountId
+      ? `provider_payout_change_rejected:${payoutAccountId}`
+      : null,
+    queue,
+  }).catch((err) => {
+    logger.warn("Provider payout change rejection notification failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+}
+
+async function notifyNgoVerificationApproved({
+  ngoUserId,
+  ngoId,
+  queue = null,
+}) {
   return enqueueNotification({
     userId: ngoUserId,
     type: "ngo_verification_approved",
@@ -296,7 +367,11 @@ async function notifyNgoVerificationApproved({ ngoUserId, ngoId, queue = null })
   });
 }
 
-async function notifyNgoVerificationRejected({ ngoUserId, ngoId, queue = null }) {
+async function notifyNgoVerificationRejected({
+  ngoUserId,
+  ngoId,
+  queue = null,
+}) {
   return enqueueNotification({
     userId: ngoUserId,
     type: "ngo_verification_rejected",
@@ -324,7 +399,9 @@ async function notifyProviderReportSubmittedAgainstProvider({
     data: {
       report_id: reportId,
       case_id: caseId,
-      href: caseId ? `/provider/moderation-cases/${caseId}` : "/provider/moderation-cases",
+      href: caseId
+        ? `/provider/moderation-cases/${caseId}`
+        : "/provider/moderation-cases",
     },
     queue,
   }).catch((err) => {
@@ -337,10 +414,7 @@ async function notifyProviderReportSubmittedAgainstProvider({
   });
 }
 
-async function notifyProviderSettlementProcessed({
-  settlement,
-  queue = null,
-}) {
+async function notifyProviderSettlementProcessed({ settlement, queue = null }) {
   if (!settlement?.provider_id) return null;
 
   return enqueueNotification({
@@ -350,7 +424,7 @@ async function notifyProviderSettlementProcessed({
     message: [
       `Your settlement of ${formatSettlementAmount(
         settlement.amount,
-        settlement.currency
+        settlement.currency,
       )} has been marked paid.`,
       "",
       "Reference:",
@@ -376,24 +450,19 @@ async function notifyProviderSettlementProcessed({
   });
 }
 
-async function notifyProviderSettlementFailed({
-  settlement,
-  queue = null,
-}) {
+async function notifyProviderSettlementFailed({ settlement, queue = null }) {
   if (!settlement?.provider_id) return null;
 
-  const reason = trimSettlementReason(settlement.notes) || "No reason provided.";
+  const reason =
+    trimSettlementReason(settlement.notes) || "No reason provided.";
 
   return enqueueNotification({
     userId: settlement.provider_id,
     type: "provider_settlement_failed",
     title: "Settlement Failed",
-    message: [
-      "Settlement processing failed.",
-      "",
-      "Reason:",
-      reason,
-    ].join("\n"),
+    message: ["Settlement processing failed.", "", "Reason:", reason].join(
+      "\n",
+    ),
     data: {
       settlement_id: settlement.id,
       payment_reference: settlement.payment_reference || null,
@@ -436,4 +505,6 @@ module.exports = {
   notifyProviderVerificationRejected,
   notifyProviderPayoutVerificationApproved,
   notifyProviderPayoutVerificationRejected,
+  notifyProviderPayoutChangeApproved,
+  notifyProviderPayoutChangeRejected,
 };

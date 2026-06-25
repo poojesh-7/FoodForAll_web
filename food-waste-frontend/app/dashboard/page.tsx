@@ -58,6 +58,9 @@ function payoutAccountTypeLabel(account: ProviderPayoutAccount | null) {
 
 function payoutVerificationStatus(account: ProviderPayoutAccount | null) {
   if (!account) return "No account";
+  if (account.change_request_status === "replacement_pending") {
+    return "Replacement Pending";
+  }
   if (account.verification_status === "verified" || account.is_verified) {
     return "Verified";
   }
@@ -72,6 +75,32 @@ function payoutVerificationBanner(account: ProviderPayoutAccount | null) {
     return {
       tone: "neutral",
       message: "Add payout details to receive settlements once verified.",
+    };
+  }
+  if (account.change_request_status === "pending") {
+    return {
+      tone: "warning",
+      message: "Change request pending review. You cannot upload a replacement until an admin approves the request.",
+    };
+  }
+  if (account.change_request_status === "replacement_pending") {
+    return {
+      tone: "warning",
+      message:
+        "Your payout account is temporarily suspended. Upload a replacement payout account to resume settlements.",
+    };
+  }
+  if (account.change_request_status === "approved") {
+    return {
+      tone: "success",
+      message: "Your change request is approved. Upload replacement payout account details now.",
+    };
+  }
+  if (account.change_request_status === "replacement_pending") {
+    return {
+      tone: "warning",
+      message:
+        "Your payout account is temporarily suspended. Upload a replacement payout account to resume settlements.",
     };
   }
   if (account.verification_status === "verified" || account.is_verified) {
@@ -93,6 +122,83 @@ function payoutVerificationBanner(account: ProviderPayoutAccount | null) {
     message:
       "Your payout account is awaiting admin verification. Settlements cannot be paid until verification is completed.",
   };
+}
+
+const CHANGE_REQUEST_REASONS = [
+  "Changed bank account",
+  "Changed UPI",
+  "Account closed",
+  "Incorrect details",
+  "Security concern",
+  "Other",
+] as const;
+
+type ChangeRequestReason = (typeof CHANGE_REQUEST_REASONS)[number];
+
+function payoutAccountStatusBadge(account: ProviderPayoutAccount | null) {
+  const base =
+    "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide";
+
+  if (!account) {
+    return (
+      <span className={`${base} bg-zinc-100 text-zinc-700`}>
+        No Account
+      </span>
+    );
+  }
+
+  if (account.change_request_status === "pending") {
+    return (
+      <span className={`${base} bg-amber-100 text-amber-800`}>
+        Pending Review
+      </span>
+    );
+  }
+
+  if (account.change_request_status === "rejected") {
+    return (
+      <span className={`${base} bg-rose-100 text-rose-800`}>
+        Rejected
+      </span>
+    );
+  }
+
+  if (account.change_request_status === "replacement_pending") {
+    return (
+      <span className={`${base} bg-amber-100 text-amber-800`}>
+        Replacement Pending
+      </span>
+    );
+  }
+
+  if (account.change_request_status === "approved") {
+    return (
+      <span className={`${base} bg-emerald-100 text-emerald-800`}>
+        Change Approved
+      </span>
+    );
+  }
+  if (account.change_request_status === "replacement_pending") {
+    return (
+      <span className={`${base} bg-amber-100 text-amber-800`}>
+        Replacement Pending
+      </span>
+    );
+  }
+
+  if (account.verification_status === "verified" || account.is_verified) {
+    return (
+      <span className={`${base} bg-emerald-100 text-emerald-800`}>
+        Verified
+      </span>
+    );
+  }
+
+  return (
+    <span className={`${base} bg-amber-100 text-amber-800`}>
+      Verification Pending
+    </span>
+  );
 }
 
 function settlementStatusChip(status: string) {
@@ -129,6 +235,13 @@ export default function DashboardPage() {
   const [financialMessage, setFinancialMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [changeModalOpen, setChangeModalOpen] = useState(false);
+  const [changeRequestReason, setChangeRequestReason] = useState<ChangeRequestReason>(
+    "Changed bank account"
+  );
+  const [changeRequestOtherReason, setChangeRequestOtherReason] = useState("");
+  const [changeRequestSubmitting, setChangeRequestSubmitting] = useState(false);
+  const [changeRequestError, setChangeRequestError] = useState("");
 
   const hydratePayoutForm = useCallback((account: ProviderPayoutAccount | null) => {
     if (!account) return;
@@ -199,6 +312,19 @@ export default function DashboardPage() {
     };
   }, [hydratePayoutForm, user?.id, user?.role]);
 
+  const isVerifiedAccount = Boolean(
+    payoutAccount &&
+      (payoutAccount.verification_status === "verified" || payoutAccount.is_verified)
+  );
+  const isChangePending = payoutAccount?.change_request_status === "pending";
+  const isChangeApproved = payoutAccount?.change_request_status === "approved";
+  const isReplacementPending =
+    payoutAccount?.change_request_status === "replacement_pending";
+  const isChangeRejected = payoutAccount?.change_request_status === "rejected";
+  const showPayoutEditor = !payoutAccount || isChangeApproved || isReplacementPending;
+  const showRequestChangeButton =
+    isVerifiedAccount && !isChangePending && !isChangeApproved && !isReplacementPending;
+
   const savePayoutAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (user?.role !== "provider") return;
@@ -224,7 +350,11 @@ export default function DashboardPage() {
       setPayoutAccount(account);
       setFinancialSummary(summary);
       hydratePayoutForm(account);
-      setFinancialMessage("Payment details saved. Verified: No");
+      setFinancialMessage(
+        isChangeApproved
+          ? "Replacement uploaded. Verification pending."
+          : "Payment details saved. Verified: No"
+      );
     } catch (err) {
       setError(providerFinancialService.getErrorMessage(err));
     } finally {
@@ -232,24 +362,48 @@ export default function DashboardPage() {
     }
   };
 
-  const deactivatePayoutAccount = async () => {
+  const closeChangeRequestModal = () => {
+    setChangeModalOpen(false);
+    setChangeRequestError("");
+    setChangeRequestOtherReason("");
+    setChangeRequestReason("Changed bank account");
+  };
+
+  const submitChangeRequest = async () => {
     if (user?.role !== "provider") return;
 
+    const reason =
+      changeRequestReason === "Other"
+        ? changeRequestOtherReason.trim()
+        : changeRequestReason;
+
+    if (!reason) {
+      setChangeRequestError("Please provide a reason for the change request.");
+      return;
+    }
+
     try {
-      setFinancialSubmitting(true);
-      setFinancialMessage("");
+      setChangeRequestSubmitting(true);
       setError("");
-      await providerFinancialService.deactivatePayoutAccount();
+      setChangeRequestError("");
+      setFinancialMessage("");
+
+      const account = await providerFinancialService.requestPayoutAccountChange({
+        reason,
+      });
       const summary = await providerFinancialService.getSettlementSummary();
-      setPayoutAccount(null);
+      setPayoutAccount(account);
       setFinancialSummary(summary);
-      setFinancialMessage("Active payout account deactivated.");
+      hydratePayoutForm(account);
+      setFinancialMessage("Change request submitted and is pending review.");
+      closeChangeRequestModal();
     } catch (err) {
-      setError(providerFinancialService.getErrorMessage(err));
+      setChangeRequestError(providerFinancialService.getErrorMessage(err));
     } finally {
-      setFinancialSubmitting(false);
+      setChangeRequestSubmitting(false);
     }
   };
+
 
   return (
     <main className="min-h-screen bg-zinc-50 p-4">
@@ -416,8 +570,23 @@ export default function DashboardPage() {
                     </p>
                   )}
 
-                  <form className="mt-4 space-y-4" onSubmit={savePayoutAccount}>
-                    <div className="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
+                  <div className="mt-4">{payoutAccountStatusBadge(payoutAccount)}</div>
+
+                  {showRequestChangeButton && (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setChangeModalOpen(true)}
+                        className="inline-flex min-h-10 items-center justify-center rounded-md bg-amber-500 px-4 text-sm font-medium text-white hover:bg-amber-600"
+                      >
+                        Request Account Change
+                      </button>
+                    </div>
+                  )}
+
+                  {showPayoutEditor ? (
+                    <form className="mt-4 space-y-4" onSubmit={savePayoutAccount}>
+                      <div className="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
                       {(["UPI", "BANK"] as ProviderPayoutAccountType[]).map((type) => (
                         <button
                           key={type}
@@ -434,64 +603,204 @@ export default function DashboardPage() {
                       ))}
                     </div>
 
-                    {accountType === "UPI" ? (
-                      <label className="block text-sm">
-                        <span className="font-medium text-zinc-700">UPI ID</span>
-                        <input
-                          value={upiId}
-                          onChange={(event) => setUpiId(event.target.value)}
-                          placeholder="name@upi"
-                          className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
-                        />
-                      </label>
-                    ) : (
-                      <div className="grid gap-3 md:grid-cols-3">
+                      {accountType === "UPI" ? (
                         <label className="block text-sm">
-                          <span className="font-medium text-zinc-700">
-                            Account Holder
-                          </span>
+                          <span className="font-medium text-zinc-700">UPI ID</span>
                           <input
-                            value={accountHolderName}
-                            onChange={(event) =>
-                              setAccountHolderName(event.target.value)
-                            }
+                            value={upiId}
+                            onChange={(event) => setUpiId(event.target.value)}
+                            placeholder="name@upi"
                             className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
                           />
                         </label>
-                        <label className="block text-sm">
-                          <span className="font-medium text-zinc-700">
-                            Account Number
-                          </span>
-                          <input
-                            value={bankAccountNumber}
-                            onChange={(event) =>
-                              setBankAccountNumber(event.target.value)
-                            }
-                            className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
-                          />
-                        </label>
-                        <label className="block text-sm">
-                          <span className="font-medium text-zinc-700">IFSC</span>
-                          <input
-                            value={ifscCode}
-                            onChange={(event) =>
-                              setIfscCode(event.target.value.toUpperCase())
-                            }
-                            className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm uppercase text-zinc-950 outline-none focus:border-zinc-950"
-                          />
-                        </label>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <label className="block text-sm">
+                            <span className="font-medium text-zinc-700">
+                              Account Holder
+                            </span>
+                            <input
+                              value={accountHolderName}
+                              onChange={(event) =>
+                                setAccountHolderName(event.target.value)
+                              }
+                              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                            />
+                          </label>
+                          <label className="block text-sm">
+                            <span className="font-medium text-zinc-700">
+                              Account Number
+                            </span>
+                            <input
+                              value={bankAccountNumber}
+                              onChange={(event) =>
+                                setBankAccountNumber(event.target.value)
+                              }
+                              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                            />
+                          </label>
+                          <label className="block text-sm">
+                            <span className="font-medium text-zinc-700">IFSC</span>
+                            <input
+                              value={ifscCode}
+                              onChange={(event) =>
+                                setIfscCode(event.target.value.toUpperCase())
+                              }
+                              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm uppercase text-zinc-950 outline-none focus:border-zinc-950"
+                            />
+                          </label>
+                        </div>
+                      )}
 
-                    <button
-                      type="submit"
-                      disabled={financialSubmitting}
-                      className="inline-flex min-h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
-                    >
-                      {financialSubmitting ? "Saving..." : "Save Payment Details"}
-                    </button>
-                  </form>
+                      <button
+                        type="submit"
+                        disabled={financialSubmitting}
+                        className="inline-flex min-h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {financialSubmitting ? "Saving..." : "Save Payment Details"}
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
+                      {isChangePending ? (
+                        <div>
+                          <p className="font-semibold text-zinc-950">
+                            Change Request Pending Review
+                          </p>
+                          <p className="mt-2">
+                            <span className="font-medium">Reason:</span>{" "}
+                            {payoutAccount?.change_request_reason || "-"}
+                          </p>
+                          <p className="mt-2">
+                            <span className="font-medium">Requested At:</span>{" "}
+                            {payoutAccount?.change_requested_at
+                              ? formatDateTime(payoutAccount.change_requested_at)
+                              : "-"}
+                          </p>
+                        </div>
+                      ) : isChangeRejected ? (
+                        <div>
+                          <p className="font-semibold text-zinc-950">
+                            Change Request Rejected
+                          </p>
+                          <p className="mt-2">
+                            <span className="font-medium">Reason:</span>{" "}
+                            {payoutAccount?.change_request_reason || "-"}
+                          </p>
+                          <p className="mt-2">
+                            <span className="font-medium">Rejected By:</span>{" "}
+                            {payoutAccount?.change_review_notes || "-"}
+                          </p>
+                          <p className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => setChangeModalOpen(true)}
+                              className="inline-flex min-h-10 items-center justify-center rounded-md bg-amber-500 px-4 text-sm font-medium text-white hover:bg-amber-600"
+                            >
+                              Request Account Change
+                            </button>
+                          </p>
+                        </div>
+                      ) : isVerifiedAccount ? (
+                        <div>
+                          <p className="font-semibold text-zinc-950">
+                            Verified payout account is locked for direct edits.
+                          </p>
+                          <p className="mt-2 text-zinc-700">
+                            Request an account change if you need a new payout route.
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-zinc-700">
+                          No payout account available for editing.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </section>
+
+                {changeModalOpen ? (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+                    <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+                      <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
+                        <div>
+                          <h2 className="text-lg font-semibold text-zinc-950">
+                            Request Payout Account Change
+                          </h2>
+                          <p className="mt-1 text-sm text-zinc-600">
+                            Submit a change request for the admin team to review.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={closeChangeRequestModal}
+                          className="text-zinc-500 transition hover:text-zinc-900"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="space-y-4 p-5">
+                        <div>
+                          <p className="text-sm font-medium text-zinc-700">
+                            Reason for change
+                          </p>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            {CHANGE_REQUEST_REASONS.map((reason) => (
+                              <button
+                                key={reason}
+                                type="button"
+                                onClick={() => setChangeRequestReason(reason)}
+                                className={`rounded-2xl border px-4 py-3 text-left text-sm font-medium ${
+                                  changeRequestReason === reason
+                                    ? "border-amber-500 bg-amber-50 text-zinc-950"
+                                    : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
+                                }`}
+                              >
+                                {reason}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {changeRequestReason === "Other" && (
+                          <label className="block text-sm">
+                            <span className="font-medium text-zinc-700">
+                              Other reason
+                            </span>
+                            <textarea
+                              value={changeRequestOtherReason}
+                              onChange={(event) => setChangeRequestOtherReason(event.target.value)}
+                              placeholder="Describe why you need to change your payout account"
+                              rows={4}
+                              className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                            />
+                          </label>
+                        )}
+                        {changeRequestError ? (
+                          <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {changeRequestError}
+                          </p>
+                        ) : null}
+                        <div className="flex items-center justify-end gap-3">
+                          <button
+                            type="button"
+                            onClick={closeChangeRequestModal}
+                            className="inline-flex min-h-10 items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={submitChangeRequest}
+                            disabled={changeRequestSubmitting}
+                            className="inline-flex min-h-10 items-center justify-center rounded-md bg-amber-500 px-4 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+                          >
+                            {changeRequestSubmitting ? "Submitting..." : "Submit Request"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
 
                 <section className="space-y-3">
                   <h2 className="text-base font-semibold text-zinc-950">

@@ -6,6 +6,7 @@ import type {
   ProviderPayoutAccountsData,
   ProviderPayoutAccountsResponse,
   ProviderSettlementSummaryData,
+  RequestProviderPayoutAccountChangeRequest,
   SaveProviderPayoutAccountRequest,
   SaveProviderPayoutAccountResponse,
 } from "@shared/contracts/api-contracts";
@@ -44,6 +45,16 @@ export async function deactivatePayoutAccount(): Promise<ProviderPayoutAccount |
   return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
 }
 
+export async function requestPayoutAccountChange(
+  payload: RequestProviderPayoutAccountChangeRequest,
+): Promise<ProviderPayoutAccount | null> {
+  const { data } = await api.post<
+    SaveProviderPayoutAccountResponse | { account: ProviderPayoutAccount | null }
+  >("/provider/financial/payout-account/change-request", payload);
+
+  return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
+}
+
 export async function getSettlementSummary(): Promise<ProviderSettlementSummaryData> {
   const { data } = await api.get<
     ProviderFinancialSummaryResponse | { summary: ProviderSettlementSummaryData }
@@ -56,6 +67,7 @@ export const providerFinancialService = {
   getPayoutAccounts,
   savePayoutAccount,
   deactivatePayoutAccount,
+  requestPayoutAccountChange,
   getSettlementSummary,
   getErrorMessage,
 };

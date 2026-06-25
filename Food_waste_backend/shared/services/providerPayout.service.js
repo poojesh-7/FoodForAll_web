@@ -9,6 +9,12 @@ const { recordOperationalEvent } = require("./observability.service");
 
 const ACCOUNT_TYPES = new Set(["UPI", "BANK"]);
 const VERIFICATION_STATUSES = new Set(["pending", "verified", "rejected"]);
+const CHANGE_REQUEST_STATUSES = new Set([
+  "pending",
+  "approved",
+  "rejected",
+  "replacement_pending",
+]);
 const DEFAULT_VERIFICATION_STATUS = "pending";
 const PENDING_SETTLEMENT_STATUSES = [
   "pending",
@@ -163,7 +169,9 @@ async function ensureProviderPayoutSchema(client = pool) {
               AND ifsc_code IS NOT NULL
               AND ifsc_code ~* '^[A-Z]{4}0[A-Z0-9]{6}$'
             )
-          )
+          ),
+        CONSTRAINT provider_payout_accounts_change_request_status_valid
+          CHECK (change_request_status IS NULL OR change_request_status IN ('pending','approved','rejected','replacement_pending'))
       )
     `);
     await db.query(`
@@ -171,13 +179,23 @@ async function ensureProviderPayoutSchema(client = pool) {
       ADD COLUMN IF NOT EXISTS verification_status TEXT NOT NULL DEFAULT 'pending',
       ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP NULL,
       ADD COLUMN IF NOT EXISTS verified_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
-      ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL
+      ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL,
+      ADD COLUMN IF NOT EXISTS change_request_status TEXT NULL,
+      ADD COLUMN IF NOT EXISTS change_request_reason TEXT NULL,
+      ADD COLUMN IF NOT EXISTS change_requested_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS change_requested_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS change_reviewed_at TIMESTAMP NULL,
+      ADD COLUMN IF NOT EXISTS change_reviewed_by UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS change_review_notes TEXT NULL
     `);
     await db.query(`
       ALTER TABLE provider_payout_accounts
       DROP CONSTRAINT IF EXISTS provider_payout_accounts_verification_status_valid,
+      DROP CONSTRAINT IF EXISTS provider_payout_accounts_change_request_status_valid,
       ADD CONSTRAINT provider_payout_accounts_verification_status_valid
-        CHECK (verification_status IN ('pending','verified','rejected'))
+        CHECK (verification_status IN ('pending','verified','rejected')),
+      ADD CONSTRAINT provider_payout_accounts_change_request_status_valid
+        CHECK (change_request_status IS NULL OR change_request_status IN ('pending','approved','rejected','replacement_pending'))
     `);
     await db.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_payout_accounts_one_active
@@ -266,6 +284,16 @@ function serializePayoutAccount(row) {
     verified_at: row.verified_at || null,
     verified_by: row.verified_by || null,
     rejection_reason: row.rejection_reason || null,
+    change_request_status: (() => {
+      const status = String(row.change_request_status || "").toLowerCase();
+      return CHANGE_REQUEST_STATUSES.has(status) ? status : null;
+    })(),
+    change_request_reason: row.change_request_reason || null,
+    change_requested_at: row.change_requested_at || null,
+    change_requested_by: row.change_requested_by || null,
+    change_reviewed_at: row.change_reviewed_at || null,
+    change_reviewed_by: row.change_reviewed_by || null,
+    change_review_notes: row.change_review_notes || null,
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
   };
@@ -296,6 +324,13 @@ async function listProviderPayoutAccounts({
       verified_at,
       verified_by,
       rejection_reason,
+      change_request_status,
+      change_request_reason,
+      change_requested_at,
+      change_requested_by,
+      change_reviewed_at,
+      change_reviewed_by,
+      change_review_notes,
       ${sqlTimestampUtc("created_at")} AS created_at,
       ${sqlTimestampUtc("updated_at")} AS updated_at
     FROM provider_payout_accounts
@@ -319,28 +354,65 @@ async function replaceProviderPayoutAccount({
   ensureSchema = true,
 } = {}) {
   const sanitized = validatePayoutAccountInput(payload);
+  let previousActiveAccount = null;
+
   const replacePayoutAccount = async (db) => {
     if (ensureSchema) {
       await ensureProviderPayoutSchema(db);
     }
 
-    await db.query(
-      `
-      UPDATE provider_payout_accounts
-      SET is_active=false, updated_at=NOW()
-      WHERE provider_id=$1 AND is_active=true
-      `,
-      [providerId],
+    const activeAccount = await loadActiveProviderPayoutAccount(db, providerId);
+    previousActiveAccount = activeAccount;
+
+    const isReplacementUpload = Boolean(
+      activeAccount &&
+        String(activeAccount.verification_status || "pending").toLowerCase() ===
+          "verified" &&
+        ["approved", "replacement_pending"].includes(
+          String(activeAccount.change_request_status || "").toLowerCase(),
+        ),
     );
+
+    if (activeAccount && !isReplacementUpload) {
+      const currentStatus = String(
+        activeAccount.verification_status || "pending",
+      ).toLowerCase();
+      if (currentStatus === "verified") {
+        const changeStatus = String(
+          activeAccount.change_request_status || "",
+        ).toLowerCase();
+        if (changeStatus !== "approved") {
+          throw serviceError(
+            "Change request must be approved before replacing a verified payout account.",
+            409,
+            "PAYOUT_ACCOUNT_CHANGE_REQUEST_REQUIRED",
+          );
+        }
+      }
+    }
+
+    if (activeAccount) {
+      await db.query(
+        `
+        UPDATE provider_payout_accounts
+        SET is_active=false, updated_at=NOW()
+        WHERE provider_id=$1 AND is_active=true
+        `,
+        [providerId],
+      );
+    }
 
     const inserted = await db.query(
       `
       INSERT INTO provider_payout_accounts (
         provider_id, account_type, upi_id, account_holder_name,
         bank_account_number, ifsc_code, is_active, is_verified,
-        verification_status, verified_at, verified_by, rejection_reason
+        verification_status, verified_at, verified_by, rejection_reason,
+        change_request_status, change_request_reason, change_requested_at,
+        change_requested_by, change_reviewed_at, change_reviewed_by,
+        change_review_notes
       )
-      VALUES ($1,$2,$3,$4,$5,$6,true,false,'pending',NULL,NULL,NULL)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,false,'pending',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)
       RETURNING *
       `,
       [
@@ -350,10 +422,24 @@ async function replaceProviderPayoutAccount({
         sanitized.account_holder_name,
         sanitized.bank_account_number,
         sanitized.ifsc_code,
+        true,
       ],
     );
 
-    return serializePayoutAccount(inserted.rows[0]);
+    const account = serializePayoutAccount(inserted.rows[0]);
+
+    void recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "provider_payout_account_replaced",
+      metadata: {
+        provider_id: providerId,
+        payout_account_id: account.id,
+        previous_payout_account_id: previousActiveAccount?.id || null,
+      },
+    });
+
+    return account;
   };
 
   if (client) return replacePayoutAccount(client);
@@ -362,6 +448,308 @@ async function replaceProviderPayoutAccount({
     name: "replace_provider_payout_account",
     maxAttempts: 3,
   });
+}
+
+async function requestProviderPayoutAccountChange({
+  client,
+  providerId,
+  reason,
+  ensureSchema = true,
+} = {}) {
+  const createRequest = async (db) => {
+    if (ensureSchema) {
+      await ensureProviderPayoutSchema(db);
+    }
+
+    const activeAccount = await loadActiveProviderPayoutAccount(db, providerId);
+    if (!activeAccount) {
+      throw serviceError(
+        "No verified payout account exists to request a change.",
+        409,
+        "PAYOUT_ACCOUNT_CHANGE_REQUEST_INVALID",
+      );
+    }
+
+    const verificationStatus = String(
+      activeAccount.verification_status || "pending",
+    ).toLowerCase();
+    if (verificationStatus !== "verified") {
+      throw serviceError(
+        "Payout account change request is only available for verified accounts.",
+        409,
+        "PAYOUT_ACCOUNT_CHANGE_REQUEST_INVALID",
+      );
+    }
+
+    const requestedReason = trimText(reason || "Account change requested", 500);
+
+    const result = await db.query(
+      `
+      UPDATE provider_payout_accounts
+      SET change_request_status='pending',
+          change_request_reason=$2,
+          change_requested_at=NOW(),
+          change_requested_by=$3,
+          change_reviewed_at=NULL,
+          change_reviewed_by=NULL,
+          change_review_notes=NULL,
+          updated_at=NOW()
+      WHERE id=$1 AND is_active=true
+      RETURNING *
+      `,
+      [activeAccount.id, requestedReason, providerId],
+    );
+
+    return serializePayoutAccount(result.rows[0] || null);
+  };
+
+  const account = client
+    ? await createRequest(client)
+    : await withTransaction(pool, createRequest, {
+        name: "request_provider_payout_account_change",
+        maxAttempts: 3,
+      });
+
+  if (!account) {
+    throw serviceError("Active payout account not found.", 404, "NOT_FOUND");
+  }
+
+  void recordOperationalEvent({
+    category: "financial",
+    severity: "info",
+    eventName: "provider_payout_change_requested",
+    metadata: {
+      provider_id: providerId,
+      payout_account_id: account.id,
+      reason: account.change_request_reason,
+    },
+  });
+
+  return account;
+}
+
+async function approveProviderPayoutAccountChange({
+  client,
+  payoutAccountId,
+  adminId,
+  reason,
+  ensureSchema = true,
+} = {}) {
+  if (!payoutAccountId) {
+    throw serviceError("Payout account id is required.");
+  }
+
+  const approveRequest = async (db) => {
+    if (ensureSchema) {
+      await ensureProviderPayoutSchema(db);
+    }
+
+    const notes = trimText(reason || "Approved for replacement", 500);
+
+    const result = await db.query(
+      `
+      UPDATE provider_payout_accounts
+      SET change_request_status='replacement_pending',
+          change_reviewed_at=NOW(),
+          change_reviewed_by=$2,
+          change_review_notes=$3,
+          updated_at=NOW()
+      WHERE id=$1 AND is_active=true
+      RETURNING *
+      `,
+      [payoutAccountId, adminId || null, notes],
+    );
+
+    return serializePayoutAccount(result.rows[0] || null);
+  };
+
+  const account = client
+    ? await approveRequest(client)
+    : await withTransaction(pool, approveRequest, {
+        name: "approve_provider_payout_account_change",
+        maxAttempts: 3,
+      });
+
+  if (!account) {
+    throw serviceError("Payout account not found.", 404, "NOT_FOUND");
+  }
+
+  void recordOperationalEvent({
+    category: "financial",
+    severity: "info",
+    eventName: "provider_payout_change_approved",
+    metadata: {
+      provider_id: account.provider_id,
+      payout_account_id: account.id,
+      admin_id: adminId || null,
+      reason: account.change_review_notes,
+    },
+  });
+
+  return account;
+}
+
+async function rejectProviderPayoutAccountChange({
+  client,
+  payoutAccountId,
+  adminId,
+  reason,
+  ensureSchema = true,
+} = {}) {
+  if (!payoutAccountId) {
+    throw serviceError("Payout account id is required.");
+  }
+
+  const rejectionReason = trimText(reason || "Rejected by admin", 500);
+
+  const rejectRequest = async (db) => {
+    if (ensureSchema) {
+      await ensureProviderPayoutSchema(db);
+    }
+
+    const result = await db.query(
+      `
+      UPDATE provider_payout_accounts
+      SET change_request_status='rejected',
+          change_reviewed_at=NOW(),
+          change_reviewed_by=$2,
+          change_review_notes=$3,
+          updated_at=NOW()
+      WHERE id=$1 AND is_active=true
+      RETURNING *
+      `,
+      [payoutAccountId, adminId || null, rejectionReason],
+    );
+
+    return serializePayoutAccount(result.rows[0] || null);
+  };
+
+  const account = client
+    ? await rejectRequest(client)
+    : await withTransaction(pool, rejectRequest, {
+        name: "reject_provider_payout_account_change",
+        maxAttempts: 3,
+      });
+
+  if (!account) {
+    throw serviceError("Payout account not found.", 404, "NOT_FOUND");
+  }
+
+  void recordOperationalEvent({
+    category: "financial",
+    severity: "warn",
+    eventName: "provider_payout_change_rejected",
+    metadata: {
+      provider_id: account.provider_id,
+      payout_account_id: account.id,
+      admin_id: adminId || null,
+      reason: account.change_review_notes,
+    },
+  });
+
+  return account;
+}
+
+async function listAdminProviderPayoutChangeRequests({
+  client = pool,
+  status = "pending",
+  limit = 100,
+  search,
+  ensureSchema = true,
+} = {}) {
+  if (ensureSchema) {
+    await ensureProviderPayoutSchema(client);
+  }
+
+  const allowedStatus = ["pending", "approved", "rejected", "replacement_pending", "all"];
+  const filter = allowedStatus.includes(String(status || "").toLowerCase())
+    ? String(status || "pending").toLowerCase()
+    : "pending";
+  const searchPattern = normalizeAdminSettlementSearch(search);
+  const rowLimit = normalizeLimit(limit, 100);
+
+  const queryParts = [];
+  const params = [];
+  params.push(rowLimit);
+
+  if (filter !== "all") {
+    params.push(filter);
+    queryParts.push(`ppa.change_request_status = $${params.length}`);
+  }
+
+  if (searchPattern) {
+    params.push(searchPattern);
+    queryParts.push(`(
+      CONCAT_WS(' ', u.name, u.phone, ppa.account_type, ppa.upi_id,
+        ppa.account_holder_name, ppa.bank_account_number, ppa.ifsc_code)
+      ILIKE $${params.length} ESCAPE '\'
+    )`);
+  }
+
+  const whereClause = queryParts.length
+    ? `WHERE ${queryParts.join(" AND ")}`
+    : "";
+
+  const result = await client.query(
+    `
+    SELECT
+      ppa.id AS payout_account_id,
+      ppa.provider_id,
+      u.name AS provider_name,
+      u.phone AS provider_phone,
+      r.restaurant_name,
+      ppa.account_type,
+      ppa.upi_id,
+      ppa.account_holder_name,
+      ppa.bank_account_number,
+      ppa.ifsc_code,
+      ppa.is_verified,
+      ppa.verification_status,
+      ppa.change_request_status,
+      ppa.change_request_reason,
+      ${sqlTimestampUtc("ppa.change_requested_at")} AS change_requested_at,
+      ppa.change_requested_by,
+      ppa.change_reviewed_at,
+      ppa.change_reviewed_by,
+      ppa.change_review_notes,
+      ${sqlTimestampUtc("ppa.created_at")} AS created_at,
+      ${sqlTimestampUtc("ppa.updated_at")} AS updated_at
+    FROM provider_payout_accounts ppa
+    LEFT JOIN users u ON u.id = ppa.provider_id
+    LEFT JOIN restaurants r ON r.user_id = ppa.provider_id
+    ${whereClause}
+    ORDER BY ppa.change_requested_at DESC NULLS LAST, ppa.updated_at DESC
+    LIMIT $1::int
+    `,
+    params,
+  );
+
+  return {
+    filter,
+    requests: result.rows.map((row) => ({
+      provider_id: row.provider_id,
+      provider_name: row.provider_name,
+      provider_phone: row.provider_phone,
+      restaurant_name: row.restaurant_name,
+      payout_account_id: row.payout_account_id,
+      account_type: row.account_type,
+      upi_id: row.upi_id,
+      account_holder_name: row.account_holder_name,
+      bank_account_number: row.bank_account_number,
+      ifsc_code: row.ifsc_code,
+      is_verified: row.is_verified,
+      verification_status: row.verification_status,
+      change_request_status: row.change_request_status,
+      change_request_reason: row.change_request_reason,
+      change_requested_at: row.change_requested_at,
+      change_requested_by: row.change_requested_by,
+      change_reviewed_at: row.change_reviewed_at,
+      change_reviewed_by: row.change_reviewed_by,
+      change_review_notes: row.change_review_notes,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    })),
+  };
 }
 
 async function verifyProviderPayoutAccount({
@@ -379,17 +767,78 @@ async function verifyProviderPayoutAccount({
       await ensureProviderPayoutSchema(db);
     }
 
+    const existing = await db.query(
+      `
+      SELECT id, provider_id, is_active
+      FROM provider_payout_accounts
+      WHERE id=$1
+      `,
+      [payoutAccountId],
+    );
+
+    const currentAccount = existing.rows[0];
+    if (!currentAccount) return null;
+
+    const wasInactive = !currentAccount.is_active;
+
     const result = await db.query(
       `
       UPDATE provider_payout_accounts
       SET verification_status='verified', is_verified=true,
           verified_at=NOW(), verified_by=$2,
           rejection_reason=NULL, updated_at=NOW()
-      WHERE id=$1 AND is_active=true
+      WHERE id=$1
       RETURNING *
       `,
       [payoutAccountId, adminId || null],
     );
+
+    if (!result.rows[0]) return null;
+
+    if (wasInactive) {
+      const activeAccount = await loadActiveProviderPayoutAccount(
+        db,
+        currentAccount.provider_id,
+      );
+
+      if (
+        activeAccount &&
+        ["approved", "replacement_pending"].includes(
+          String(activeAccount.change_request_status || "").toLowerCase(),
+        )
+      ) {
+        await db.query(
+          `
+          UPDATE provider_payout_accounts
+          SET is_active=false,
+              change_request_status=NULL,
+              updated_at=NOW()
+          WHERE id=$1
+          `,
+          [activeAccount.id],
+        );
+      }
+
+      await db.query(
+        `
+        UPDATE provider_payout_accounts
+        SET is_active=true, updated_at=NOW()
+        WHERE id=$1
+        `,
+        [payoutAccountId],
+      );
+
+      const refreshed = await db.query(
+        `
+        SELECT *
+        FROM provider_payout_accounts
+        WHERE id=$1
+        `,
+        [payoutAccountId],
+      );
+
+      return serializePayoutAccount(refreshed.rows[0] || null);
+    }
 
     return serializePayoutAccount(result.rows[0] || null);
   };
@@ -982,7 +1431,8 @@ async function loadActiveProviderPayoutAccount(client, providerId) {
       verification_status,
       verified_at,
       verified_by,
-      rejection_reason
+      rejection_reason,
+      change_request_status
     FROM provider_payout_accounts
     WHERE provider_id=$1
       AND is_active=true
@@ -1043,6 +1493,24 @@ async function transitionProviderSettlementStatus({
       );
       if (!activeAccount) {
         throw serviceError("Provider has not configured a payout account.");
+      }
+
+      const changeRequestStatus = String(
+        activeAccount.change_request_status || "",
+      ).toLowerCase();
+      if (changeRequestStatus === "approved") {
+        throw serviceError(
+          "Provider payout account replacement is pending; mark paid is disabled until a new verified payout account is active.",
+          409,
+          "PAYOUT_ACCOUNT_REPLACEMENT_PENDING",
+        );
+      }
+      if (changeRequestStatus === "replacement_pending") {
+        throw serviceError(
+          "Provider payout account replacement is pending; mark paid is disabled until a new verified payout account is active.",
+          409,
+          "PAYOUT_ACCOUNT_REPLACEMENT_PENDING",
+        );
       }
 
       const verificationStatus = String(
@@ -1215,6 +1683,7 @@ async function updateProviderSettlementNotes({
 
 module.exports = {
   ACCOUNT_TYPES,
+  CHANGE_REQUEST_STATUSES,
   FINAL_SETTLEMENT_STATUSES,
   FAILED_SETTLEMENT_STATUSES,
   PAID_SETTLEMENT_STATUSES,
@@ -1223,10 +1692,14 @@ module.exports = {
   ensureProviderPayoutSchema,
   getProviderSettlementSummary,
   listAdminProviderSettlements,
+  listAdminProviderPayoutChangeRequests,
   listProviderPayoutAccounts,
   loadActiveProviderPayoutAccount,
   normalizeSettlementStatus,
   replaceProviderPayoutAccount,
+  requestProviderPayoutAccountChange,
+  approveProviderPayoutAccountChange,
+  rejectProviderPayoutAccountChange,
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
   validatePayoutAccountInput,

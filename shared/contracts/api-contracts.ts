@@ -662,6 +662,13 @@ export type ProviderSettlementStatus =
   | "cancelled"
   | string;
 
+export type ProviderPayoutChangeRequestStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | null
+  | string;
+
 export interface ProviderPayoutAccount extends DbRow {
   id: DbId;
   provider_id: DbId;
@@ -677,6 +684,13 @@ export interface ProviderPayoutAccount extends DbRow {
   verified_at?: ISODateString | null;
   verified_by?: DbId | null;
   rejection_reason?: string | null;
+  change_request_status?: ProviderPayoutChangeRequestStatus;
+  change_request_reason?: string | null;
+  change_requested_at?: ISODateString | null;
+  change_requested_by?: DbId | null;
+  change_reviewed_at?: ISODateString | null;
+  change_reviewed_by?: DbId | null;
+  change_review_notes?: string | null;
   created_at?: ISODateString | null;
   updated_at?: ISODateString | null;
 }
@@ -687,6 +701,10 @@ export interface SaveProviderPayoutAccountRequest {
   account_holder_name?: string | null;
   bank_account_number?: string | null;
   ifsc_code?: string | null;
+}
+
+export interface RequestProviderPayoutAccountChangeRequest {
+  reason: string;
 }
 
 export interface ProviderPayoutAccountsData {

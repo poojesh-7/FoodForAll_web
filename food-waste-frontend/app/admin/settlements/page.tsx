@@ -36,6 +36,28 @@ type SettlementDraft = {
   notes: string;
 };
 
+type ProviderPayoutChangeRequest = {
+  payout_account_id: DbId;
+  provider_id: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  restaurant_name?: string | null;
+  account_type?: string | null;
+  upi_id?: string | null;
+  account_holder_name?: string | null;
+  bank_account_number?: string | null;
+  ifsc_code?: string | null;
+  is_verified?: boolean;
+  verification_status?: string | null;
+  change_request_status?: string | null;
+  change_request_reason?: string | null;
+  change_requested_at?: string | null;
+  change_requested_by?: DbId | null;
+  change_reviewed_at?: string | null;
+  change_reviewed_by?: DbId | null;
+  change_review_notes?: string | null;
+};
+
 function formatCurrency(value: unknown) {
   const amount = Number(value || 0);
   return new Intl.NumberFormat("en-IN", {
@@ -84,6 +106,13 @@ function payoutAccountStatus(account: ProviderPayoutAccount | null) {
 
 function payoutAccountStatusMessage(account: ProviderPayoutAccount | null) {
   if (!account) return "No payout account configured.";
+  if (
+    ["approved", "replacement_pending"].includes(
+      String(account.change_request_status || "").toLowerCase(),
+    )
+  ) {
+    return "Provider payout account replacement is pending; settlements are disabled until a verified replacement is active.";
+  }
   if (account.verification_status === "verified" || account.is_verified) {
     return "Provider payout account is verified.";
   }
@@ -96,7 +125,10 @@ function payoutAccountStatusMessage(account: ProviderPayoutAccount | null) {
 function isPayoutAccountReady(account: ProviderPayoutAccount | null) {
   return Boolean(
     account &&
-      (account.verification_status === "verified" || account.is_verified)
+      (account.verification_status === "verified" || account.is_verified) &&
+      !["approved", "replacement_pending"].includes(
+        String(account.change_request_status || "").toLowerCase(),
+      )
   );
 }
 
@@ -120,12 +152,29 @@ export default function AdminSettlementsPage() {
   const [drafts, setDrafts] = useState<Record<string, SettlementDraft>>({});
   const [loading, setLoading] = useState(true);
   const [accountActionState, setAccountActionState] = useState<
-    | { id: string; type: "verify" | "reject" }
+    | { id: string; type: "verify" | "reject" | "approve_change" | "reject_change" }
     | null
   >(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [changeRequests, setChangeRequests] = useState<ProviderPayoutChangeRequest[] | null>(null);
+  const [changeRequestsLoading, setChangeRequestsLoading] = useState(true);
+
+  const loadChangeRequests = useCallback(async () => {
+    try {
+      setChangeRequestsLoading(true);
+      const response = await adminService.getProviderPayoutChangeRequests({
+        status: "pending",
+        limit: 100,
+      });
+      setChangeRequests(response.requests);
+    } catch (err) {
+      setError(adminService.getErrorMessage(err));
+    } finally {
+      setChangeRequestsLoading(false);
+    }
+  }, []);
 
   const loadSettlements = useCallback(async () => {
     try {
@@ -162,12 +211,14 @@ export default function AdminSettlementsPage() {
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
-      if (active) void loadSettlements();
+      if (active) {
+        void Promise.all([loadSettlements(), loadChangeRequests()]);
+      }
     });
     return () => {
       active = false;
     };
-  }, [loadSettlements]);
+  }, [loadSettlements, loadChangeRequests]);
 
   function handleSearchChange(value: string) {
     setSearchQuery(value);
@@ -260,10 +311,12 @@ export default function AdminSettlementsPage() {
       setAccountActionState({ id: stringId, type: "reject" });
       setError("");
       setSuccess("Updating...");
-      await adminService.rejectProviderPayoutAccount(accountId, reason || "");
+      await adminService.rejectProviderPayoutAccount(accountId, {
+        reason: reason || "",
+      });
       toast.success("Payout account rejected.");
       setSuccess("Payout account rejected.");
-      await loadSettlements();
+      await Promise.all([loadSettlements(), loadChangeRequests()]);
     } catch (err) {
       const message = adminService.getErrorMessage(err);
       setError(message);
@@ -358,7 +411,7 @@ export default function AdminSettlementsPage() {
       {accountActionState && (
         <AdminStateBlock
           title={`Status: ${accountActionState.type === "verify" ? "Updating verification" : "Updating rejection"}...`}
-          tone="info"
+          tone="neutral"
         />
       )}
 
@@ -728,6 +781,133 @@ export default function AdminSettlementsPage() {
                             </div>
                           );
                         })()}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+        <div className="border-b border-zinc-200 px-4 py-3">
+          <h2 className="text-base font-semibold text-zinc-950">
+            Pending Payout Account Change Requests
+          </h2>
+        </div>
+        {changeRequestsLoading ? (
+          <div className="p-4">
+            <AdminStateBlock title="Loading change requests..." />
+          </div>
+        ) : !changeRequests?.length ? (
+          <div className="p-4">
+            <AdminStateBlock title="No change requests pending review." />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-zinc-100 text-sm">
+              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3">Provider</th>
+                  <th className="px-4 py-3">Requested At</th>
+                  <th className="px-4 py-3">New Account</th>
+                  <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {changeRequests.map((request) => {
+                  const rowKey = String(request.payout_account_id);
+                  const isWorking = accountActionState?.id === rowKey;
+                  return (
+                    <tr key={rowKey}>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-zinc-950">
+                          {providerName(request)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {request.provider_phone || request.restaurant_name || "Provider"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {formatDateTimeOrFallback(request.change_requested_at || null)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {request.account_type === "UPI"
+                          ? `UPI: ${request.upi_id || "-"}`
+                          : [request.account_holder_name, request.bank_account_number, request.ifsc_code]
+                              .filter(Boolean)
+                              .join(" | ")}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {request.change_request_reason || "-"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setAccountActionState({ id: rowKey, type: "approve_change" });
+                              setError("");
+                              setSuccess("Updating...");
+                              try {
+                                await adminService.approveProviderPayoutAccountChange(
+                                  request.payout_account_id
+                                );
+                                toast.success("Payout account change request approved.");
+                                setSuccess("Payout account change request approved.");
+                                await Promise.all([loadSettlements(), loadChangeRequests()]);
+                              } catch (err) {
+                                const message = adminService.getErrorMessage(err);
+                                setError(message);
+                                setSuccess("");
+                                toast.error(message);
+                              } finally {
+                                setAccountActionState(null);
+                              }
+                            }}
+                            disabled={isWorking}
+                            className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {isWorking ? "Approving..." : "Approve"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const notes = window.prompt(
+                                "Reason for rejecting this payout change request:",
+                                ""
+                              )?.trim();
+                              if (notes === null) return;
+
+                              setAccountActionState({ id: rowKey, type: "reject_change" });
+                              setError("");
+                              setSuccess("Updating...");
+                              try {
+                                await adminService.rejectProviderPayoutAccountChange(
+                                  request.payout_account_id,
+                                  notes || ""
+                                );
+                                toast.success("Payout account change request rejected.");
+                                setSuccess("Payout account change request rejected.");
+                                await Promise.all([loadSettlements(), loadChangeRequests()]);
+                              } catch (err) {
+                                const message = adminService.getErrorMessage(err);
+                                setError(message);
+                                setSuccess("");
+                                toast.error(message);
+                              } finally {
+                                setAccountActionState(null);
+                              }
+                            }}
+                            disabled={isWorking}
+                            className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            {isWorking ? "Rejecting..." : "Reject"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

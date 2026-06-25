@@ -12,8 +12,16 @@ router.patch("/ngos/:id/approve", adminActionLimiter, adminCtrl.approveNGO);
 router.patch("/ngos/:id/reject", adminActionLimiter, adminCtrl.rejectNGO);
 
 router.get("/restaurants/pending", adminCtrl.getPendingRestaurants);
-router.patch("/restaurants/:id/approve", adminActionLimiter, adminCtrl.approveRestaurant);
-router.patch("/restaurants/:id/reject", adminActionLimiter, adminCtrl.rejectRestaurant);
+router.patch(
+  "/restaurants/:id/approve",
+  adminActionLimiter,
+  adminCtrl.approveRestaurant,
+);
+router.patch(
+  "/restaurants/:id/reject",
+  adminActionLimiter,
+  adminCtrl.rejectRestaurant,
+);
 router.get("/operations/diagnostics", adminCtrl.getOperationalDiagnostics);
 router.get("/operations/monitoring", adminCtrl.getOperationalMonitoring);
 router.get("/operations/metrics", adminCtrl.getOperationalMetrics);
@@ -22,15 +30,57 @@ router.get("/operations/alerts", adminCtrl.getOperationalAlerts);
 router.get("/operations/security-events", adminCtrl.getSecurityEvents);
 router.get("/payments/health", adminCtrl.getPaymentHealth);
 router.get("/payments/financial-summary", adminCtrl.getFinancialSummary);
-router.get("/payments/financial-diagnostics", adminCtrl.getFinancialDiagnostics);
+router.get(
+  "/payments/financial-diagnostics",
+  adminCtrl.getFinancialDiagnostics,
+);
 router.get("/settlements", adminCtrl.getProviderSettlementConsole);
-router.patch("/settlements/:id/paid", adminActionLimiter, adminCtrl.markProviderSettlementPaid);
-router.patch("/settlements/:id/failed", adminActionLimiter, adminCtrl.markProviderSettlementFailed);
-router.patch("/settlements/:id/notes", adminActionLimiter, adminCtrl.updateProviderSettlementNotes);
-router.patch("/payout-accounts/:id/verify", adminActionLimiter, adminCtrl.verifyProviderPayoutAccount);
-router.patch("/payout-accounts/:id/reject", adminActionLimiter, adminCtrl.rejectProviderPayoutAccount);
+router.patch(
+  "/settlements/:id/paid",
+  adminActionLimiter,
+  adminCtrl.markProviderSettlementPaid,
+);
+router.patch(
+  "/settlements/:id/failed",
+  adminActionLimiter,
+  adminCtrl.markProviderSettlementFailed,
+);
+router.patch(
+  "/settlements/:id/notes",
+  adminActionLimiter,
+  adminCtrl.updateProviderSettlementNotes,
+);
+router.patch(
+  "/payout-accounts/:id/verify",
+  adminActionLimiter,
+  adminCtrl.verifyProviderPayoutAccount,
+);
+router.patch(
+  "/payout-accounts/:id/change-request/approve",
+  adminActionLimiter,
+  adminCtrl.approveProviderPayoutAccountChange,
+);
+router.patch(
+  "/payout-accounts/:id/change-request/reject",
+  adminActionLimiter,
+  adminCtrl.rejectProviderPayoutAccountChange,
+);
+router.get(
+  "/payout-accounts/change-requests",
+  adminActionLimiter,
+  adminCtrl.getProviderPayoutChangeRequests,
+);
+router.patch(
+  "/payout-accounts/:id/reject",
+  adminActionLimiter,
+  adminCtrl.rejectProviderPayoutAccount,
+);
 router.get("/queues/health", adminCtrl.getQueueHealth);
-router.post("/queues/:queueName/jobs/:jobId/retry", adminActionLimiter, adminCtrl.retryFailedQueueJob);
+router.post(
+  "/queues/:queueName/jobs/:jobId/retry",
+  adminActionLimiter,
+  adminCtrl.retryFailedQueueJob,
+);
 router.get("/trust/summary", adminCtrl.getTrustObservabilitySummary);
 router.get("/trust/events", adminCtrl.getRecentTrustEvents);
 router.get("/trust/analytics", adminCtrl.getTrustAnalytics);
@@ -40,15 +90,24 @@ router.post(
   adminActionLimiter,
   adminCtrl.recordTrustRecoveryCredit,
 );
-router.get("/trust/:subjectType/:subjectId/projection", adminCtrl.getTrustProjectionBreakdown);
-router.get("/trust/:subjectType/:subjectId/explain", adminCtrl.getTrustExplainability);
+router.get(
+  "/trust/:subjectType/:subjectId/projection",
+  adminCtrl.getTrustProjectionBreakdown,
+);
+router.get(
+  "/trust/:subjectType/:subjectId/explain",
+  adminCtrl.getTrustExplainability,
+);
 router.post(
   "/trust/:subjectType/:subjectId/actions",
   adminActionLimiter,
   adminCtrl.recordAdminTrustAction,
 );
 router.get("/trust/:subjectType/:subjectId", adminCtrl.getTrustSubject);
-router.get("/trust/:subjectType/:subjectId/events", adminCtrl.getTrustSubjectEvents);
+router.get(
+  "/trust/:subjectType/:subjectId/events",
+  adminCtrl.getTrustSubjectEvents,
+);
 router.get("/provider-reports", adminCtrl.getProviderReports);
 router.get("/governance-dashboard", adminCtrl.getGovernanceDashboard);
 router.get("/governance-intelligence", adminCtrl.getGovernanceIntelligence);
@@ -70,7 +129,10 @@ router.get("/audit-center", adminCtrl.getAuditCenter);
 router.get("/audit-center/export.json", adminCtrl.exportAuditCenterJson);
 router.get("/audit-center/export.csv", adminCtrl.exportAuditCenterCsv);
 router.get("/business-metrics", adminCtrl.getBusinessMetrics);
-router.get("/business-metrics/export.json", adminCtrl.exportBusinessMetricsJson);
+router.get(
+  "/business-metrics/export.json",
+  adminCtrl.exportBusinessMetricsJson,
+);
 router.get("/business-metrics/export.csv", adminCtrl.exportBusinessMetricsCsv);
 router.get("/compliance", adminCtrl.getComplianceDashboard);
 router.post(

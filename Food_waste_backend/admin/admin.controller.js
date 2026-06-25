@@ -12,17 +12,22 @@ const {
   retryFailedJob,
 } = require("../shared/services/queueObservability.service");
 const { getMetricsSnapshot } = require("../shared/services/metrics.service");
-const { getPaymentHealth } = require("../shared/services/paymentMonitoring.service");
+const {
+  getPaymentHealth,
+} = require("../shared/services/paymentMonitoring.service");
 const {
   getFinancialDiagnostics,
   getFinancialSummary,
 } = require("../shared/services/financialLedger.service");
 const {
   listAdminProviderSettlements,
+  listAdminProviderPayoutChangeRequests,
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
   verifyProviderPayoutAccount,
   rejectProviderPayoutAccount,
+  approveProviderPayoutAccountChange,
+  rejectProviderPayoutAccountChange,
 } = require("../shared/services/providerPayout.service");
 const {
   dismissProviderReport,
@@ -47,6 +52,8 @@ const {
   notifyProviderVerificationRejected,
   notifyProviderPayoutVerificationApproved,
   notifyProviderPayoutVerificationRejected,
+  notifyProviderPayoutChangeApproved,
+  notifyProviderPayoutChangeRejected,
 } = require("../shared/services/operationalNotification.service");
 const {
   SUBJECT_TYPES,
@@ -66,9 +73,7 @@ const {
   getTrustExplainability,
   recordAdminTrustAction: recordAdminTrustActionService,
 } = require("../shared/services/trustExplainability.service");
-const {
-  getAbuseAnalytics,
-} = require("../shared/services/abuseGuard.service");
+const { getAbuseAnalytics } = require("../shared/services/abuseGuard.service");
 const {
   getEscalationAnalytics,
   getGovernanceIntelligenceSummary,
@@ -124,9 +129,11 @@ exports.getPendingNGOs = async (req, res) => {
     `);
 
     res.json(result.rows);
-
   } catch (err) {
-    logger.error("Failed to fetch pending NGOs", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch pending NGOs", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch NGOs" });
   }
 };
@@ -152,12 +159,14 @@ exports.approveNGO = async (req, res) => {
       WHERE id=$1 AND is_verified=false
       RETURNING id, user_id
       `,
-      [id]
+      [id],
     );
 
     if (result.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(409).json({ error: "NGO not found or already approved" });
+      return res
+        .status(409)
+        .json({ error: "NGO not found or already approved" });
     }
 
     const userUpdate = await client.query(
@@ -167,7 +176,7 @@ exports.approveNGO = async (req, res) => {
       WHERE id=$1
       AND role IN ('user', 'volunteer', 'ngo')
       `,
-      [result.rows[0].user_id]
+      [result.rows[0].user_id],
     );
 
     if (userUpdate.rowCount === 0) {
@@ -178,7 +187,9 @@ exports.approveNGO = async (req, res) => {
         ngoId: id,
         userId: result.rows[0].user_id,
       });
-      return res.status(409).json({ error: "Applicant cannot be promoted to NGO" });
+      return res
+        .status(409)
+        .json({ error: "Applicant cannot be promoted to NGO" });
     }
 
     await client.query("COMMIT");
@@ -197,14 +208,21 @@ exports.approveNGO = async (req, res) => {
       category: "security",
       severity: "info",
       eventName: "admin_approved_ngo",
-      metadata: { adminId: req.user?.id, ngoId: id, userId: result.rows[0].user_id },
+      metadata: {
+        adminId: req.user?.id,
+        ngoId: id,
+        userId: result.rows[0].user_id,
+      },
     });
 
     res.json({ message: "NGO approved" });
-
   } catch (err) {
     await client.query("ROLLBACK");
-    logger.error("NGO approval failed", { err, adminId: req.user?.id, ngoId: req.params.id });
+    logger.error("NGO approval failed", {
+      err,
+      adminId: req.user?.id,
+      ngoId: req.params.id,
+    });
     res.status(500).json({ error: "Approval failed" });
   } finally {
     client.release();
@@ -223,7 +241,9 @@ exports.rejectNGO = async (req, res) => {
       return res.status(400).json({ error: "NGO id is required" });
     }
 
-    const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
+    const rejectionReason = String(reason || "Rejected by admin")
+      .trim()
+      .slice(0, 500);
     const result = await pool.query(
       `
       UPDATE ngos
@@ -231,7 +251,7 @@ exports.rejectNGO = async (req, res) => {
       WHERE id=$2
       RETURNING id, user_id
       `,
-      [rejectionReason || "Rejected by admin", id]
+      [rejectionReason || "Rejected by admin", id],
     );
 
     if (result.rowCount === 0) {
@@ -252,9 +272,12 @@ exports.rejectNGO = async (req, res) => {
     });
 
     res.json({ message: "NGO rejected" });
-
   } catch (err) {
-    logger.error("NGO rejection failed", { err, adminId: req.user?.id, ngoId: req.params.id });
+    logger.error("NGO rejection failed", {
+      err,
+      adminId: req.user?.id,
+      ngoId: req.params.id,
+    });
     res.status(500).json({ error: "Rejection failed" });
   }
 };
@@ -272,9 +295,11 @@ exports.getPendingRestaurants = async (req, res) => {
     `);
 
     res.json(result.rows);
-
   } catch (err) {
-    logger.error("Failed to fetch pending restaurants", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch pending restaurants", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch restaurants" });
   }
 };
@@ -300,12 +325,14 @@ exports.approveRestaurant = async (req, res) => {
       WHERE id=$1 AND is_verified=false
       RETURNING id, user_id
       `,
-      [id]
+      [id],
     );
 
     if (result.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(409).json({ error: "Restaurant not found or already approved" });
+      return res
+        .status(409)
+        .json({ error: "Restaurant not found or already approved" });
     }
 
     const userUpdate = await client.query(
@@ -315,7 +342,7 @@ exports.approveRestaurant = async (req, res) => {
       WHERE id=$1
       AND role IN ('user', 'volunteer', 'provider')
       `,
-      [result.rows[0].user_id]
+      [result.rows[0].user_id],
     );
 
     if (userUpdate.rowCount === 0) {
@@ -326,7 +353,9 @@ exports.approveRestaurant = async (req, res) => {
         restaurantId: id,
         userId: result.rows[0].user_id,
       });
-      return res.status(409).json({ error: "Applicant cannot be promoted to provider" });
+      return res
+        .status(409)
+        .json({ error: "Applicant cannot be promoted to provider" });
     }
 
     await client.query("COMMIT");
@@ -345,11 +374,14 @@ exports.approveRestaurant = async (req, res) => {
       category: "security",
       severity: "info",
       eventName: "admin_approved_restaurant",
-      metadata: { adminId: req.user?.id, restaurantId: id, userId: result.rows[0].user_id },
+      metadata: {
+        adminId: req.user?.id,
+        restaurantId: id,
+        userId: result.rows[0].user_id,
+      },
     });
 
     res.json({ message: "Restaurant approved" });
-
   } catch (err) {
     await client.query("ROLLBACK");
     logger.error("Restaurant approval failed", {
@@ -375,7 +407,9 @@ exports.rejectRestaurant = async (req, res) => {
       return res.status(400).json({ error: "Restaurant id is required" });
     }
 
-    const rejectionReason = String(reason || "Rejected by admin").trim().slice(0, 500);
+    const rejectionReason = String(reason || "Rejected by admin")
+      .trim()
+      .slice(0, 500);
     const result = await pool.query(
       `
       UPDATE restaurants
@@ -383,7 +417,7 @@ exports.rejectRestaurant = async (req, res) => {
       WHERE id=$2
       RETURNING id, user_id
       `,
-      [rejectionReason || "Rejected by admin", id]
+      [rejectionReason || "Rejected by admin", id],
     );
 
     if (result.rowCount === 0) {
@@ -407,7 +441,6 @@ exports.rejectRestaurant = async (req, res) => {
     });
 
     res.json({ message: "Restaurant rejected" });
-
   } catch (err) {
     logger.error("Restaurant rejection failed", {
       err,
@@ -446,7 +479,10 @@ exports.getOperationalSummary = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    logger.error("Failed to fetch operational summary", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch operational summary", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch operational summary" });
   }
 };
@@ -500,7 +536,7 @@ async function getReservationDiagnostics() {
     FROM reservations r
     LEFT JOIN food_listings f ON f.id=r.listing_id
   `,
-    [operationalPolicy.payment.holdTimeoutMinutes]
+    [operationalPolicy.payment.holdTimeoutMinutes],
   );
 
   return result.rows[0];
@@ -521,10 +557,10 @@ exports.getOperationalDiagnostics = async (req, res) => {
       staleSessions: Number(payments.summary?.stale_sessions || 0),
       webhookFailures24h: Number(payments.webhooks?.failed || 0),
       reservationPaymentMismatches: Number(
-        payments.diagnostics?.reservation_payment_mismatches || 0
+        payments.diagnostics?.reservation_payment_mismatches || 0,
       ),
       reconciliationAttentionRequired: Number(
-        payments.diagnostics?.reconciliation_attention_required || 0
+        payments.diagnostics?.reconciliation_attention_required || 0,
       ),
     };
     const status =
@@ -564,7 +600,10 @@ exports.getOperationalMetrics = async (req, res) => {
   try {
     res.json({ metrics: getMetricsSnapshot() });
   } catch (err) {
-    logger.error("Failed to fetch operational metrics", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch operational metrics", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch operational metrics" });
   }
 };
@@ -868,7 +907,8 @@ exports.addIncidentPostmortem = async (req, res) => {
       rootCause: req.body?.rootCause || req.body?.root_cause,
       impactSummary: req.body?.impactSummary || req.body?.impact_summary,
       detectionMethod: req.body?.detectionMethod || req.body?.detection_method,
-      resolutionSummary: req.body?.resolutionSummary || req.body?.resolution_summary,
+      resolutionSummary:
+        req.body?.resolutionSummary || req.body?.resolution_summary,
       followUpActions: req.body?.followUpActions || req.body?.follow_up_actions,
       metadata: req.body?.metadata || {},
     });
@@ -914,7 +954,10 @@ exports.getQueueHealth = async (req, res) => {
 
     res.json({ queues });
   } catch (err) {
-    logger.error("Failed to fetch queue health", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch queue health", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({
       success: false,
       message: "Failed to fetch queue health",
@@ -950,7 +993,9 @@ exports.retryFailedQueueJob = async (req, res) => {
       queueName: req.params.queueName,
       jobId: req.params.jobId,
     });
-    res.status(err.statusCode || 500).json({ error: err.message || "Retry failed" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: err.message || "Retry failed" });
   }
 };
 
@@ -959,7 +1004,10 @@ exports.getPaymentHealth = async (req, res) => {
     const payments = await getPaymentHealth();
     res.json({ payments });
   } catch (err) {
-    logger.error("Failed to fetch payment health", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch payment health", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch payment health" });
   }
 };
@@ -977,7 +1025,10 @@ exports.getOperationalAlerts = async (req, res) => {
     `);
     res.json({ alerts: result.rows });
   } catch (err) {
-    logger.error("Failed to fetch operational alerts", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch operational alerts", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch operational alerts" });
   }
 };
@@ -995,7 +1046,10 @@ exports.getSecurityEvents = async (req, res) => {
     `);
     res.json({ events: result.rows });
   } catch (err) {
-    logger.error("Failed to fetch security events", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch security events", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch security events" });
   }
 };
@@ -1056,7 +1110,9 @@ exports.getTrustSubject = async (req, res) => {
       adminId: req.user?.id,
       subject,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust subject" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust subject" });
   }
 };
 
@@ -1076,7 +1132,9 @@ exports.getTrustSubjectEvents = async (req, res) => {
       adminId: req.user?.id,
       subject,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust events" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust events" });
   }
 };
 
@@ -1084,9 +1142,13 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
   const subject = validateTrustSubjectParams(req, res);
   if (!subject) return;
 
-  const sourceType = compactAdminText(req.body?.sourceType || req.body?.source_type, 80) ||
+  const sourceType =
+    compactAdminText(req.body?.sourceType || req.body?.source_type, 80) ||
     "admin_trust_recovery";
-  const sourceId = compactAdminText(req.body?.sourceId || req.body?.source_id, 160);
+  const sourceId = compactAdminText(
+    req.body?.sourceId || req.body?.source_id,
+    160,
+  );
   const reason = compactAdminText(req.body?.reason, 500);
 
   if (!sourceId) {
@@ -1161,7 +1223,9 @@ exports.recordTrustRecoveryCredit = async (req, res) => {
       sourceType,
       sourceId,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to record trust recovery credit" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to record trust recovery credit" });
   } finally {
     client.release();
   }
@@ -1176,7 +1240,8 @@ exports.getProviderSettlementConsole = async (req, res) => {
   try {
     const settlements = await listAdminProviderSettlements({
       status: req.query.status,
-      verificationStatus: req.query.verificationStatus || req.query.verification_status,
+      verificationStatus:
+        req.query.verificationStatus || req.query.verification_status,
       limit: req.query.limit,
       search: req.query.search,
       providerId,
@@ -1194,7 +1259,12 @@ exports.getProviderSettlementConsole = async (req, res) => {
   }
 };
 
-async function recordSettlementAdminEvent(req, eventName, settlement, extra = {}) {
+async function recordSettlementAdminEvent(
+  req,
+  eventName,
+  settlement,
+  extra = {},
+) {
   logger.security("Admin settlement action recorded", {
     adminId: req.user?.id,
     eventName,
@@ -1229,7 +1299,8 @@ async function transitionProviderSettlementFromAdmin(req, res, status) {
       settlementId: id,
       status,
       adminId: req.user.id,
-      paymentReference: req.body?.payment_reference || req.body?.paymentReference,
+      paymentReference:
+        req.body?.payment_reference || req.body?.paymentReference,
       paidAt: req.body?.paid_at || req.body?.paidAt,
       notes: req.body?.notes,
     });
@@ -1248,7 +1319,7 @@ async function transitionProviderSettlementFromAdmin(req, res, status) {
         paymentReference: settlement.payment_reference || null,
         manual_settlement: true,
         money_movement_executed_by_system: false,
-      }
+      },
     );
 
     if (status === "paid") {
@@ -1301,7 +1372,7 @@ exports.updateProviderSettlementNotes = async (req, res) => {
       req,
       "provider_settlement_notes_updated",
       settlement,
-      { manual_settlement: true }
+      { manual_settlement: true },
     );
 
     res.json({
@@ -1365,6 +1436,126 @@ exports.verifyProviderPayoutAccount = async (req, res) => {
   }
 };
 
+exports.getProviderPayoutChangeRequests = async (req, res) => {
+  try {
+    const result = await listAdminProviderPayoutChangeRequests({
+      status: req.query.status,
+      limit: req.query.limit,
+      search: req.query.search,
+    });
+
+    res.json(result);
+  } catch (err) {
+    logger.error("Failed to list provider payout change requests", {
+      err,
+      adminId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to list payout account change requests",
+    });
+  }
+};
+
+exports.approveProviderPayoutAccountChange = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Payout account id is required" });
+  }
+
+  try {
+    const account = await approveProviderPayoutAccountChange({
+      payoutAccountId: id,
+      adminId: req.user.id,
+      reason: req.body?.reason,
+    });
+
+    if (!account) {
+      return res.status(404).json({ error: "Payout account not found" });
+    }
+
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "admin_approved_provider_payout_change_request",
+      metadata: {
+        adminId: req.user?.id,
+        payoutAccountId: account.id,
+        providerId: account.provider_id,
+      },
+    });
+
+    void notifyProviderPayoutChangeApproved({
+      providerId: account.provider_id,
+      payoutAccountId: account.id,
+      reason: req.body?.reason,
+    });
+
+    res.json({ message: "Payout account change request approved", account });
+  } catch (err) {
+    logger.error("Provider payout account change approval failed", {
+      err,
+      adminId: req.user?.id,
+      payoutAccountId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to approve payout account change request",
+    });
+  }
+};
+
+exports.rejectProviderPayoutAccountChange = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Payout account id is required" });
+  }
+
+  const reason = String(req.body?.reason || "Rejected by admin").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "Rejection reason is required" });
+  }
+
+  try {
+    const account = await rejectProviderPayoutAccountChange({
+      payoutAccountId: id,
+      adminId: req.user.id,
+      reason,
+    });
+
+    if (!account) {
+      return res.status(404).json({ error: "Payout account not found" });
+    }
+
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "warn",
+      eventName: "admin_rejected_provider_payout_change_request",
+      metadata: {
+        adminId: req.user?.id,
+        payoutAccountId: account.id,
+        providerId: account.provider_id,
+        rejectionReason: reason,
+      },
+    });
+
+    void notifyProviderPayoutChangeRejected({
+      providerId: account.provider_id,
+      payoutAccountId: account.id,
+      reason,
+    });
+
+    res.json({ message: "Payout account change request rejected", account });
+  } catch (err) {
+    logger.error("Provider payout account change rejection failed", {
+      err,
+      adminId: req.user?.id,
+      payoutAccountId: id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to reject payout account change request",
+    });
+  }
+};
+
 exports.rejectProviderPayoutAccount = async (req, res) => {
   const { id } = req.params;
   if (!isValidId(id)) {
@@ -1421,7 +1612,8 @@ exports.rejectProviderPayoutAccount = async (req, res) => {
 function trustQueueSlices(queues) {
   return {
     trustQueue: queues.find((queue) => queue.name === "trust-queue") || null,
-    deadLetterQueue: queues.find((queue) => queue.name === "dead-letter-queue") || null,
+    deadLetterQueue:
+      queues.find((queue) => queue.name === "dead-letter-queue") || null,
   };
 }
 
@@ -1434,7 +1626,9 @@ exports.getTrustObservabilitySummary = async (req, res) => {
       err,
       adminId: req.user?.id,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust summary" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust summary" });
   }
 };
 
@@ -1447,7 +1641,9 @@ exports.getRecentTrustEvents = async (req, res) => {
       err,
       adminId: req.user?.id,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch recent trust events" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch recent trust events" });
   }
 };
 
@@ -1464,7 +1660,9 @@ exports.getTrustProjectionBreakdown = async (req, res) => {
       adminId: req.user?.id,
       subject,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust projection" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust projection" });
   }
 };
 
@@ -1484,7 +1682,9 @@ exports.getTrustExplainability = async (req, res) => {
       adminId: req.user?.id,
       subject,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust explanation" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust explanation" });
   }
 };
 
@@ -1503,7 +1703,11 @@ exports.recordAdminTrustAction = async (req, res) => {
       subjectId: subject.subjectId,
       actionType: req.body?.actionType || req.body?.action_type,
       reason: req.body?.reason,
-      details: req.body?.details || req.body?.actionDetails || req.body?.action_details || {},
+      details:
+        req.body?.details ||
+        req.body?.actionDetails ||
+        req.body?.action_details ||
+        {},
       idempotencyKey: req.body?.idempotencyKey || req.body?.idempotency_key,
     });
     await client.query("COMMIT");
@@ -1568,7 +1772,9 @@ exports.getTrustAnalytics = async (req, res) => {
       err,
       adminId: req.user?.id,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust analytics" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust analytics" });
   }
 };
 
@@ -1592,7 +1798,9 @@ exports.getTrustDiagnostics = async (req, res) => {
       err,
       adminId: req.user?.id,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch trust diagnostics" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch trust diagnostics" });
   }
 };
 
@@ -1603,7 +1811,10 @@ exports.getProviderReports = async (req, res) => {
     });
     res.json({ reports });
   } catch (err) {
-    logger.error("Failed to fetch provider reports", { err, adminId: req.user?.id });
+    logger.error("Failed to fetch provider reports", {
+      err,
+      adminId: req.user?.id,
+    });
     res.status(500).json({ error: "Failed to fetch provider reports" });
   }
 };
@@ -1628,7 +1839,9 @@ exports.getModerationCase = async (req, res) => {
       adminId: req.user?.id,
       caseId: id,
     });
-    res.status(err.statusCode || 500).json({ error: "Failed to fetch moderation case" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: "Failed to fetch moderation case" });
   }
 };
 
@@ -1781,7 +1994,10 @@ exports.getAuditCenter = async (req, res) => {
 exports.exportAuditCenterJson = async (req, res) => {
   try {
     const auditExport = await exportAuditEvents(req.query);
-    res.setHeader("Content-Disposition", "attachment; filename=\"audit-center-export.json\"");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="audit-center-export.json"',
+    );
     res.json(auditExport);
   } catch (err) {
     logger.error("Failed to export audit center JSON", {
@@ -1798,7 +2014,10 @@ exports.exportAuditCenterJson = async (req, res) => {
 exports.exportAuditCenterCsv = async (req, res) => {
   try {
     const auditExport = await exportAuditEvents(req.query);
-    res.setHeader("Content-Disposition", "attachment; filename=\"audit-center-export.csv\"");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="audit-center-export.csv"',
+    );
     res.type("text/csv").send(eventsToCsv(auditExport.events));
   } catch (err) {
     logger.error("Failed to export audit center CSV", {
@@ -1854,7 +2073,10 @@ exports.exportBusinessMetricsJson = async (req, res) => {
   try {
     const metricsExport = await exportBusinessMetrics(req.query);
     await recordBusinessMetricsExport(req, "json", metricsExport);
-    res.setHeader("Content-Disposition", "attachment; filename=\"business-metrics-export.json\"");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="business-metrics-export.json"',
+    );
     res.json(metricsExport);
   } catch (err) {
     logger.error("Failed to export business metrics JSON", {
@@ -1872,7 +2094,10 @@ exports.exportBusinessMetricsCsv = async (req, res) => {
   try {
     const metricsExport = await exportBusinessMetrics(req.query);
     await recordBusinessMetricsExport(req, "csv", metricsExport);
-    res.setHeader("Content-Disposition", "attachment; filename=\"business-metrics-export.csv\"");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="business-metrics-export.csv"',
+    );
     res.type("text/csv").send(businessMetricsToCsv(metricsExport.metrics));
   } catch (err) {
     logger.error("Failed to export business metrics CSV", {
@@ -1962,12 +2187,16 @@ exports.createComplianceDeletionRequest = async (req, res) => {
     });
     await client.query("COMMIT");
 
-    recordComplianceOperationalEvent(req, "compliance_deletion_request_created", {
-      requestId: request?.request?.id,
-      requestType: request?.request?.request_type,
-      subjectType: request?.request?.subject_type,
-      subjectId: request?.request?.subject_id,
-    });
+    recordComplianceOperationalEvent(
+      req,
+      "compliance_deletion_request_created",
+      {
+        requestId: request?.request?.id,
+        requestType: request?.request?.request_type,
+        subjectType: request?.request?.subject_type,
+        subjectId: request?.request?.subject_id,
+      },
+    );
 
     res.status(201).json({ request });
   } catch (err) {
@@ -2010,13 +2239,17 @@ async function transitionComplianceRequest(req, res, status) {
     }
     await client.query("COMMIT");
 
-    recordComplianceOperationalEvent(req, `compliance_deletion_request_${status.toLowerCase()}`, {
-      requestId: id,
-      status,
-      requestType: request?.request?.request_type,
-      subjectType: request?.request?.subject_type,
-      subjectId: request?.request?.subject_id,
-    });
+    recordComplianceOperationalEvent(
+      req,
+      `compliance_deletion_request_${status.toLowerCase()}`,
+      {
+        requestId: id,
+        status,
+        requestType: request?.request?.request_type,
+        subjectType: request?.request?.subject_type,
+        subjectId: request?.request?.subject_id,
+      },
+    );
 
     res.json({ request });
   } catch (err) {
@@ -2066,12 +2299,16 @@ exports.executeComplianceDeletionRequest = async (req, res) => {
     }
     await client.query("COMMIT");
 
-    recordComplianceOperationalEvent(req, "compliance_deletion_request_executed", {
-      requestId: id,
-      requestType: request?.request?.request_type,
-      subjectType: request?.request?.subject_type,
-      subjectId: request?.request?.subject_id,
-    });
+    recordComplianceOperationalEvent(
+      req,
+      "compliance_deletion_request_executed",
+      {
+        requestId: id,
+        requestType: request?.request?.request_type,
+        subjectType: request?.request?.subject_type,
+        subjectId: request?.request?.subject_id,
+      },
+    );
 
     res.json({ request });
   } catch (err) {
@@ -2275,7 +2512,10 @@ exports.updateModerationCaseStatus = async (req, res) => {
       }
     }
 
-    const moderationCase = await getModerationCaseDetail({ client, caseId: id });
+    const moderationCase = await getModerationCaseDetail({
+      client,
+      caseId: id,
+    });
     await client.query("COMMIT");
 
     if (

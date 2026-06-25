@@ -7,6 +7,8 @@ const {
   deactivateProviderPayoutAccount,
   getProviderSettlementSummary,
   replaceProviderPayoutAccount,
+  requestProviderPayoutAccountChange,
+  approveProviderPayoutAccountChange,
   transitionProviderSettlementStatus,
   validatePayoutAccountInput,
   verifyProviderPayoutAccount,
@@ -105,6 +107,96 @@ function createProviderFinanceClient() {
             if (account.provider_id === providerId && account.is_active) {
               account.is_active = false;
               account.updated_at = `2026-01-0${accounts.length + 1}T00:00:00.000Z`;
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='pending'")) {
+          const payoutAccountId = params[0];
+          const reason = params[1];
+          const providerId = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "pending";
+              account.change_request_reason = reason;
+              account.change_requested_at = "2026-01-10T00:00:00.000Z";
+              account.change_requested_by = providerId;
+              account.change_reviewed_at = null;
+              account.change_reviewed_by = null;
+              account.change_review_notes = null;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='approved'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          const notes = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "approved";
+              account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
+              account.change_reviewed_by = adminId;
+              account.change_review_notes = notes;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='rejected'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          const notes = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "rejected";
+              account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
+              account.change_reviewed_by = adminId;
+              account.change_review_notes = notes;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='pending'")) {
+          const payoutAccountId = params[0];
+          const reason = params[1];
+          const providerId = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "pending";
+              account.change_request_reason = reason;
+              account.change_requested_at = "2026-01-10T00:00:00.000Z";
+              account.change_requested_by = providerId;
+              account.change_reviewed_at = null;
+              account.change_reviewed_by = null;
+              account.change_review_notes = null;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='approved'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          const notes = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "approved";
+              account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
+              account.change_reviewed_by = adminId;
+              account.change_review_notes = notes;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
+              updated.push({ ...account });
+            }
+          }
+        } else if (text.includes("change_request_status='rejected'")) {
+          const payoutAccountId = params[0];
+          const adminId = params[1];
+          const notes = params[2];
+          for (const account of accounts) {
+            if (account.id === payoutAccountId && account.is_active) {
+              account.change_request_status = "rejected";
+              account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
+              account.change_reviewed_by = adminId;
+              account.change_review_notes = notes;
+              account.updated_at = "2026-01-10T00:00:00.000Z";
               updated.push({ ...account });
             }
           }
@@ -498,6 +590,21 @@ test("T-FIN-2 payout account update resets verification status", async () => {
     client,
     payoutAccountId: original.id,
     adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+
+  await requestProviderPayoutAccountChange({
+    client,
+    providerId: PROVIDER_ID,
+    reason: "Update bank details",
+    ensureSchema: false,
+  });
+
+  await approveProviderPayoutAccountChange({
+    client,
+    payoutAccountId: original.id,
+    adminId: ADMIN_ID,
+    reason: "Approved for replacement",
     ensureSchema: false,
   });
 

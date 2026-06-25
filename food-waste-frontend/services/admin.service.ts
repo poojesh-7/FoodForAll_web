@@ -83,6 +83,7 @@ import type {
   UpdateProviderSettlementNotesRequest,
   UpdateProviderSettlementResponse,
   UpdateProviderSettlementStatusRequest,
+  RejectProviderPayoutAccountRequest,
   ProviderPayoutAccount,
   VerifyProviderPayoutAccountResponse,
   RejectProviderPayoutAccountResponse,
@@ -403,16 +404,63 @@ export async function verifyProviderPayoutAccount(
   return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
 }
 
-export async function rejectProviderPayoutAccount(
+export async function approveProviderPayoutAccountChange(
+  id: DbId,
+  reason?: string
+): Promise<ProviderPayoutAccount | null> {
+  const { data } = await api.patch<VerifyProviderPayoutAccountResponse>(
+    `/admin/payout-accounts/${String(id)}/change-request/approve`,
+    reason ? { reason } : {}
+  );
+
+  return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
+}
+
+export async function rejectProviderPayoutAccountChange(
   id: DbId,
   reason: string
 ): Promise<ProviderPayoutAccount | null> {
   const { data } = await api.patch<RejectProviderPayoutAccountResponse>(
-    `/admin/payout-accounts/${String(id)}/reject`,
+    `/admin/payout-accounts/${String(id)}/change-request/reject`,
     { reason }
   );
 
   return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
+}
+
+export type ProviderPayoutChangeRequest = {
+  payout_account_id: DbId;
+  provider_id: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  restaurant_name?: string | null;
+  account_type?: string | null;
+  upi_id?: string | null;
+  account_holder_name?: string | null;
+  bank_account_number?: string | null;
+  ifsc_code?: string | null;
+  is_verified?: boolean;
+  verification_status?: string | null;
+  change_request_status?: string | null;
+  change_request_reason?: string | null;
+  change_requested_at?: string | null;
+  change_requested_by?: DbId | null;
+  change_reviewed_at?: string | null;
+  change_reviewed_by?: DbId | null;
+  change_review_notes?: string | null;
+};
+
+export async function getProviderPayoutChangeRequests(
+  params: { status?: string; limit?: number; search?: string } = {}
+): Promise<{
+  filter: string;
+  requests: ProviderPayoutChangeRequest[];
+}> {
+  const { data } = await api.get<
+    { filter: string; requests: ProviderPayoutChangeRequest[] } | { data: { filter: string; requests: ProviderPayoutChangeRequest[] } }
+  >("/admin/payout-accounts/change-requests", { params });
+
+  return getEnvelopeData<{ filter: string; requests: ProviderPayoutChangeRequest[] }>(data);
 }
 
 export async function updateProviderSettlementNotes(
@@ -420,6 +468,18 @@ export async function updateProviderSettlementNotes(
   payload: UpdateProviderSettlementNotesRequest
 ): Promise<void> {
   await patchProviderSettlement(id, "notes", payload);
+}
+
+export async function rejectProviderPayoutAccount(
+  id: DbId,
+  payload: RejectProviderPayoutAccountRequest
+): Promise<ProviderPayoutAccount | null> {
+  const { data } = await api.patch<RejectProviderPayoutAccountResponse>(
+    `/admin/payout-accounts/${String(id)}/reject`,
+    payload
+  );
+
+  return getEnvelopeData<{ account: ProviderPayoutAccount | null }>(data).account;
 }
 
 export async function getModerationCase(id: DbId): Promise<AdminModerationCase> {
@@ -831,8 +891,11 @@ export const adminService = {
   getProviderSettlementConsole,
   markProviderSettlementPaid,
   markProviderSettlementFailed,
-  updateProviderSettlementNotes,
   verifyProviderPayoutAccount,
+  approveProviderPayoutAccountChange,
+  rejectProviderPayoutAccountChange,
+  getProviderPayoutChangeRequests,
+  updateProviderSettlementNotes,
   rejectProviderPayoutAccount,
   getModerationCase,
   getModerationAppeals,

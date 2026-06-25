@@ -13,6 +13,8 @@ const {
   notifyProviderSettlementProcessed,
   notifyProviderVerificationApproved,
   notifyProviderVerificationRejected,
+  notifyProviderPayoutChangeApproved,
+  notifyProviderPayoutChangeRejected,
 } = require("../shared/services/operationalNotification.service");
 
 const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
@@ -60,13 +62,13 @@ test("provider verification submission notifies verified admins", async () => {
   assert.deepEqual(adminIds, [ADMIN_ID, SECOND_ADMIN_ID]);
   assert.deepEqual(
     queue.jobs.map((job) => job.data.userId),
-    [ADMIN_ID, SECOND_ADMIN_ID]
+    [ADMIN_ID, SECOND_ADMIN_ID],
   );
   assert.equal(queue.jobs[0].name, "notify-user");
   assert.equal(queue.jobs[0].data.type, "provider_verification_submitted");
   assert.equal(
     queue.jobs[0].data.message,
-    "New provider verification request pending review."
+    "New provider verification request pending review.",
   );
   assert.equal(queue.jobs[0].data.data.provider_id, PROVIDER_ID);
   assert.equal(queue.jobs[0].data.data.restaurant_id, RESTAURANT_ID);
@@ -87,7 +89,7 @@ test("NGO verification submission notifies verified admins", async () => {
   assert.equal(queue.jobs[0].data.type, "ngo_verification_submitted");
   assert.equal(
     queue.jobs[0].data.message,
-    "New NGO verification request pending review."
+    "New NGO verification request pending review.",
   );
   assert.equal(queue.jobs[0].data.data.ngo_id, NGO_ID);
   assert.equal(queue.jobs[0].data.data.ngo_user_id, NGO_USER_ID);
@@ -117,7 +119,7 @@ test("provider report submission notifies admins and affected provider", async (
   assert.equal(adminQueue.jobs[0].data.type, "provider_report_submitted");
   assert.equal(
     adminQueue.jobs[0].data.message,
-    "New provider report awaiting moderation review."
+    "New provider report awaiting moderation review.",
   );
   assert.equal(adminQueue.jobs[0].data.data.case_id, CASE_ID);
 
@@ -125,11 +127,11 @@ test("provider report submission notifies admins and affected provider", async (
   assert.equal(providerQueue.jobs[0].data.userId, PROVIDER_ID);
   assert.equal(
     providerQueue.jobs[0].data.type,
-    "provider_report_submitted_against_provider"
+    "provider_report_submitted_against_provider",
   );
   assert.equal(
     providerQueue.jobs[0].data.message,
-    "A report has been submitted and is under review."
+    "A report has been submitted and is under review.",
   );
 });
 
@@ -146,7 +148,10 @@ test("moderation case escalation notifies verified admins", async () => {
   assert.equal(queue.jobs.length, 1);
   assert.equal(queue.jobs[0].data.userId, ADMIN_ID);
   assert.equal(queue.jobs[0].data.type, "moderation_case_escalated");
-  assert.equal(queue.jobs[0].data.message, "Moderation case escalated for review.");
+  assert.equal(
+    queue.jobs[0].data.message,
+    "Moderation case escalated for review.",
+  );
   assert.equal(queue.jobs[0].data.data.case_id, CASE_ID);
 });
 
@@ -240,12 +245,12 @@ test("provider settlement decisions notify only the provider account", async () 
   assert.equal(paidQueue.jobs[0].data.title, "Settlement Processed");
   assert.match(
     paidQueue.jobs[0].data.message,
-    /Your settlement of \u20b9438\.90 has been marked paid\./
+    /Your settlement of \u20b9438\.90 has been marked paid\./,
   );
   assert.match(paidQueue.jobs[0].data.message, /Reference:\nUTR123/);
   assert.equal(
     paidQueue.jobs[0].data.idempotencyKey,
-    "provider_settlement_paid:settlement-paid"
+    "provider_settlement_paid:settlement-paid",
   );
 
   assert.equal(failedQueue.jobs.length, 1);
@@ -254,7 +259,63 @@ test("provider settlement decisions notify only the provider account", async () 
   assert.equal(failedQueue.jobs[0].data.title, "Settlement Failed");
   assert.match(
     failedQueue.jobs[0].data.message,
-    /Settlement processing failed\.\n\nReason:\nBank transfer rejected/
+    /Settlement processing failed\.\n\nReason:\nBank transfer rejected/,
   );
   assert.equal(failedQueue.jobs[0].data.data.reason, "Bank transfer rejected");
+});
+
+test("provider payout change approved notification is enqueued", async () => {
+  const queue = createQueueStub();
+
+  await notifyProviderPayoutChangeApproved({
+    providerId: PROVIDER_ID,
+    payoutAccountId: "account-change-approved",
+    reason: "Approved for account update",
+    queue,
+  });
+
+  assert.equal(queue.jobs.length, 1);
+  assert.equal(queue.jobs[0].name, "notify-user");
+  assert.equal(queue.jobs[0].data.userId, PROVIDER_ID);
+  assert.equal(queue.jobs[0].data.type, "provider_payout_change_approved");
+  assert.equal(
+    queue.jobs[0].data.title,
+    "Payout account change request approved",
+  );
+  assert.match(
+    queue.jobs[0].data.message,
+    /Your payout account change request has been approved\./,
+  );
+  assert.equal(
+    queue.jobs[0].data.data.payout_account_id,
+    "account-change-approved",
+  );
+});
+
+test("provider payout change rejected notification is enqueued", async () => {
+  const queue = createQueueStub();
+
+  await notifyProviderPayoutChangeRejected({
+    providerId: PROVIDER_ID,
+    payoutAccountId: "account-change-rejected",
+    reason: "Incorrect documentation",
+    queue,
+  });
+
+  assert.equal(queue.jobs.length, 1);
+  assert.equal(queue.jobs[0].name, "notify-user");
+  assert.equal(queue.jobs[0].data.userId, PROVIDER_ID);
+  assert.equal(queue.jobs[0].data.type, "provider_payout_change_rejected");
+  assert.equal(
+    queue.jobs[0].data.title,
+    "Payout account change request rejected",
+  );
+  assert.match(
+    queue.jobs[0].data.message,
+    /Your payout account change request was rejected\. Reason: Incorrect documentation/,
+  );
+  assert.equal(
+    queue.jobs[0].data.data.payout_account_id,
+    "account-change-rejected",
+  );
 });

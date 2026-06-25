@@ -4,8 +4,11 @@ const {
   getProviderSettlementSummary,
   listProviderPayoutAccounts,
   replaceProviderPayoutAccount,
+  requestProviderPayoutAccountChange,
 } = require("../shared/services/providerPayout.service");
-const { recordOperationalEvent } = require("../shared/services/observability.service");
+const {
+  recordOperationalEvent,
+} = require("../shared/services/observability.service");
 
 exports.getMyPayoutAccounts = async (req, res) => {
   try {
@@ -43,7 +46,8 @@ exports.replaceMyPayoutAccount = async (req, res) => {
       metadata: {
         providerId: req.user.id,
         payoutAccountId: account.id,
-        previousVerificationStatus: previousAccount?.verification_status ?? null,
+        previousVerificationStatus:
+          previousAccount?.verification_status ?? null,
         newVerificationStatus: account.verification_status ?? null,
       },
     });
@@ -81,6 +85,33 @@ exports.deactivateMyPayoutAccount = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to deactivate payout account",
+    });
+  }
+};
+
+exports.requestPayoutAccountChange = async (req, res) => {
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "Change request reason is required" });
+  }
+
+  try {
+    const account = await requestProviderPayoutAccountChange({
+      providerId: req.user.id,
+      reason,
+    });
+
+    res.status(201).json({
+      message: "Payout account change request submitted",
+      account,
+    });
+  } catch (err) {
+    logger.error("Failed to submit provider payout account change request", {
+      err,
+      providerId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to submit payout account change request",
     });
   }
 };

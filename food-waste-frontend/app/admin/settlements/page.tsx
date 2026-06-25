@@ -205,6 +205,22 @@ function payoutAccountWorkflowState(account: ProviderPayoutAccount | null) {
   };
 }
 
+function providerWorkflowState(
+  account: ProviderPayoutAccount | null,
+  hasPendingChangeRequests: boolean
+) {
+  if (hasPendingChangeRequests && !isPayoutAccountWorkflowActive(account)) {
+    return {
+      label: "Change request pending review",
+      message:
+        "Provider payout account change request is pending review. Settlements are disabled until the request is resolved.",
+      tone: "warning" as const,
+    };
+  }
+
+  return payoutAccountWorkflowState(account);
+}
+
 function draftFor(
   drafts: Record<string, SettlementDraft>,
   settlement: AdminProviderSettlementRow
@@ -478,11 +494,14 @@ export default function AdminSettlementsPage() {
         (request) => String(request.provider_id) === selectedProviderId,
       )
     : [];
-  const selectedProviderWorkflow = payoutAccountWorkflowState(
+  const selectedProviderWorkflow = providerWorkflowState(
     selectedProvider?.payout_account || null,
+    selectedProviderChangeRequests.length > 0,
   );
   const selectedProviderWorkflowActive = Boolean(
-    selectedProvider && isPayoutAccountWorkflowActive(selectedProvider.payout_account),
+    selectedProvider &&
+      (isPayoutAccountWorkflowActive(selectedProvider.payout_account) ||
+        selectedProviderChangeRequests.length > 0),
   );
   const metricSummary: AdminProviderSettlementSummaryRow[] =
     selectedProvider ? [selectedProvider] : providerSummary;

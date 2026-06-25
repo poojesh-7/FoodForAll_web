@@ -95,23 +95,33 @@ function payoutAccountLabel(account: ProviderPayoutAccount | null) {
 
 function payoutAccountStatus(account: ProviderPayoutAccount | null) {
   if (!account) return "Not added";
+
+  const status = String(account.change_request_status || "").toLowerCase();
+  if (status === "pending") return "Change request pending";
+  if (status === "approved") return "Change approved";
+  if (status === "replacement_pending") return "Replacement pending";
   if (account.verification_status === "verified" || account.is_verified) {
     return "Verified";
   }
   if (account.verification_status === "rejected") {
     return "Rejected";
   }
+
   return "Pending verification";
 }
 
 function payoutAccountStatusMessage(account: ProviderPayoutAccount | null) {
   if (!account) return "No payout account configured.";
-  if (
-    ["approved", "replacement_pending"].includes(
-      String(account.change_request_status || "").toLowerCase(),
-    )
-  ) {
-    return "Provider payout account replacement is pending; settlements are disabled until a verified replacement is active.";
+
+  const status = String(account.change_request_status || "").toLowerCase();
+  if (status === "pending") {
+    return "Provider payout account change request is pending review; settlements are disabled until the request is resolved.";
+  }
+  if (status === "approved") {
+    return "Provider payout account change request is approved; settlements are disabled until the replacement account is uploaded and verified.";
+  }
+  if (status === "replacement_pending") {
+    return "Provider payout account replacement is pending verification; settlements are disabled until the new account is verified.";
   }
   if (account.verification_status === "verified" || account.is_verified) {
     return "Provider payout account is verified.";
@@ -119,17 +129,80 @@ function payoutAccountStatusMessage(account: ProviderPayoutAccount | null) {
   if (account.verification_status === "rejected") {
     return account.rejection_reason || "Provider payout account has been rejected.";
   }
+
   return "Provider payout account verification is pending.";
+}
+
+function isPayoutAccountWorkflowActive(account: ProviderPayoutAccount | null) {
+  if (!account) return false;
+  return ["pending", "approved", "replacement_pending"].includes(
+    String(account.change_request_status || "").toLowerCase(),
+  );
 }
 
 function isPayoutAccountReady(account: ProviderPayoutAccount | null) {
   return Boolean(
     account &&
       (account.verification_status === "verified" || account.is_verified) &&
-      !["approved", "replacement_pending"].includes(
-        String(account.change_request_status || "").toLowerCase(),
-      )
+      !isPayoutAccountWorkflowActive(account),
   );
+}
+
+function payoutAccountWorkflowState(account: ProviderPayoutAccount | null) {
+  if (!account) {
+    return {
+      label: "No payout account",
+      message: "Provider has not added payout account details yet. Settlements cannot be processed until a verified account is configured.",
+      tone: "neutral" as const,
+    };
+  }
+
+  const status = String(account.change_request_status || "").toLowerCase();
+  if (status === "pending") {
+    return {
+      label: "Change request pending review",
+      message: "Provider payout account change request is pending review. Settlements are disabled until the request is resolved.",
+      tone: "warning" as const,
+    };
+  }
+
+  if (status === "approved") {
+    return {
+      label: "Change approved",
+      message: "The payout account change request is approved. Awaiting replacement details and verification before settlements can continue.",
+      tone: "warning" as const,
+    };
+  }
+
+  if (status === "replacement_pending") {
+    return {
+      label: "Replacement pending verification",
+      message: "A replacement payout account has been uploaded and is awaiting verification. Settlements are disabled until the new account is verified.",
+      tone: "warning" as const,
+    };
+  }
+
+  if (account.verification_status === "rejected") {
+    return {
+      label: "Rejected payout account",
+      message: "The payout account is rejected. Verify the account or request a replacement before processing settlements.",
+      tone: "danger" as const,
+    };
+  }
+
+  if (account.verification_status === "verified" || account.is_verified) {
+    return {
+      label: "Verified payout account",
+      message: "The payout account is verified and eligible for settlements.",
+      tone: "success" as const,
+    };
+  }
+
+  return {
+    label: "Verification pending",
+    message: "The payout account verification is pending. Settlements are disabled until verification completes.",
+    tone: "neutral" as const,
+  };
 }
 
 function draftFor(
@@ -220,12 +293,21 @@ export default function AdminSettlementsPage() {
     };
   }, [loadSettlements, loadChangeRequests]);
 
+  function resetProviderSelectionState() {
+    setDrafts({});
+    setAccountActionState(null);
+    setError("");
+    setSuccess("");
+    setChangeRequests([]);
+  }
+
   function handleSearchChange(value: string) {
     setSearchQuery(value);
     setSelectedProviderId(null);
     setConsoleData((current) =>
       current ? { ...current, settlements: [] } : current
     );
+    resetProviderSelectionState();
   }
 
   function handleFilterChange(value: SettlementFilter) {
@@ -240,6 +322,8 @@ export default function AdminSettlementsPage() {
     setConsoleData((current) =>
       current ? { ...current, settlements: [] } : current
     );
+    resetProviderSelectionState();
+    void loadChangeRequests();
   }
 
   function clearSelectedProvider() {
@@ -247,6 +331,7 @@ export default function AdminSettlementsPage() {
     setConsoleData((current) =>
       current ? { ...current, settlements: [] } : current
     );
+    resetProviderSelectionState();
   }
 
   function updateDraft(
@@ -388,10 +473,23 @@ export default function AdminSettlementsPage() {
     ? providerSummary.find((row) => String(row.provider_id) === selectedProviderId) ||
       null
     : null;
-  const metricSummary: AdminProviderSettlementSummaryRow[] = selectedProvider
-    ? [selectedProvider]
-    : providerSummary;
+  const selectedProviderChangeRequests = selectedProviderId
+    ? (changeRequests || []).filter(
+        (request) => String(request.provider_id) === selectedProviderId,
+      )
+    : [];
+  const selectedProviderWorkflow = payoutAccountWorkflowState(
+    selectedProvider?.payout_account || null,
+  );
+  const selectedProviderWorkflowActive = Boolean(
+    selectedProvider && isPayoutAccountWorkflowActive(selectedProvider.payout_account),
+  );
+  const metricSummary: AdminProviderSettlementSummaryRow[] =
+    selectedProvider ? [selectedProvider] : providerSummary;
   const settlements = selectedProvider ? consoleData?.settlements || [] : [];
+  const visibleChangeRequests = selectedProviderId
+    ? selectedProviderChangeRequests
+    : changeRequests || [];
   const totalAmountDue = metricSummary.reduce(
     (sum, row) => sum + Number(row.amount_due || 0),
     0
@@ -593,7 +691,145 @@ export default function AdminSettlementsPage() {
               ? `${providerName(selectedProvider)} Settlement Details`
               : "Settlement Details"}
           </h2>
-          {selectedProvider && (
+        </div>
+        {!selectedProvider ? (
+          <div className="p-4">
+            <AdminStateBlock title="Select a provider to view settlement details." />
+          </div>
+        ) : selectedProviderWorkflowActive ? (
+          <div className="p-4 space-y-4">
+            <AdminStateBlock
+              title={selectedProviderWorkflow.label}
+              description={selectedProviderWorkflow.message}
+              tone={selectedProviderWorkflow.tone}
+            />
+            {selectedProviderChangeRequests.length > 0 ? (
+              <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 px-4 py-3">
+                  <h2 className="text-base font-semibold text-zinc-950">
+                    Pending Payout Account Change Requests
+                  </h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                    <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                      <tr>
+                        <th className="px-4 py-3">Provider</th>
+                        <th className="px-4 py-3">Requested At</th>
+                        <th className="px-4 py-3">New Account</th>
+                        <th className="px-4 py-3">Reason</th>
+                        <th className="px-4 py-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {selectedProviderChangeRequests.map((request) => {
+                        const rowKey = String(request.payout_account_id);
+                        const isWorking = accountActionState?.id === rowKey;
+                        return (
+                          <tr key={rowKey}>
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-zinc-950">
+                                {providerName(request)}
+                              </p>
+                              <p className="mt-1 text-xs text-zinc-500">
+                                {request.provider_phone || request.restaurant_name || "Provider"}
+                              </p>
+                            </td>
+                            <td className="px-4 py-3 text-zinc-700">
+                              {formatDateTimeOrFallback(request.change_requested_at || null)}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-700">
+                              {request.account_type === "UPI"
+                                ? `UPI: ${request.upi_id || "-"}`
+                                : [request.account_holder_name, request.bank_account_number, request.ifsc_code]
+                                    .filter(Boolean)
+                                    .join(" | ")}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-700">
+                              {request.change_request_reason || "-"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-col gap-2">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setAccountActionState({ id: rowKey, type: "approve_change" });
+                                    setError("");
+                                    setSuccess("Updating...");
+                                    try {
+                                      await adminService.approveProviderPayoutAccountChange(
+                                        request.payout_account_id,
+                                      );
+                                      toast.success("Payout account change request approved.");
+                                      setSuccess("Payout account change request approved.");
+                                      await Promise.all([loadSettlements(), loadChangeRequests()]);
+                                    } catch (err) {
+                                      const message = adminService.getErrorMessage(err);
+                                      setError(message);
+                                      setSuccess("");
+                                      toast.error(message);
+                                    } finally {
+                                      setAccountActionState(null);
+                                    }
+                                  }}
+                                  disabled={isWorking}
+                                  className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  {isWorking ? "Approving..." : "Approve"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const notes = window.prompt(
+                                      "Reason for rejecting this payout change request:",
+                                      "",
+                                    )?.trim();
+                                    if (notes === null) return;
+
+                                    setAccountActionState({ id: rowKey, type: "reject_change" });
+                                    setError("");
+                                    setSuccess("Updating...");
+                                    try {
+                                      await adminService.rejectProviderPayoutAccountChange(
+                                        request.payout_account_id,
+                                        notes || "",
+                                      );
+                                      toast.success("Payout account change request rejected.");
+                                      setSuccess("Payout account change request rejected.");
+                                      await Promise.all([loadSettlements(), loadChangeRequests()]);
+                                    } catch (err) {
+                                      const message = adminService.getErrorMessage(err);
+                                      setError(message);
+                                      setSuccess("");
+                                      toast.error(message);
+                                    } finally {
+                                      setAccountActionState(null);
+                                    }
+                                  }}
+                                  disabled={isWorking}
+                                  className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                >
+                                  {isWorking ? "Rejecting..." : "Reject"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : settlements.length === 0 ? (
+          <div className="p-4">
+            <AdminStateBlock
+              title={`No ${label(filter).toLowerCase()} settlement rows for this provider.`}
+            />
+          </div>
+        ) : (
+          <>
             <div className="mt-3 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -658,31 +894,18 @@ export default function AdminSettlementsPage() {
                 )}
               </div>
             </div>
-          )}
-        </div>
-        {!selectedProvider ? (
-          <div className="p-4">
-            <AdminStateBlock title="Select a provider to view settlement details." />
-          </div>
-        ) : settlements.length === 0 ? (
-          <div className="p-4">
-            <AdminStateBlock
-              title={`No ${label(filter).toLowerCase()} settlement rows for this provider.`}
-            />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-100 text-sm">
-              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
-                <tr>
-                  <th className="px-4 py-3">Provider</th>
-                  <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Reference</th>
-                  <th className="px-4 py-3">Notes</th>
-                  <th className="px-4 py-3">Actions</th>
-                </tr>
-              </thead>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3">Provider</th>
+                    <th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Reference</th>
+                    <th className="px-4 py-3">Notes</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
               <tbody className="divide-y divide-zinc-100 align-top">
                 {settlements.map((settlement) => {
                   const draft = draftFor(drafts, settlement);
@@ -734,53 +957,64 @@ export default function AdminSettlementsPage() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        {(() => {
-                          const payoutVerified = isPayoutAccountReady(
-                            settlement.payout_account
-                          );
-                          const markPaidDisabled =
-                            paid ||
-                            submittingId === `${rowKey}:paid` ||
-                            !payoutVerified;
-                          return (
-                            <div className="flex flex-col gap-2">
-                              <button
-                                type="button"
-                                onClick={() => runSettlementAction(settlement, "paid")}
-                                disabled={markPaidDisabled}
-                                title={
-                                  markPaidDisabled && !paid
-                                    ? payoutAccountStatusMessage(
-                                        settlement.payout_account
-                                      )
-                                    : undefined
-                                }
-                                className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:opacity-50"
-                              >
-                                {submittingId === `${rowKey}:paid`
-                                  ? "Saving..."
-                                  : "Mark Paid"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  runSettlementAction(settlement, "failed")
-                                }
-                                disabled={paid || submittingId === `${rowKey}:failed`}
-                                className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 disabled:opacity-50"
-                              >
-                                Mark Failed
-                              </button>
-                              {!paid && (
-                                <p className="text-xs text-zinc-500">
-                                  {payoutAccountStatusMessage(
-                                    settlement.payout_account
-                                  )}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })()}
+                        {selectedProviderWorkflowActive ? (
+                          <div>
+                            <p className="text-sm text-zinc-700">
+                              Settlement actions are disabled while payout account workflow is active.
+                            </p>
+                            <p className="mt-1 text-xs text-zinc-500">
+                              {selectedProviderWorkflow.message}
+                            </p>
+                          </div>
+                        ) : (
+                          (() => {
+                            const payoutVerified = isPayoutAccountReady(
+                              settlement.payout_account
+                            );
+                            const markPaidDisabled =
+                              paid ||
+                              submittingId === `${rowKey}:paid` ||
+                              !payoutVerified;
+                            return (
+                              <div className="flex flex-col gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => runSettlementAction(settlement, "paid")}
+                                  disabled={markPaidDisabled}
+                                  title={
+                                    markPaidDisabled && !paid
+                                      ? payoutAccountStatusMessage(
+                                          settlement.payout_account
+                                        )
+                                      : undefined
+                                  }
+                                  className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:opacity-50"
+                                >
+                                  {submittingId === `${rowKey}:paid`
+                                    ? "Saving..."
+                                    : "Mark Paid"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    runSettlementAction(settlement, "failed")
+                                  }
+                                  disabled={paid || submittingId === `${rowKey}:failed`}
+                                  className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 disabled:opacity-50"
+                                >
+                                  Mark Failed
+                                </button>
+                                {!paid && (
+                                  <p className="text-xs text-zinc-500">
+                                    {payoutAccountStatusMessage(
+                                      settlement.payout_account
+                                    )}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
                       </td>
                     </tr>
                   );
@@ -788,135 +1022,140 @@ export default function AdminSettlementsPage() {
               </tbody>
             </table>
           </div>
-        )}
+        </>
+      )}
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-        <div className="border-b border-zinc-200 px-4 py-3">
-          <h2 className="text-base font-semibold text-zinc-950">
-            Pending Payout Account Change Requests
-          </h2>
-        </div>
-        {changeRequestsLoading ? (
-          <div className="p-4">
-            <AdminStateBlock title="Loading change requests..." />
+      {!selectedProviderWorkflowActive && (
+        <section className="mt-6 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+          <div className="border-b border-zinc-200 px-4 py-3">
+            <h2 className="text-base font-semibold text-zinc-950">
+              {selectedProvider
+                ? `Pending Payout Account Change Requests for ${providerName(selectedProvider)}`
+                : "Pending Payout Account Change Requests"}
+            </h2>
           </div>
-        ) : !changeRequests?.length ? (
-          <div className="p-4">
-            <AdminStateBlock title="No change requests pending review." />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-100 text-sm">
-              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
-                <tr>
-                  <th className="px-4 py-3">Provider</th>
-                  <th className="px-4 py-3">Requested At</th>
-                  <th className="px-4 py-3">New Account</th>
-                  <th className="px-4 py-3">Reason</th>
-                  <th className="px-4 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {changeRequests.map((request) => {
-                  const rowKey = String(request.payout_account_id);
-                  const isWorking = accountActionState?.id === rowKey;
-                  return (
-                    <tr key={rowKey}>
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-zinc-950">
-                          {providerName(request)}
-                        </p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          {request.provider_phone || request.restaurant_name || "Provider"}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3 text-zinc-700">
-                        {formatDateTimeOrFallback(request.change_requested_at || null)}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-700">
-                        {request.account_type === "UPI"
-                          ? `UPI: ${request.upi_id || "-"}`
-                          : [request.account_holder_name, request.bank_account_number, request.ifsc_code]
-                              .filter(Boolean)
-                              .join(" | ")}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-700">
-                        {request.change_request_reason || "-"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-2">
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setAccountActionState({ id: rowKey, type: "approve_change" });
-                              setError("");
-                              setSuccess("Updating...");
-                              try {
-                                await adminService.approveProviderPayoutAccountChange(
-                                  request.payout_account_id
-                                );
-                                toast.success("Payout account change request approved.");
-                                setSuccess("Payout account change request approved.");
-                                await Promise.all([loadSettlements(), loadChangeRequests()]);
-                              } catch (err) {
-                                const message = adminService.getErrorMessage(err);
-                                setError(message);
-                                setSuccess("");
-                                toast.error(message);
-                              } finally {
-                                setAccountActionState(null);
-                              }
-                            }}
-                            disabled={isWorking}
-                            className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            {isWorking ? "Approving..." : "Approve"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const notes = window.prompt(
-                                "Reason for rejecting this payout change request:",
-                                ""
-                              )?.trim();
-                              if (notes === null) return;
+          {changeRequestsLoading ? (
+            <div className="p-4">
+              <AdminStateBlock title="Loading change requests..." />
+            </div>
+          ) : !visibleChangeRequests.length ? (
+            <div className="p-4">
+              <AdminStateBlock title="No change requests pending review." />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3">Provider</th>
+                    <th className="px-4 py-3">Requested At</th>
+                    <th className="px-4 py-3">New Account</th>
+                    <th className="px-4 py-3">Reason</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {visibleChangeRequests.map((request) => {
+                    const rowKey = String(request.payout_account_id);
+                    const isWorking = accountActionState?.id === rowKey;
+                    return (
+                      <tr key={rowKey}>
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-zinc-950">
+                            {providerName(request)}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {request.provider_phone || request.restaurant_name || "Provider"}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3 text-zinc-700">
+                          {formatDateTimeOrFallback(request.change_requested_at || null)}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-700">
+                          {request.account_type === "UPI"
+                            ? `UPI: ${request.upi_id || "-"}`
+                            : [request.account_holder_name, request.bank_account_number, request.ifsc_code]
+                                .filter(Boolean)
+                                .join(" | ")}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-700">
+                          {request.change_request_reason || "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setAccountActionState({ id: rowKey, type: "approve_change" });
+                                setError("");
+                                setSuccess("Updating...");
+                                try {
+                                  await adminService.approveProviderPayoutAccountChange(
+                                    request.payout_account_id
+                                  );
+                                  toast.success("Payout account change request approved.");
+                                  setSuccess("Payout account change request approved.");
+                                  await Promise.all([loadSettlements(), loadChangeRequests()]);
+                                } catch (err) {
+                                  const message = adminService.getErrorMessage(err);
+                                  setError(message);
+                                  setSuccess("");
+                                  toast.error(message);
+                                } finally {
+                                  setAccountActionState(null);
+                                }
+                              }}
+                              disabled={isWorking}
+                              className="inline-flex min-h-9 items-center justify-center rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              {isWorking ? "Approving..." : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const notes = window.prompt(
+                                  "Reason for rejecting this payout change request:",
+                                  ""
+                                )?.trim();
+                                if (notes === null) return;
 
-                              setAccountActionState({ id: rowKey, type: "reject_change" });
-                              setError("");
-                              setSuccess("Updating...");
-                              try {
-                                await adminService.rejectProviderPayoutAccountChange(
-                                  request.payout_account_id,
-                                  notes || ""
-                                );
-                                toast.success("Payout account change request rejected.");
-                                setSuccess("Payout account change request rejected.");
-                                await Promise.all([loadSettlements(), loadChangeRequests()]);
-                              } catch (err) {
-                                const message = adminService.getErrorMessage(err);
-                                setError(message);
-                                setSuccess("");
-                                toast.error(message);
-                              } finally {
-                                setAccountActionState(null);
-                              }
-                            }}
-                            disabled={isWorking}
-                            className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
-                          >
-                            {isWorking ? "Rejecting..." : "Reject"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                                setAccountActionState({ id: rowKey, type: "reject_change" });
+                                setError("");
+                                setSuccess("Updating...");
+                                try {
+                                  await adminService.rejectProviderPayoutAccountChange(
+                                    request.payout_account_id,
+                                    notes || ""
+                                  );
+                                  toast.success("Payout account change request rejected.");
+                                  setSuccess("Payout account change request rejected.");
+                                  await Promise.all([loadSettlements(), loadChangeRequests()]);
+                                } catch (err) {
+                                  const message = adminService.getErrorMessage(err);
+                                  setError(message);
+                                  setSuccess("");
+                                  toast.error(message);
+                                } finally {
+                                  setAccountActionState(null);
+                                }
+                              }}
+                              disabled={isWorking}
+                              className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                            >
+                              {isWorking ? "Rejecting..." : "Reject"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
         )}
       </section>
+    )}
     </AdminShell>
   );
 }

@@ -4,6 +4,8 @@ const test = require("node:test");
 const {
   notifyAdminsModerationCaseEscalated,
   notifyAdminsNgoVerificationSubmitted,
+  notifyAdminsProviderPayoutAccountSubmitted,
+  notifyAdminsProviderPayoutChangeRequested,
   notifyAdminsProviderReportSubmitted,
   notifyAdminsProviderVerificationSubmitted,
   notifyNgoVerificationApproved,
@@ -15,6 +17,8 @@ const {
   notifyProviderVerificationRejected,
   notifyProviderPayoutChangeApproved,
   notifyProviderPayoutChangeRejected,
+  notifyProviderPayoutVerificationApproved,
+  notifyProviderPayoutVerificationRejected,
 } = require("../shared/services/operationalNotification.service");
 
 const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
@@ -34,6 +38,16 @@ function createQueueStub() {
     async add(name, data) {
       jobs.push({ name, data });
       return { id: `job-${jobs.length}` };
+    },
+  };
+}
+
+function createPublishStub() {
+  const events = [];
+  return {
+    events,
+    async publish(room, event, data) {
+      events.push({ room, event, data });
     },
   };
 }
@@ -155,6 +169,103 @@ test("moderation case escalation notifies verified admins", async () => {
   assert.equal(queue.jobs[0].data.data.case_id, CASE_ID);
 });
 
+test("provider payout account submissions notify admins and publish financial refresh", async () => {
+  const queue = createQueueStub();
+  const realtime = createPublishStub();
+
+  const adminIds = await notifyAdminsProviderPayoutAccountSubmitted({
+    providerId: PROVIDER_ID,
+    payoutAccountId: "payout-account-new",
+    client: createAdminClientStub([{ id: ADMIN_ID }, { id: SECOND_ADMIN_ID }]),
+    queue,
+    publish: realtime.publish,
+  });
+
+  assert.deepEqual(adminIds, [ADMIN_ID, SECOND_ADMIN_ID]);
+  assert.deepEqual(
+    queue.jobs.map((job) => job.data.userId),
+    [ADMIN_ID, SECOND_ADMIN_ID],
+  );
+  assert.equal(queue.jobs[0].data.type, "provider_payout_account_submitted");
+  assert.equal(queue.jobs[0].data.title, "Payout account submitted");
+  assert.equal(
+    queue.jobs[0].data.idempotencyKey,
+    `provider_payout_account_submitted:payout-account-new:admin:${ADMIN_ID}`,
+  );
+  assert.deepEqual(
+    realtime.events.map((event) => event.room),
+    [`user:${ADMIN_ID}`, `user:${SECOND_ADMIN_ID}`],
+  );
+  assert.equal(realtime.events[0].event, "provider_financial_updated");
+  assert.equal(
+    realtime.events[0].data.action,
+    "provider_payout_account_submitted",
+  );
+  assert.equal(realtime.events[0].data.payout_account_id, "payout-account-new");
+});
+
+test("replacement payout uploads notify admins distinctly without duplicate event types", async () => {
+  const queue = createQueueStub();
+  const realtime = createPublishStub();
+
+  await notifyAdminsProviderPayoutAccountSubmitted({
+    providerId: PROVIDER_ID,
+    payoutAccountId: "payout-account-replacement",
+    previousPayoutAccountId: "payout-account-old",
+    isReplacement: true,
+    client: createAdminClientStub(),
+    queue,
+    publish: realtime.publish,
+  });
+
+  assert.equal(queue.jobs.length, 1);
+  assert.equal(
+    queue.jobs[0].data.type,
+    "provider_payout_account_replacement_uploaded",
+  );
+  assert.equal(
+    queue.jobs[0].data.idempotencyKey,
+    `provider_payout_account_replacement_uploaded:payout-account-replacement:admin:${ADMIN_ID}`,
+  );
+  assert.equal(
+    realtime.events[0].data.action,
+    "provider_payout_account_replacement_uploaded",
+  );
+  assert.equal(
+    realtime.events[0].data.previous_payout_account_id,
+    "payout-account-old",
+  );
+});
+
+test("provider payout change requests notify admins and publish financial refresh", async () => {
+  const queue = createQueueStub();
+  const realtime = createPublishStub();
+
+  const adminIds = await notifyAdminsProviderPayoutChangeRequested({
+    providerId: PROVIDER_ID,
+    payoutAccountId: "payout-account-change",
+    reason: "Changed UPI",
+    client: createAdminClientStub([{ id: ADMIN_ID }, { id: SECOND_ADMIN_ID }]),
+    queue,
+    publish: realtime.publish,
+  });
+
+  assert.deepEqual(adminIds, [ADMIN_ID, SECOND_ADMIN_ID]);
+  assert.equal(queue.jobs.length, 2);
+  assert.equal(queue.jobs[0].data.type, "provider_payout_change_requested");
+  assert.equal(queue.jobs[0].data.data.reason, "Changed UPI");
+  assert.equal(
+    queue.jobs[0].data.idempotencyKey,
+    `provider_payout_change_requested:payout-account-change:admin:${ADMIN_ID}`,
+  );
+  assert.equal(realtime.events[0].event, "provider_financial_updated");
+  assert.equal(
+    realtime.events[0].data.action,
+    "provider_payout_change_requested",
+  );
+  assert.equal(realtime.events[0].data.provider_id, PROVIDER_ID);
+});
+
 test("provider verification decisions notify only the provider account", async () => {
   for (const [notify, expectedType, expectedMessage] of [
     [
@@ -213,9 +324,61 @@ test("NGO verification decisions notify only the NGO account", async () => {
   }
 });
 
+test("provider payout verification decisions notify provider and publish financial refresh", async () => {
+  for (const [notify, expectedType, expectedAction, expectedStatus] of [
+    [
+      notifyProviderPayoutVerificationApproved,
+      "provider_payout_verification_approved",
+      "provider_payout_account_verified",
+      null,
+    ],
+    [
+      notifyProviderPayoutVerificationRejected,
+      "provider_payout_verification_rejected",
+      "provider_payout_account_rejected",
+      "rejected",
+    ],
+  ]) {
+    const queue = createQueueStub();
+    const realtime = createPublishStub();
+
+    await notify({
+      providerId: PROVIDER_ID,
+      payoutAccountId: "payout-account-review",
+      reason: "Name mismatch",
+      queue,
+      publish: realtime.publish,
+    });
+
+    assert.equal(queue.jobs.length, 1);
+    assert.equal(queue.jobs[0].data.userId, PROVIDER_ID);
+    assert.equal(queue.jobs[0].data.type, expectedType);
+    assert.equal(
+      queue.jobs[0].data.data.payout_account_id,
+      "payout-account-review",
+    );
+    assert.deepEqual(realtime.events, [
+      {
+        room: `user:${PROVIDER_ID}`,
+        event: "provider_financial_updated",
+        data: {
+          action: expectedAction,
+          provider_id: PROVIDER_ID,
+          payout_account_id: "payout-account-review",
+          previous_payout_account_id: null,
+          settlement_id: null,
+          status: expectedStatus,
+        },
+      },
+    ]);
+  }
+});
+
 test("provider settlement decisions notify only the provider account", async () => {
   const paidQueue = createQueueStub();
   const failedQueue = createQueueStub();
+  const paidRealtime = createPublishStub();
+  const failedRealtime = createPublishStub();
 
   await notifyProviderSettlementProcessed({
     settlement: {
@@ -226,6 +389,7 @@ test("provider settlement decisions notify only the provider account", async () 
       payment_reference: "UTR123",
     },
     queue: paidQueue,
+    publish: paidRealtime.publish,
   });
   await notifyProviderSettlementFailed({
     settlement: {
@@ -236,6 +400,7 @@ test("provider settlement decisions notify only the provider account", async () 
       notes: "Bank transfer rejected",
     },
     queue: failedQueue,
+    publish: failedRealtime.publish,
   });
 
   assert.equal(paidQueue.jobs.length, 1);
@@ -252,6 +417,20 @@ test("provider settlement decisions notify only the provider account", async () 
     paidQueue.jobs[0].data.idempotencyKey,
     "provider_settlement_paid:settlement-paid",
   );
+  assert.deepEqual(paidRealtime.events, [
+    {
+      room: `user:${PROVIDER_ID}`,
+      event: "provider_financial_updated",
+      data: {
+        action: "provider_settlement_paid",
+        provider_id: PROVIDER_ID,
+        payout_account_id: null,
+        previous_payout_account_id: null,
+        settlement_id: "settlement-paid",
+        status: "paid",
+      },
+    },
+  ]);
 
   assert.equal(failedQueue.jobs.length, 1);
   assert.equal(failedQueue.jobs[0].data.userId, PROVIDER_ID);
@@ -262,16 +441,23 @@ test("provider settlement decisions notify only the provider account", async () 
     /Settlement processing failed\.\n\nReason:\nBank transfer rejected/,
   );
   assert.equal(failedQueue.jobs[0].data.data.reason, "Bank transfer rejected");
+  assert.equal(
+    failedRealtime.events[0].data.action,
+    "provider_settlement_failed",
+  );
+  assert.equal(failedRealtime.events[0].data.status, "failed");
 });
 
 test("provider payout change approved notification is enqueued", async () => {
   const queue = createQueueStub();
+  const realtime = createPublishStub();
 
   await notifyProviderPayoutChangeApproved({
     providerId: PROVIDER_ID,
     payoutAccountId: "account-change-approved",
     reason: "Approved for account update",
     queue,
+    publish: realtime.publish,
   });
 
   assert.equal(queue.jobs.length, 1);
@@ -290,16 +476,24 @@ test("provider payout change approved notification is enqueued", async () => {
     queue.jobs[0].data.data.payout_account_id,
     "account-change-approved",
   );
+  assert.equal(realtime.events[0].event, "provider_financial_updated");
+  assert.equal(
+    realtime.events[0].data.action,
+    "provider_payout_change_approved",
+  );
+  assert.equal(realtime.events[0].data.status, "replacement_pending");
 });
 
 test("provider payout change rejected notification is enqueued", async () => {
   const queue = createQueueStub();
+  const realtime = createPublishStub();
 
   await notifyProviderPayoutChangeRejected({
     providerId: PROVIDER_ID,
     payoutAccountId: "account-change-rejected",
     reason: "Incorrect documentation",
     queue,
+    publish: realtime.publish,
   });
 
   assert.equal(queue.jobs.length, 1);
@@ -318,4 +512,10 @@ test("provider payout change rejected notification is enqueued", async () => {
     queue.jobs[0].data.data.payout_account_id,
     "account-change-rejected",
   );
+  assert.equal(realtime.events[0].event, "provider_financial_updated");
+  assert.equal(
+    realtime.events[0].data.action,
+    "provider_payout_change_rejected",
+  );
+  assert.equal(realtime.events[0].data.status, "rejected");
 });

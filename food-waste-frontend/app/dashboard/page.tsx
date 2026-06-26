@@ -9,6 +9,7 @@ import { impactService } from "@/services/impact.service";
 import { providerFinancialService } from "@/services/providerFinancial.service";
 import { ratingService } from "@/services/rating.service";
 import { useAuthStore } from "@/store/authStore";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   ImpactSummary,
   ProviderPayoutAccount,
@@ -217,6 +218,9 @@ function settlementStatusChip(status: string) {
 export default function DashboardPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const providerFinancialVersion = useRealtimeStore(
+    (state) => state.providerFinancialVersion
+  );
   const [userImpact, setUserImpact] = useState<ImpactSummary | null>(null);
   const [platformImpact, setPlatformImpact] = useState<ImpactSummary | null>(null);
   const [providerRatings, setProviderRatings] =
@@ -311,6 +315,38 @@ export default function DashboardPage() {
       active = false;
     };
   }, [hydratePayoutForm, user?.id, user?.role]);
+
+  useEffect(() => {
+    if (providerFinancialVersion === 0 || user?.role !== "provider") return;
+
+    let active = true;
+
+    async function refreshProviderFinancial() {
+      try {
+        const [summary, payoutAccounts] = await Promise.all([
+          providerFinancialService.getSettlementSummary(),
+          providerFinancialService.getPayoutAccounts(),
+        ]);
+
+        if (!active) return;
+        const activeAccount =
+          payoutAccounts?.active_account || summary?.payout_account || null;
+        setFinancialSummary(summary);
+        setPayoutAccount(activeAccount);
+        hydratePayoutForm(activeAccount);
+      } catch (err) {
+        if (active) {
+          setError(providerFinancialService.getErrorMessage(err));
+        }
+      }
+    }
+
+    void refreshProviderFinancial();
+
+    return () => {
+      active = false;
+    };
+  }, [hydratePayoutForm, providerFinancialVersion, user?.role]);
 
   const isVerifiedAccount = Boolean(
     payoutAccount &&

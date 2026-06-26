@@ -56,6 +56,7 @@ const realtimeStatusRoutes = [
   "/admin/monitoring",
   "/admin/queues",
   "/admin/moderation-cases",
+  "/admin/settlements",
 ];
 
 function matchesRoute(pathname: string, routes: string[]) {
@@ -106,6 +107,8 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     const applyVolunteer = useRealtimeStore.getState().applyVolunteer;
     const applyListing = useRealtimeStore.getState().applyListing;
     const applyModerationCase = useRealtimeStore.getState().applyModerationCase;
+    const applyProviderFinancial =
+      useRealtimeStore.getState().applyProviderFinancial;
     const receiveNotification =
       useNotificationStore.getState().receiveNotification;
     const handleNotification = (notification: NotificationRow) => {
@@ -128,6 +131,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
     socket.on("volunteer_updated", applyVolunteer);
     socket.on("listing_updated", applyListing);
     socket.on("moderation_case_updated", applyModerationCase);
+    socket.on("provider_financial_updated", applyProviderFinancial);
     socket.on("notification", handleNotification);
 
     return () => {
@@ -137,6 +141,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
       socket.off("volunteer_updated", applyVolunteer);
       socket.off("listing_updated", applyListing);
       socket.off("moderation_case_updated", applyModerationCase);
+      socket.off("provider_financial_updated", applyProviderFinancial);
       socket.off("notification", handleNotification);
     };
   }, []);

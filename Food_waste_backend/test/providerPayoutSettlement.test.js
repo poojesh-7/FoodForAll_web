@@ -110,7 +110,10 @@ function createProviderFinanceClient() {
               updated.push({ ...account });
             }
           }
-        } else if (text.includes("change_request_status='pending'")) {
+        } else if (
+          text.includes("change_request_status='pending'") &&
+          !text.includes("change_request_status='replacement_pending'")
+        ) {
           const payoutAccountId = params[0];
           const reason = params[1];
           const providerId = params[2];
@@ -141,44 +144,13 @@ function createProviderFinanceClient() {
               updated.push({ ...account });
             }
           }
-        } else if (text.includes("change_request_status='rejected'")) {
+        } else if (text.includes("change_request_status='replacement_pending'")) {
           const payoutAccountId = params[0];
           const adminId = params[1];
           const notes = params[2];
           for (const account of accounts) {
             if (account.id === payoutAccountId && account.is_active) {
-              account.change_request_status = "rejected";
-              account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
-              account.change_reviewed_by = adminId;
-              account.change_review_notes = notes;
-              account.updated_at = "2026-01-10T00:00:00.000Z";
-              updated.push({ ...account });
-            }
-          }
-        } else if (text.includes("change_request_status='pending'")) {
-          const payoutAccountId = params[0];
-          const reason = params[1];
-          const providerId = params[2];
-          for (const account of accounts) {
-            if (account.id === payoutAccountId && account.is_active) {
-              account.change_request_status = "pending";
-              account.change_request_reason = reason;
-              account.change_requested_at = "2026-01-10T00:00:00.000Z";
-              account.change_requested_by = providerId;
-              account.change_reviewed_at = null;
-              account.change_reviewed_by = null;
-              account.change_review_notes = null;
-              account.updated_at = "2026-01-10T00:00:00.000Z";
-              updated.push({ ...account });
-            }
-          }
-        } else if (text.includes("change_request_status='approved'")) {
-          const payoutAccountId = params[0];
-          const adminId = params[1];
-          const notes = params[2];
-          for (const account of accounts) {
-            if (account.id === payoutAccountId && account.is_active) {
-              account.change_request_status = "approved";
+              account.change_request_status = "replacement_pending";
               account.change_reviewed_at = "2026-01-10T00:00:00.000Z";
               account.change_reviewed_by = adminId;
               account.change_review_notes = notes;
@@ -323,6 +295,15 @@ function createProviderFinanceClient() {
       }
 
       if (text.includes("FROM provider_payout_accounts")) {
+        if (text.includes("WHERE id=$1")) {
+          const payoutAccountId = params[0];
+          return {
+            rows: accounts
+              .filter((account) => account.id === payoutAccountId)
+              .map((account) => ({ ...account })),
+          };
+        }
+
         const providerId = params[0];
         return {
           rows: accounts

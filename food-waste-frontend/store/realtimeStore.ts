@@ -34,22 +34,34 @@ export type ModerationCaseRealtimePayload = {
   attachment_count?: number | string | null;
 };
 
+export type ProviderFinancialRealtimePayload = {
+  action?: string;
+  provider_id?: DbId | null;
+  payout_account_id?: DbId | null;
+  previous_payout_account_id?: DbId | null;
+  settlement_id?: DbId | null;
+  status?: string | null;
+};
+
 type RealtimeState = {
   reservationVersion: number;
   paymentVersion: number;
   volunteerVersion: number;
   listingVersion: number;
   moderationCaseVersion: number;
+  providerFinancialVersion: number;
   reservations: Record<string, RealtimeEntity>;
   payments: Record<string, RealtimeEntity>;
   listings: Record<string, FoodListingRow>;
   volunteers: Record<string, RealtimeEntity>;
   moderationCases: Record<string, ModerationCaseRealtimePayload>;
+  providerFinancialEvents: Record<string, ProviderFinancialRealtimePayload>;
   applyReservation: (payload: ReservationRealtimePayload) => void;
   applyPayment: (payload: PaymentRealtimePayload) => void;
   applyVolunteer: (payload: VolunteerRealtimePayload) => void;
   applyListing: (payload: ListingRealtimePayload) => void;
   applyModerationCase: (payload: ModerationCaseRealtimePayload) => void;
+  applyProviderFinancial: (payload: ProviderFinancialRealtimePayload) => void;
   resetRealtime: () => void;
 };
 
@@ -64,11 +76,13 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   volunteerVersion: 0,
   listingVersion: 0,
   moderationCaseVersion: 0,
+  providerFinancialVersion: 0,
   reservations: {},
   payments: {},
   listings: {},
   volunteers: {},
   moderationCases: {},
+  providerFinancialEvents: {},
 
   applyReservation: (payload) =>
     set((state) => {
@@ -186,6 +200,22 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       };
     }),
 
+  applyProviderFinancial: (payload) =>
+    set((state) => {
+      const key = [
+        payload.action || "provider_financial_updated",
+        payload.provider_id || "provider",
+        payload.payout_account_id || payload.settlement_id || "latest",
+      ].join(":");
+      return {
+        providerFinancialVersion: state.providerFinancialVersion + 1,
+        providerFinancialEvents: {
+          ...state.providerFinancialEvents,
+          [key]: payload,
+        },
+      };
+    }),
+
   resetRealtime: () =>
     set({
       reservationVersion: 0,
@@ -193,10 +223,12 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       volunteerVersion: 0,
       listingVersion: 0,
       moderationCaseVersion: 0,
+      providerFinancialVersion: 0,
       reservations: {},
       payments: {},
       listings: {},
       volunteers: {},
       moderationCases: {},
+      providerFinancialEvents: {},
     }),
 }));

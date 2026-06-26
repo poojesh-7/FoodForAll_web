@@ -9,6 +9,10 @@ const {
 const {
   recordOperationalEvent,
 } = require("../shared/services/observability.service");
+const {
+  notifyAdminsProviderPayoutAccountSubmitted,
+  notifyAdminsProviderPayoutChangeRequested,
+} = require("../shared/services/operationalNotification.service");
 
 exports.getMyPayoutAccounts = async (req, res) => {
   try {
@@ -38,6 +42,15 @@ exports.replaceMyPayoutAccount = async (req, res) => {
       providerId: req.user.id,
       payload: req.body,
     });
+    const previousChangeStatus = String(
+      previousAccount?.change_request_status || "",
+    ).toLowerCase();
+    const isReplacementUpload = Boolean(
+      previousAccount &&
+        (previousAccount.verification_status === "verified" ||
+          previousAccount.is_verified) &&
+        ["approved", "replacement_pending"].includes(previousChangeStatus),
+    );
 
     void recordOperationalEvent({
       category: "financial",
@@ -50,6 +63,12 @@ exports.replaceMyPayoutAccount = async (req, res) => {
           previousAccount?.verification_status ?? null,
         newVerificationStatus: account.verification_status ?? null,
       },
+    });
+    void notifyAdminsProviderPayoutAccountSubmitted({
+      providerId: req.user.id,
+      payoutAccountId: account.id,
+      previousPayoutAccountId: previousAccount?.id || null,
+      isReplacement: isReplacementUpload,
     });
 
     res.status(201).json({
@@ -99,6 +118,11 @@ exports.requestPayoutAccountChange = async (req, res) => {
     const account = await requestProviderPayoutAccountChange({
       providerId: req.user.id,
       reason,
+    });
+    void notifyAdminsProviderPayoutChangeRequested({
+      providerId: req.user.id,
+      payoutAccountId: account.id,
+      reason: account.change_request_reason || reason,
     });
 
     res.status(201).json({

@@ -5,6 +5,10 @@ function getNotificationQueue() {
   return require("../../queues/notification.queue");
 }
 
+function getPublishSocketEvent() {
+  return require("./realtime.service").publishSocketEvent;
+}
+
 async function enqueueNotification({
   userId,
   type,
@@ -52,8 +56,10 @@ async function getAdminUserIds({ client = pool } = {}) {
 
 async function notifyAdmins({
   type,
+  title = "Operational update",
   message,
   data = {},
+  idempotencyKeyPrefix = null,
   client = pool,
   queue = null,
   logContext = {},
@@ -74,8 +80,12 @@ async function notifyAdmins({
       enqueueNotification({
         userId: adminId,
         type,
+        title,
         message,
         data,
+        idempotencyKey: idempotencyKeyPrefix
+          ? `${idempotencyKeyPrefix}:admin:${adminId}`
+          : null,
         queue,
       }).catch((err) => {
         logger.warn("Admin operational notification enqueue failed", {
@@ -89,6 +99,38 @@ async function notifyAdmins({
   );
 
   return adminIds;
+}
+
+async function publishProviderFinancialUpdated({
+  userIds,
+  action,
+  providerId,
+  payoutAccountId = null,
+  previousPayoutAccountId = null,
+  settlementId = null,
+  status = null,
+  publish = null,
+}) {
+  const uniqueUserIds = [...new Set((userIds || []).filter(Boolean))];
+  if (!uniqueUserIds.length || !action) return [];
+
+  const activePublish = publish || getPublishSocketEvent();
+  const payload = {
+    action,
+    provider_id: providerId || null,
+    payout_account_id: payoutAccountId || null,
+    previous_payout_account_id: previousPayoutAccountId || null,
+    settlement_id: settlementId || null,
+    status: status || null,
+  };
+
+  await Promise.all(
+    uniqueUserIds.map((userId) =>
+      activePublish(`user:${userId}`, "provider_financial_updated", payload),
+    ),
+  );
+
+  return uniqueUserIds;
 }
 
 async function notifyAdminsProviderVerificationSubmitted({
@@ -177,6 +219,105 @@ async function notifyAdminsModerationCaseEscalated({
   });
 }
 
+async function notifyAdminsProviderPayoutAccountSubmitted({
+  providerId,
+  payoutAccountId,
+  previousPayoutAccountId = null,
+  isReplacement = false,
+  client = pool,
+  queue = null,
+  publish = null,
+}) {
+  if (!providerId || !payoutAccountId) return [];
+
+  const type = isReplacement
+    ? "provider_payout_account_replacement_uploaded"
+    : "provider_payout_account_submitted";
+  const action = type;
+  const adminIds = await notifyAdmins({
+    type,
+    title: isReplacement
+      ? "Replacement payout account uploaded"
+      : "Payout account submitted",
+    message: isReplacement
+      ? "Provider uploaded replacement payout account details for review."
+      : "Provider submitted payout account details for review.",
+    data: {
+      action,
+      provider_id: providerId,
+      payout_account_id: payoutAccountId,
+      previous_payout_account_id: previousPayoutAccountId || null,
+      href: "/admin/settlements",
+    },
+    idempotencyKeyPrefix: `${type}:${payoutAccountId}`,
+    client,
+    queue,
+    logContext: { providerId, payoutAccountId, previousPayoutAccountId },
+  });
+
+  await publishProviderFinancialUpdated({
+    userIds: adminIds,
+    action,
+    providerId,
+    payoutAccountId,
+    previousPayoutAccountId,
+    publish,
+  }).catch((err) => {
+    logger.warn("Admin payout account realtime publish failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+
+  return adminIds;
+}
+
+async function notifyAdminsProviderPayoutChangeRequested({
+  providerId,
+  payoutAccountId,
+  reason,
+  client = pool,
+  queue = null,
+  publish = null,
+}) {
+  if (!providerId || !payoutAccountId) return [];
+
+  const action = "provider_payout_change_requested";
+  const adminIds = await notifyAdmins({
+    type: "provider_payout_change_requested",
+    title: "Payout account change requested",
+    message: "Provider requested a payout account change.",
+    data: {
+      action,
+      provider_id: providerId,
+      payout_account_id: payoutAccountId,
+      reason: reason || null,
+      href: "/admin/settlements",
+    },
+    idempotencyKeyPrefix: `provider_payout_change_requested:${payoutAccountId}`,
+    client,
+    queue,
+    logContext: { providerId, payoutAccountId },
+  });
+
+  await publishProviderFinancialUpdated({
+    userIds: adminIds,
+    action,
+    providerId,
+    payoutAccountId,
+    publish,
+  }).catch((err) => {
+    logger.warn("Admin payout change realtime publish failed", {
+      err,
+      providerId,
+      payoutAccountId,
+    });
+  });
+
+  return adminIds;
+}
+
 async function notifyProviderVerificationApproved({
   providerId,
   restaurantId,
@@ -227,28 +368,41 @@ async function notifyProviderPayoutVerificationApproved({
   providerId,
   payoutAccountId,
   queue = null,
+  publish = null,
 }) {
-  return enqueueNotification({
-    userId: providerId,
-    type: "provider_payout_verification_approved",
-    title: "Payout account verified",
-    message:
-      "Your payout account has been verified and is ready for settlement.",
-    data: {
-      payout_account_id: payoutAccountId,
-      href: "/dashboard",
-    },
-    idempotencyKey: payoutAccountId
-      ? `provider_payout_verification_approved:${payoutAccountId}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: providerId,
+      type: "provider_payout_verification_approved",
+      title: "Payout account verified",
+      message:
+        "Your payout account has been verified and is ready for settlement.",
+      data: {
+        action: "provider_payout_account_verified",
+        payout_account_id: payoutAccountId,
+        href: "/dashboard",
+      },
+      idempotencyKey: payoutAccountId
+        ? `provider_payout_verification_approved:${payoutAccountId}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [providerId],
+      action: "provider_payout_account_verified",
+      providerId,
+      payoutAccountId,
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider payout verification approval notification failed", {
       err,
       providerId,
       payoutAccountId,
     });
-  });
+    return null;
+  }
 }
 
 async function notifyProviderPayoutVerificationRejected({
@@ -256,32 +410,46 @@ async function notifyProviderPayoutVerificationRejected({
   payoutAccountId,
   reason,
   queue = null,
+  publish = null,
 }) {
   const message = reason
     ? `Your payout account verification was rejected. Reason: ${reason}`
     : "Your payout account verification was rejected.";
 
-  return enqueueNotification({
-    userId: providerId,
-    type: "provider_payout_verification_rejected",
-    title: "Payout account verification rejected",
-    message,
-    data: {
-      payout_account_id: payoutAccountId,
-      reason: reason || null,
-      href: "/dashboard",
-    },
-    idempotencyKey: payoutAccountId
-      ? `provider_payout_verification_rejected:${payoutAccountId}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: providerId,
+      type: "provider_payout_verification_rejected",
+      title: "Payout account verification rejected",
+      message,
+      data: {
+        action: "provider_payout_account_rejected",
+        payout_account_id: payoutAccountId,
+        reason: reason || null,
+        href: "/dashboard",
+      },
+      idempotencyKey: payoutAccountId
+        ? `provider_payout_verification_rejected:${payoutAccountId}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [providerId],
+      action: "provider_payout_account_rejected",
+      providerId,
+      payoutAccountId,
+      status: "rejected",
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider payout verification rejection notification failed", {
       err,
       providerId,
       payoutAccountId,
     });
-  });
+    return null;
+  }
 }
 
 async function notifyProviderPayoutChangeApproved({
@@ -289,30 +457,44 @@ async function notifyProviderPayoutChangeApproved({
   payoutAccountId,
   reason,
   queue = null,
+  publish = null,
 }) {
-  return enqueueNotification({
-    userId: providerId,
-    type: "provider_payout_change_approved",
-    title: "Payout account change request approved",
-    message: reason
-      ? `Your payout account change request has been approved. ${reason}`
-      : "Your payout account change request has been approved.",
-    data: {
-      payout_account_id: payoutAccountId,
-      reason: reason || null,
-      href: "/dashboard",
-    },
-    idempotencyKey: payoutAccountId
-      ? `provider_payout_change_approved:${payoutAccountId}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: providerId,
+      type: "provider_payout_change_approved",
+      title: "Payout account change request approved",
+      message: reason
+        ? `Your payout account change request has been approved. ${reason}`
+        : "Your payout account change request has been approved.",
+      data: {
+        action: "provider_payout_change_approved",
+        payout_account_id: payoutAccountId,
+        reason: reason || null,
+        href: "/dashboard",
+      },
+      idempotencyKey: payoutAccountId
+        ? `provider_payout_change_approved:${payoutAccountId}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [providerId],
+      action: "provider_payout_change_approved",
+      providerId,
+      payoutAccountId,
+      status: "replacement_pending",
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider payout change approval notification failed", {
       err,
       providerId,
       payoutAccountId,
     });
-  });
+    return null;
+  }
 }
 
 async function notifyProviderPayoutChangeRejected({
@@ -320,32 +502,46 @@ async function notifyProviderPayoutChangeRejected({
   payoutAccountId,
   reason,
   queue = null,
+  publish = null,
 }) {
   const message = reason
     ? `Your payout account change request was rejected. Reason: ${reason}`
     : "Your payout account change request was rejected.";
 
-  return enqueueNotification({
-    userId: providerId,
-    type: "provider_payout_change_rejected",
-    title: "Payout account change request rejected",
-    message,
-    data: {
-      payout_account_id: payoutAccountId,
-      reason: reason || null,
-      href: "/dashboard",
-    },
-    idempotencyKey: payoutAccountId
-      ? `provider_payout_change_rejected:${payoutAccountId}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: providerId,
+      type: "provider_payout_change_rejected",
+      title: "Payout account change request rejected",
+      message,
+      data: {
+        action: "provider_payout_change_rejected",
+        payout_account_id: payoutAccountId,
+        reason: reason || null,
+        href: "/dashboard",
+      },
+      idempotencyKey: payoutAccountId
+        ? `provider_payout_change_rejected:${payoutAccountId}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [providerId],
+      action: "provider_payout_change_rejected",
+      providerId,
+      payoutAccountId,
+      status: "rejected",
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider payout change rejection notification failed", {
       err,
       providerId,
       payoutAccountId,
     });
-  });
+    return null;
+  }
 }
 
 async function notifyNgoVerificationApproved({
@@ -414,74 +610,108 @@ async function notifyProviderReportSubmittedAgainstProvider({
   });
 }
 
-async function notifyProviderSettlementProcessed({ settlement, queue = null }) {
+async function notifyProviderSettlementProcessed({
+  settlement,
+  queue = null,
+  publish = null,
+}) {
   if (!settlement?.provider_id) return null;
 
-  return enqueueNotification({
-    userId: settlement.provider_id,
-    type: "provider_settlement_paid",
-    title: "Settlement Processed",
-    message: [
-      `Your settlement of ${formatSettlementAmount(
-        settlement.amount,
-        settlement.currency,
-      )} has been marked paid.`,
-      "",
-      "Reference:",
-      settlement.payment_reference || "-",
-    ].join("\n"),
-    data: {
-      settlement_id: settlement.id,
-      payment_reference: settlement.payment_reference || null,
-      amount: settlement.amount,
-      currency: settlement.currency || "INR",
-      href: "/dashboard",
-    },
-    idempotencyKey: settlement.id
-      ? `provider_settlement_paid:${settlement.id}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: settlement.provider_id,
+      type: "provider_settlement_paid",
+      title: "Settlement Processed",
+      message: [
+        `Your settlement of ${formatSettlementAmount(
+          settlement.amount,
+          settlement.currency,
+        )} has been marked paid.`,
+        "",
+        "Reference:",
+        settlement.payment_reference || "-",
+      ].join("\n"),
+      data: {
+        action: "provider_settlement_paid",
+        settlement_id: settlement.id,
+        payment_reference: settlement.payment_reference || null,
+        amount: settlement.amount,
+        currency: settlement.currency || "INR",
+        href: "/dashboard",
+      },
+      idempotencyKey: settlement.id
+        ? `provider_settlement_paid:${settlement.id}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [settlement.provider_id],
+      action: "provider_settlement_paid",
+      providerId: settlement.provider_id,
+      settlementId: settlement.id,
+      status: "paid",
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider settlement paid notification failed", {
       err,
       settlementId: settlement.id,
       providerId: settlement.provider_id,
     });
-  });
+    return null;
+  }
 }
 
-async function notifyProviderSettlementFailed({ settlement, queue = null }) {
+async function notifyProviderSettlementFailed({
+  settlement,
+  queue = null,
+  publish = null,
+}) {
   if (!settlement?.provider_id) return null;
 
   const reason =
     trimSettlementReason(settlement.notes) || "No reason provided.";
 
-  return enqueueNotification({
-    userId: settlement.provider_id,
-    type: "provider_settlement_failed",
-    title: "Settlement Failed",
-    message: ["Settlement processing failed.", "", "Reason:", reason].join(
-      "\n",
-    ),
-    data: {
-      settlement_id: settlement.id,
-      payment_reference: settlement.payment_reference || null,
-      amount: settlement.amount,
-      currency: settlement.currency || "INR",
-      reason,
-      href: "/dashboard",
-    },
-    idempotencyKey: settlement.id
-      ? `provider_settlement_failed:${settlement.id}`
-      : null,
-    queue,
-  }).catch((err) => {
+  try {
+    const job = await enqueueNotification({
+      userId: settlement.provider_id,
+      type: "provider_settlement_failed",
+      title: "Settlement Failed",
+      message: ["Settlement processing failed.", "", "Reason:", reason].join(
+        "\n",
+      ),
+      data: {
+        action: "provider_settlement_failed",
+        settlement_id: settlement.id,
+        payment_reference: settlement.payment_reference || null,
+        amount: settlement.amount,
+        currency: settlement.currency || "INR",
+        reason,
+        href: "/dashboard",
+      },
+      idempotencyKey: settlement.id
+        ? `provider_settlement_failed:${settlement.id}`
+        : null,
+      queue,
+    });
+    await publishProviderFinancialUpdated({
+      userIds: [settlement.provider_id],
+      action: "provider_settlement_failed",
+      providerId: settlement.provider_id,
+      settlementId: settlement.id,
+      status: "failed",
+      publish,
+    });
+    return job;
+  } catch (err) {
     logger.warn("Provider settlement failed notification failed", {
       err,
       settlementId: settlement.id,
       providerId: settlement.provider_id,
     });
-  });
+    return null;
+  }
 }
 
 function trimSettlementReason(value) {
@@ -494,6 +724,8 @@ module.exports = {
   getAdminUserIds,
   notifyAdminsModerationCaseEscalated,
   notifyAdminsNgoVerificationSubmitted,
+  notifyAdminsProviderPayoutAccountSubmitted,
+  notifyAdminsProviderPayoutChangeRequested,
   notifyAdminsProviderReportSubmitted,
   notifyAdminsProviderVerificationSubmitted,
   notifyNgoVerificationApproved,
@@ -507,4 +739,5 @@ module.exports = {
   notifyProviderPayoutVerificationRejected,
   notifyProviderPayoutChangeApproved,
   notifyProviderPayoutChangeRejected,
+  publishProviderFinancialUpdated,
 };

@@ -6,6 +6,7 @@ import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
 import { formatDateTimeOrFallback } from "@/lib/dateTime";
 import { adminService } from "@/services/admin.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import toast from "react-hot-toast";
 import type {
   AdminProviderSettlementConsoleData,
@@ -232,6 +233,9 @@ function draftFor(
 }
 
 export default function AdminSettlementsPage() {
+  const providerFinancialVersion = useRealtimeStore(
+    (state) => state.providerFinancialVersion
+  );
   const [filter, setFilter] = useState<SettlementFilter>("pending");
   const [verificationFilter, setVerificationFilter] = useState<VerificationFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -308,6 +312,21 @@ export default function AdminSettlementsPage() {
       active = false;
     };
   }, [loadSettlements, loadChangeRequests]);
+
+  useEffect(() => {
+    if (providerFinancialVersion === 0) return;
+
+    let active = true;
+    queueMicrotask(() => {
+      if (active) {
+        void Promise.all([loadSettlements(), loadChangeRequests()]);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [loadSettlements, loadChangeRequests, providerFinancialVersion]);
 
   function resetProviderSelectionState() {
     setDrafts({});

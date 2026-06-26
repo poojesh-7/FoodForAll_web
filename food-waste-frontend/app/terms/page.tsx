@@ -83,6 +83,72 @@ export default function TermsPage() {
         />
       </LegalSection>
 
+      <LegalSection title="Provider Payout Eligibility">
+        <p>
+          Providers receive settlements only after payout account submission,
+          payout verification, and settlement approval.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Payout Verification">
+        <p>
+          The platform may verify payout information before settlements are released.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Payout Account Changes">
+        <SimpleList
+          items={[
+            "Verified payout accounts cannot be freely replaced.",
+            "Replacement may require a provider request, administrative approval, and re-verification.",
+            "During this process, settlements may be temporarily suspended.",
+          ]}
+        />
+      </LegalSection>
+
+      <LegalSection title="Manual Settlements">
+        <p>
+          The platform currently performs manual provider settlements. Future
+          automated settlement mechanisms may be introduced.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Platform Fees">
+        <SimpleList
+          items={[
+            "Platform commission applies to eligible provider transactions.",
+            "Payment gateway fees may apply where applicable.",
+          ]}
+        />
+      </LegalSection>
+
+      <LegalSection title="Refunds">
+        <SimpleList
+          items={[
+            "Reservation refunds and cancellation refunds are handled through the platform and payment gateway reconciliation.",
+            "Reliability deposit refunds may be returned or retained according to platform policy.",
+          ]}
+        />
+      </LegalSection>
+
+      <LegalSection title="User Responsibilities">
+        <SimpleList
+          items={[
+            "Providers are responsible for submitting accurate payout information.",
+            "Incorrect payout information may delay settlement processing.",
+          ]}
+        />
+      </LegalSection>
+
+      <LegalSection title="Compliance">
+        <p>
+          The platform may request additional verification documents in the
+          future if required by law or payment partners. This does not mean those
+          documents are mandatory today unless already required by current
+          workflows.
+        </p>
+      </LegalSection>
+
       <LegalSection title="Volunteers">
         <SimpleList
           items={[

@@ -73,6 +73,47 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
+      <LegalSection title="Provider Payout Information">
+        <p>
+          FoodForAll may collect and securely store provider payout account
+          information such as UPI ID, bank account number, IFSC code, and account
+          holder name. This information is used for settlement processing, account
+          verification, fraud prevention, and financial compliance.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Financial Records">
+        <SimpleList
+          items={[
+            "Settlement records and payment history for completed provider settlements.",
+            "Refund history and reliability deposit records.",
+            "Commission records, audit logs, and payout verification history.",
+          ]}
+        />
+      </LegalSection>
+
+      <LegalSection title="Notifications">
+        <p>
+          Notification history is stored for operational events such as payout
+          verification, payout account change requests, and settlement updates.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Security">
+        <p>
+          Payout information is access controlled and encrypted or securely
+          stored where applicable. Only authorized administrators involved in
+          payout verification and settlement processing have access to this data.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Data Retention">
+        <p>
+          Financial records and payout verification history may be retained for
+          operational, legal, audit, and regulatory purposes.
+        </p>
+      </LegalSection>
+
       <LegalSection title="Data Sharing">
         <p>
           FoodForAll shares information only as needed to run the platform. This

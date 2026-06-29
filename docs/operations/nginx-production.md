@@ -24,7 +24,7 @@ Use the same public HTTPS origin for the browser app and proxied API unless you
 intentionally deploy split domains:
 
 ```env
-NEXT_PUBLIC_API_URL=https://app.example.com/api/v1
+NEXT_PUBLIC_API_URL=/api/v1
 FRONTEND_URL=https://app.example.com
 FRONTEND_ORIGINS=https://app.example.com
 TRUST_PROXY_HOPS=1

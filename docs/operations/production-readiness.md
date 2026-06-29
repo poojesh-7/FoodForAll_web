@@ -28,12 +28,18 @@ Cashfree webhooks, static assets, and health checks. The production compose file
 keeps PostgreSQL, Redis, API, workers, and frontend on an internal Docker
 network; only Nginx publishes ports `80` and `443`.
 
-Use `NEXT_PUBLIC_API_URL=https://<domain>/api/v1`,
+Use `NEXT_PUBLIC_API_URL=/api/v1`,
 `FRONTEND_URL=https://<domain>`, `TRUST_PROXY_HOPS=1`,
 `COOKIE_SECURE=true`, and `COOKIE_SAME_SITE=none` for the standard same-origin
-production deployment. Nginx overwrites forwarded IP headers at the edge so
+production deployment. Nginx serves `/api/` from the backend, keeping browser
+auth cookies first-party to the app origin. Nginx overwrites forwarded IP headers at the edge so
 Express logs, secure cookies, and Redis-backed rate limiting see the trusted
 client address.
+
+For split hosting without Nginx, keep `NEXT_PUBLIC_API_URL=/api/v1` and set the
+private frontend environment variable `API_PROXY_TARGET=https://<backend-domain>`.
+Next.js rewrites `/api/v1/*` and `/socket.io/*` to that backend origin, avoiding
+third-party auth cookies while preserving backend CORS and secure cookie flags.
 
 The full Nginx runbook, certificate layout, Cloudflare notes, route map,
 websocket validation, and Cashfree webhook notes live in

@@ -1,6 +1,6 @@
 const pool = require("../config/db");
-const redis = require("../config/redis");
 const { sendPush } = require("./push.service");
+const { publishSocketEvent } = require("./realtime.service");
 
 function normalizeIdempotencyKey(value) {
   const normalized = String(value || "").trim();
@@ -27,13 +27,14 @@ async function notifyUser(userId, type, title, message, data = {}, options = {})
   );
   const notification = result.rows[0];
 
-  await redis.publish(
-    "socket_events",
-    JSON.stringify({
-      room: `user:${userId}`,
-      event: "notification",
-      data: { ...notification, ...data },
-    })
+  await publishSocketEvent(
+    `user:${userId}`,
+    "notification",
+    {
+      ...notification,
+      ...data,
+    },
+    { throwOnError: true }
   );
 
   await sendPush(userId, type, title, message);

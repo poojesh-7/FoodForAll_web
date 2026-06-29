@@ -22,8 +22,22 @@ export function getPublicApiBaseUrl() {
   return normalizeApiUrl(process.env.NEXT_PUBLIC_API_URL);
 }
 
+function normalizeSocketUrl(value?: string) {
+  const rawValue = value?.trim();
+  if (!rawValue) return null;
+
+  if (rawValue.startsWith("/")) {
+    return rawValue.replace(/\/+$/, "") || "/";
+  }
+
+  return rawValue.replace(/\/+$/, "");
+}
+
 export function getPublicSocketUrl() {
-  return getPublicApiBaseUrl().replace(/\/api\/v1\/?$/, "");
+  return (
+    normalizeSocketUrl(process.env.NEXT_PUBLIC_SOCKET_URL) ||
+    getPublicApiBaseUrl().replace(/\/api\/v1\/?$/, "")
+  );
 }
 
 export function getPublicGoogleClientId() {
@@ -33,6 +47,7 @@ export function getPublicGoogleClientId() {
 export function validatePublicEnv() {
   const appEnv = (process.env.NEXT_PUBLIC_APP_ENV || "local").toLowerCase();
   const apiUrl = getPublicApiBaseUrl();
+  const socketUrl = getPublicSocketUrl();
   const googleClientId = getPublicGoogleClientId();
 
   if (!["local", "development", "staging", "production"].includes(appEnv)) {
@@ -50,9 +65,20 @@ export function validatePublicEnv() {
     }
   }
 
+  if (!socketUrl.startsWith("/")) {
+    const parsed = new URL(socketUrl);
+    if (
+      appEnv === "production" &&
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "wss:"
+    ) {
+      throw new Error("NEXT_PUBLIC_SOCKET_URL must use HTTPS or WSS in production");
+    }
+  }
+
   if (appEnv === "production" && !googleClientId) {
     throw new Error("NEXT_PUBLIC_GOOGLE_CLIENT_ID is required in production");
   }
 
-  return { appEnv, apiUrl, googleClientId };
+  return { appEnv, apiUrl, socketUrl, googleClientId };
 }

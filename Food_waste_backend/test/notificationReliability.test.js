@@ -3,7 +3,7 @@ const test = require("node:test");
 
 const SERVICE_PATH = require.resolve("../shared/services/notification.service");
 const DB_PATH = require.resolve("../shared/config/db");
-const REDIS_PATH = require.resolve("../shared/config/redis");
+const REALTIME_PATH = require.resolve("../shared/services/realtime.service");
 const PUSH_PATH = require.resolve("../shared/services/push.service");
 
 function setCacheExport(path, exports) {
@@ -27,11 +27,11 @@ test("notifyUser persists notifications with queue idempotency before delivery",
   const original = {
     service: require.cache[SERVICE_PATH],
     db: require.cache[DB_PATH],
-    redis: require.cache[REDIS_PATH],
+    realtime: require.cache[REALTIME_PATH],
     push: require.cache[PUSH_PATH],
   };
   const queries = [];
-  const publishes = [];
+  const socketEvents = [];
   const pushes = [];
 
   setCacheExport(DB_PATH, {
@@ -52,9 +52,9 @@ test("notifyUser persists notifications with queue idempotency before delivery",
       };
     },
   });
-  setCacheExport(REDIS_PATH, {
-    async publish(channel, payload) {
-      publishes.push({ channel, payload: JSON.parse(payload) });
+  setCacheExport(REALTIME_PATH, {
+    async publishSocketEvent(room, event, data, options) {
+      socketEvents.push({ room, event, data, options });
     },
   });
   setCacheExport(PUSH_PATH, {
@@ -84,14 +84,26 @@ test("notifyUser persists notifications with queue idempotency before delivery",
       "Retry-safe notification",
       "notification-queue:42",
     ]);
-    assert.equal(publishes[0].channel, "socket_events");
-    assert.equal(publishes[0].payload.room, "user:22222222-2222-4222-8222-222222222222");
-    assert.equal(publishes[0].payload.data.idempotency_key, "notification-queue:42");
+    assert.deepEqual(socketEvents[0], {
+      room: "user:22222222-2222-4222-8222-222222222222",
+      event: "notification",
+      data: {
+        id: "11111111-1111-4111-8111-111111111111",
+        user_id: "22222222-2222-4222-8222-222222222222",
+        type: "queue_test",
+        title: "Queue Test",
+        message: "Retry-safe notification",
+        idempotency_key: "notification-queue:42",
+        created_at: "2026-06-10T08:00:00.000Z",
+        reservationId: "reservation-1",
+      },
+      options: { throwOnError: true },
+    });
     assert.equal(pushes.length, 1);
   } finally {
     restoreCache(SERVICE_PATH, original.service);
     restoreCache(DB_PATH, original.db);
-    restoreCache(REDIS_PATH, original.redis);
+    restoreCache(REALTIME_PATH, original.realtime);
     restoreCache(PUSH_PATH, original.push);
   }
 });

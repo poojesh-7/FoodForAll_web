@@ -84,6 +84,28 @@ const io = new Server(server, {
   pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS || 25000),
   pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS || 20000),
 });
+
+io.engine.on("connection", (engineSocket) => {
+  logger.info("Socket transport connected", {
+    engineSocketId: engineSocket.id,
+    transport: engineSocket.transport?.name,
+  });
+
+  engineSocket.on("upgrade", (transport) => {
+    logger.info("Socket transport upgraded", {
+      engineSocketId: engineSocket.id,
+      transport: transport?.name,
+    });
+  });
+
+  engineSocket.on("upgradeError", (err) => {
+    logger.warn("Socket transport upgrade failed", {
+      engineSocketId: engineSocket.id,
+      transport: engineSocket.transport?.name,
+      err,
+    });
+  });
+});
 const cookieParser = require("cookie-parser");
 const cookie = require("cookie");
 

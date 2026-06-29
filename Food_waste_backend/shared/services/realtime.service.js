@@ -71,7 +71,7 @@ function sanitizeReservationForUser(reservation, userId) {
   return withoutKeys(baseReservation, ["pickup_code", "receive_code"]);
 }
 
-async function publishSocketEvent(room, event, data) {
+async function publishSocketEvent(room, event, data, options = {}) {
   try {
     await redis.publish(
       "socket_events",
@@ -79,6 +79,9 @@ async function publishSocketEvent(room, event, data) {
     );
   } catch (err) {
     logger.warn("Realtime publish failed", { err, event, room });
+    if (options.throwOnError) {
+      throw err;
+    }
   }
 }
 

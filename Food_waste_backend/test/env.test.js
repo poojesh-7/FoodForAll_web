@@ -28,11 +28,38 @@ function validEnv(overrides = {}) {
   };
 }
 
+function validProductionEnv(overrides = {}) {
+  return validEnv({
+    APP_ENV: "production",
+    NODE_ENV: "production",
+    CASHFREE_ENV: "production",
+    CASHFREE_APP_ID: "LIVE_APP_ID",
+    CASHFREE_SECRET_KEY: "live-cashfree-secret-key",
+    CASHFREE_WEBHOOK_SECRET: "webhook-secret",
+    FRONTEND_URL: "https://app.example.com",
+    FRONTEND_ORIGINS: "https://app.example.com",
+    GOOGLE_CLIENT_ID: "google-client-id.apps.googleusercontent.com",
+    SUPABASE_URL: "https://project.supabase.co",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    ENV_RESOURCE_PREFIX: "prod",
+    JWT_SECRET: "production-secret-with-at-least-32-chars",
+    METRICS_TOKEN: "metrics-token",
+    ...overrides,
+  });
+}
+
 function loadEnvModule(env) {
   for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
-  Object.assign(process.env, originalEnv, env);
+  Object.assign(process.env, originalEnv);
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
   delete require.cache[envModulePath];
   return require("../shared/config/env");
 }
@@ -54,6 +81,8 @@ test("validateEnvironment accepts explicit development configuration", () => {
   const env = validateEnvironment();
 
   assert.equal(env.APP_ENV, "development");
+  assert.equal(env.PAYMENTS_ENABLED, false);
+  assert.equal(process.env.PAYMENTS_ENABLED, "false");
   assert.equal(process.env.FRONTEND_ORIGINS, "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000");
   assert.equal(env.VOLUNTEER_PICKUP_TIMEOUT_MINUTES, 15);
   assert.equal(env.VOLUNTEER_DELIVERY_TIMEOUT_MINUTES, 30);
@@ -146,18 +175,9 @@ test("buildOperationalPolicy rejects invalid minute values", () => {
 });
 
 test("validateEnvironment rejects wildcard or insecure production CORS origins", () => {
-  const { validateEnvironment } = loadEnvModule(validEnv({
-    APP_ENV: "production",
-    NODE_ENV: "production",
-    CASHFREE_ENV: "production",
-    CASHFREE_APP_ID: "LIVE_APP_ID",
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
     FRONTEND_URL: "https://app.example.com",
     FRONTEND_ORIGINS: "*,http://app.example.com",
-    SUPABASE_URL: "https://project.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    CASHFREE_WEBHOOK_SECRET: "webhook-secret",
-    ENV_RESOURCE_PREFIX: "prod",
-    JWT_SECRET: "production-secret-with-at-least-32-chars",
   }));
 
   assert.throws(
@@ -167,22 +187,67 @@ test("validateEnvironment rejects wildcard or insecure production CORS origins",
 });
 
 test("validateEnvironment rejects weak production JWT secrets", () => {
-  const { validateEnvironment } = loadEnvModule(validEnv({
-    APP_ENV: "production",
-    NODE_ENV: "production",
-    CASHFREE_ENV: "production",
-    CASHFREE_APP_ID: "LIVE_APP_ID",
-    FRONTEND_URL: "https://app.example.com",
-    FRONTEND_ORIGINS: "https://app.example.com",
-    SUPABASE_URL: "https://project.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-    CASHFREE_WEBHOOK_SECRET: "webhook-secret",
-    ENV_RESOURCE_PREFIX: "prod",
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
     JWT_SECRET: "changeme",
   }));
 
   assert.throws(
     () => validateEnvironment(),
     /JWT_SECRET must be at least 32 characters|development placeholder/
+  );
+});
+
+test("validateEnvironment accepts pre-Cashfree production with payments disabled", () => {
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
+    PAYMENTS_ENABLED: "false",
+    CASHFREE_ENV: "sandbox",
+    CASHFREE_APP_ID: "TEST_APP_ID",
+    CASHFREE_SECRET_KEY: "cashfree-secret-key",
+    CASHFREE_WEBHOOK_SECRET: undefined,
+  }));
+
+  const env = validateEnvironment();
+
+  assert.equal(env.APP_ENV, "production");
+  assert.equal(env.PAYMENTS_ENABLED, false);
+  assert.equal(env.CASHFREE_ENV, "sandbox");
+  assert.equal(env.CASHFREE_WEBHOOK_SECRET, undefined);
+  assert.equal(process.env.PAYMENTS_ENABLED, "false");
+});
+
+test("validateEnvironment accepts live production payments configuration", () => {
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
+    PAYMENTS_ENABLED: "true",
+  }));
+
+  const env = validateEnvironment();
+
+  assert.equal(env.PAYMENTS_ENABLED, true);
+  assert.equal(env.CASHFREE_ENV, "production");
+  assert.equal(env.CASHFREE_WEBHOOK_SECRET, "webhook-secret");
+  assert.equal(process.env.PAYMENTS_ENABLED, "true");
+});
+
+test("validateEnvironment enforces webhook secret when production payments are enabled", () => {
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
+    PAYMENTS_ENABLED: "true",
+    CASHFREE_WEBHOOK_SECRET: undefined,
+  }));
+
+  assert.throws(
+    () => validateEnvironment(),
+    /CASHFREE_WEBHOOK_SECRET is required/
+  );
+});
+
+test("validateEnvironment rejects sandbox Cashfree when production payments are enabled", () => {
+  const { validateEnvironment } = loadEnvModule(validProductionEnv({
+    PAYMENTS_ENABLED: "true",
+    CASHFREE_ENV: "sandbox",
+  }));
+
+  assert.throws(
+    () => validateEnvironment(),
+    /Production deployments with payments enabled must use CASHFREE_ENV=production/
   );
 });

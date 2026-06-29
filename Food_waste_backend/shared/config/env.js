@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const dotenv = require("dotenv");
 const dotenvSafe = require("dotenv-safe");
 const { z } = require("zod");
 const logger = require("../utils/logger");
@@ -138,6 +139,7 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: optionalString,
   TWILIO_AUTH_TOKEN: optionalString,
   TWILIO_VERIFY_SERVICE_SID: optionalString,
+  PAYMENTS_ENABLED: booleanFromEnv("PAYMENTS_ENABLED", "false"),
   CASHFREE_APP_ID: requiredString("CASHFREE_APP_ID"),
   CASHFREE_SECRET_KEY: requiredString("CASHFREE_SECRET_KEY"),
   CASHFREE_ENV: requiredString("CASHFREE_ENV").transform((value) => value.toLowerCase()),
@@ -357,6 +359,21 @@ function seedAppEnvDefaultForDotenvSafe() {
     process.env.NODE_ENV === "production" ? "production" : "development";
 }
 
+function envFileHasValue(name) {
+  const envPath = getEnvPath();
+  if (!fs.existsSync(envPath)) return false;
+
+  const parsed = dotenv.parse(fs.readFileSync(envPath));
+  return String(parsed[name] || "").trim().length > 0;
+}
+
+function seedPaymentsEnabledDefaultForDotenvSafe() {
+  if (String(process.env.PAYMENTS_ENABLED || "").trim()) return;
+  if (envFileHasValue("PAYMENTS_ENABLED")) return;
+
+  process.env.PAYMENTS_ENABLED = "false";
+}
+
 function isProductionLike(appEnv = process.env.APP_ENV) {
   return appEnv === "production";
 }
@@ -450,7 +467,16 @@ function validateCrossFieldRules(env, ctx) {
 
   if (production) {
     for (const key of PRODUCTION_REQUIRED_ENV) {
-      if (!String(env[key] || "").trim()) addMissingIssue(ctx, key);
+      if (
+        key === "CASHFREE_WEBHOOK_SECRET" &&
+        env.PAYMENTS_ENABLED !== true
+      ) {
+        continue;
+      }
+
+      if (!String(env[key] || "").trim()) {
+        addMissingIssue(ctx, key);
+      }
     }
 
     if (
@@ -564,11 +590,16 @@ function validateCrossFieldRules(env, ctx) {
     });
   }
 
-  if (production && ["sandbox", "test"].includes(env.CASHFREE_ENV)) {
+  if (
+    production &&
+    env.PAYMENTS_ENABLED === true &&
+    ["sandbox", "test"].includes(env.CASHFREE_ENV)
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["CASHFREE_ENV"],
-      message: "Production deployments must use CASHFREE_ENV=production",
+      message:
+        "Production deployments with payments enabled must use CASHFREE_ENV=production",
     });
   }
 
@@ -614,7 +645,7 @@ function applyNormalizedEnv(env) {
     ...parseOrigins(env.FRONTEND_URL),
     ...parseOrigins(env.FRONTEND_ORIGINS),
   ];
-
+  process.env.PAYMENTS_ENABLED = String(env.PAYMENTS_ENABLED);
   process.env.APP_ENV = env.APP_ENV;
   process.env.NODE_ENV = env.NODE_ENV;
   process.env.PORT = String(env.PORT);
@@ -694,6 +725,7 @@ function applyNormalizedEnv(env) {
 
 function validateEnvironment() {
   seedAppEnvDefaultForDotenvSafe();
+  seedPaymentsEnabledDefaultForDotenvSafe();
   loadDotenvSafe();
   normalizeNodeEnv();
   normalizeAppEnvDefault();

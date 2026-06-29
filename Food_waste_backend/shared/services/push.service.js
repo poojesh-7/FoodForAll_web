@@ -3,6 +3,10 @@ const pool = require("../config/db");
 const logger = require("../utils/logger");
 
 async function sendPush(userId, type, title, message) {
+  if (!admin || !admin.messaging) {
+    return;
+  }
+  
   try {
     const user = await pool.query(
       "SELECT fcm_token FROM users WHERE id=$1",
@@ -25,7 +29,8 @@ async function sendPush(userId, type, title, message) {
     });
   } catch (err) {
     logger.error("Push notification failed", { err, userId });
-    throw err;
+
+    return;
   }
 }
 

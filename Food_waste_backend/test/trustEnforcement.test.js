@@ -267,6 +267,7 @@ test("verified good behavior is appended as a replay-safe trust event", async ()
 
   assert.equal(result.inserted, true);
   assert.equal(appended[0].eventType, "verified_good_behavior");
+  assert.equal(appended[0].eventPayload.score_delta, 3);
   assert.equal(appended[0].eventPayload.completion_delta, 1);
   assert.equal(appended[0].eventPayload.metadata.verified_good_behavior, true);
 });

@@ -86,7 +86,7 @@ test("manual recovery credit uses verified good behavior event path", () => {
   });
 
   assert.equal(event.event_type, "verified_good_behavior");
-  assert.equal(event.event_payload.score_delta, 2);
+  assert.equal(event.event_payload.score_delta, 3);
   assert.equal(event.event_payload.completion_delta, 1);
   assert.equal(
     event.event_payload.metadata.recovery_route,

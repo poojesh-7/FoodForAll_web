@@ -5,18 +5,18 @@ const {
   observeHistogram,
 } = require("./metrics.service");
 
-const RECOVERY_STREAK_TARGET = 3;
+const RECOVERY_STREAK_TARGET = 2;
 const RECOVERY_PENALTY_CREDIT = 2;
 const RECOVERY_SCORE_RECOVERY_PER_PENALTY = 2;
 const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const RESTRICTION_THRESHOLDS = [
-  { level: 5, penaltyLevel: 14, scoreAtOrBelow: 40, failureStreak: 7 },
-  { level: 4, penaltyLevel: 9, scoreAtOrBelow: 55, failureStreak: 5 },
-  { level: 3, penaltyLevel: 6, scoreAtOrBelow: 70, failureStreak: 3 },
-  { level: 2, penaltyLevel: 4, scoreAtOrBelow: 80, failureStreak: 2 },
-  { level: 1, penaltyLevel: 1, scoreBelow: 95, failureStreak: null },
+  { level: 5, penaltyLevel: 16, scoreAtOrBelow: 45, failureStreak: 7 },
+  { level: 4, penaltyLevel: 12, scoreAtOrBelow: 58, failureStreak: 5 },
+  { level: 3, penaltyLevel: 8, scoreAtOrBelow: 72, failureStreak: 4 },
+  { level: 2, penaltyLevel: 6, scoreAtOrBelow: 80, failureStreak: 3 },
+  { level: 1, penaltyLevel: 4, scoreBelow: 88, failureStreak: 2 },
 ];
 const ANALYTICS_ONLY_EVENT_TYPES = new Set([
   "provider_listing_expired",
@@ -668,8 +668,9 @@ function resolveCooldownProjection({ level, state, effect, context, event }) {
 
 function depositMultiplierForLevel(level) {
   if (level <= 1) return 1;
-  if (level === 2) return 1.5;
-  if (level === 3) return 2;
+  if (level === 2) return 1.25;
+  if (level === 3) return 1.5;
+  if (level === 4) return 2;
   return 3;
 }
 

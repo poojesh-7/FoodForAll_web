@@ -25,6 +25,7 @@ const {
   buildReservationTrustEvents,
   emitBuiltEvents,
   findPaymentInitializationFailureTrustEvents,
+  TRUST_EVENT_RULES,
 } = require("../shared/services/trustLifecycleEvent.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
@@ -77,18 +78,26 @@ function createProviderProjectionEvent(index, eventType, payload, createdAt) {
 }
 
 function createProviderReportValidatedEvent(index = 1, createdAt = "2026-01-01T00:00:00.000Z") {
-  return createProviderProjectionEvent(index, "provider_report_validated", {
-    score_delta: -15,
-    failure_delta: 1,
-  }, createdAt);
+  return createProviderProjectionEvent(
+    index,
+    "provider_report_validated",
+    TRUST_EVENT_RULES.provider_report_validated,
+    createdAt
+  );
 }
 
 function createProviderFulfillmentEvent(index, createdAt, metadata = {}) {
   return createProviderProjectionEvent(index, "provider_successful_fulfillment", {
-    score_delta: 2,
-    fulfillment_delta: 1,
+    ...TRUST_EVENT_RULES.provider_successful_fulfillment,
     metadata,
   }, createdAt);
+}
+
+function policyPayload(eventType, overrides = {}) {
+  return {
+    ...TRUST_EVENT_RULES[eventType],
+    ...overrides,
+  };
 }
 
 function withEnv(values, callback) {
@@ -192,46 +201,183 @@ test("balanced restriction thresholds require repeated normal failures", () => {
       failureStreak: threshold.failureStreak,
     })),
     [
-      { level: 5, penaltyLevel: 14, scoreAtOrBelow: 40, scoreBelow: undefined, failureStreak: 7 },
-      { level: 4, penaltyLevel: 9, scoreAtOrBelow: 55, scoreBelow: undefined, failureStreak: 5 },
-      { level: 3, penaltyLevel: 6, scoreAtOrBelow: 70, scoreBelow: undefined, failureStreak: 3 },
-      { level: 2, penaltyLevel: 4, scoreAtOrBelow: 80, scoreBelow: undefined, failureStreak: 2 },
-      { level: 1, penaltyLevel: 1, scoreAtOrBelow: undefined, scoreBelow: 95, failureStreak: null },
+      { level: 5, penaltyLevel: 16, scoreAtOrBelow: 45, scoreBelow: undefined, failureStreak: 7 },
+      { level: 4, penaltyLevel: 12, scoreAtOrBelow: 58, scoreBelow: undefined, failureStreak: 5 },
+      { level: 3, penaltyLevel: 8, scoreAtOrBelow: 72, scoreBelow: undefined, failureStreak: 4 },
+      { level: 2, penaltyLevel: 6, scoreAtOrBelow: 80, scoreBelow: undefined, failureStreak: 3 },
+      { level: 1, penaltyLevel: 4, scoreAtOrBelow: undefined, scoreBelow: 88, failureStreak: 2 },
     ]
   );
-  assert.equal(calculateRestrictionLevel({ score: 90, penaltyLevel: 2, failureStreak: 1 }), 1);
-  assert.equal(calculateRestrictionLevel({ score: 80, penaltyLevel: 4, failureStreak: 2 }), 2);
-  assert.equal(calculateRestrictionLevel({ score: 70, penaltyLevel: 6, failureStreak: 3 }), 3);
-  assert.equal(calculateRestrictionLevel({ score: 50, penaltyLevel: 10, failureStreak: 5 }), 4);
-  assert.equal(calculateRestrictionLevel({ score: 40, penaltyLevel: 12, failureStreak: 6 }), 5);
+  assert.equal(calculateRestrictionLevel({ score: 93, penaltyLevel: 2, failureStreak: 1 }), 0);
+  assert.equal(calculateRestrictionLevel({ score: 86, penaltyLevel: 4, failureStreak: 2 }), 1);
+  assert.equal(calculateRestrictionLevel({ score: 80, penaltyLevel: 6, failureStreak: 3 }), 2);
+  assert.equal(calculateRestrictionLevel({ score: 72, penaltyLevel: 8, failureStreak: 4 }), 3);
+  assert.equal(calculateRestrictionLevel({ score: 58, penaltyLevel: 12, failureStreak: 5 }), 4);
+  assert.equal(calculateRestrictionLevel({ score: 45, penaltyLevel: 16, failureStreak: 7 }), 5);
 });
 
-test("operational projection escalates cooldown after three failures", () => {
+test("calibrated policy keeps first payment timeout unrestricted", () => {
   const projection = buildTrustProjectionFromEvents([
-    createProjectionEvent(1, "user_pickup_failed", {
-      score_delta: -10,
-      failure_delta: 1,
-    }, "2026-01-01T00:00:00.000Z"),
-    createProjectionEvent(2, "user_payment_timeout", {
-      score_delta: -5,
-      failure_delta: 1,
-      timeout_delta: 1,
-    }, "2026-01-01T01:00:00.000Z"),
-    createProjectionEvent(3, "user_pickup_failed", {
-      score_delta: -10,
-      failure_delta: 1,
-    }, "2026-01-01T02:00:00.000Z"),
+    createProjectionEvent(
+      1,
+      "user_pickup_completed",
+      policyPayload("user_pickup_completed"),
+      "2026-01-01T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      2,
+      "user_payment_timeout",
+      policyPayload("user_payment_timeout"),
+      "2026-01-02T00:00:00.000Z"
+    ),
   ]);
 
-  assert.equal(projection.trust_score, 75);
-  assert.equal(projection.penalty_level, 7);
+  assert.equal(projection.trust_score, 98);
+  assert.equal(projection.penalty_level, 1);
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.projected_deposit_multiplier, 1);
+  assert.equal(projection.projected_cooldown_until, null);
+  assert.equal(projection.projected_actions.refundable_deposit_recommended, false);
+  assert.equal(projection.projected_actions.cooldown_recommended, false);
+});
+
+test("calibrated policy forgives one failed pickup after successful history", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(
+      1,
+      "user_pickup_completed",
+      policyPayload("user_pickup_completed"),
+      "2026-01-01T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      2,
+      "user_pickup_completed",
+      policyPayload("user_pickup_completed"),
+      "2026-01-02T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      3,
+      "user_pickup_failed",
+      policyPayload("user_pickup_failed"),
+      "2026-01-03T00:00:00.000Z"
+    ),
+  ]);
+
+  assert.equal(projection.trust_score, 93);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.projected_deposit_multiplier, 1);
+  assert.equal(projection.projected_cooldown_until, null);
+});
+
+test("calibrated policy escalates cooldown after four failed pickups", () => {
+  const projection = buildTrustProjectionFromEvents([
+    createProjectionEvent(1, "user_pickup_failed", {
+      ...TRUST_EVENT_RULES.user_pickup_failed,
+    }, "2026-01-01T00:00:00.000Z"),
+    createProjectionEvent(2, "user_pickup_failed", {
+      ...TRUST_EVENT_RULES.user_pickup_failed,
+    }, "2026-01-02T00:00:00.000Z"),
+    createProjectionEvent(3, "user_pickup_failed", {
+      ...TRUST_EVENT_RULES.user_pickup_failed,
+    }, "2026-01-03T00:00:00.000Z"),
+    createProjectionEvent(4, "user_pickup_failed", {
+      ...TRUST_EVENT_RULES.user_pickup_failed,
+    }, "2026-01-04T00:00:00.000Z"),
+  ]);
+
+  assert.equal(projection.trust_score, 72);
+  assert.equal(projection.penalty_level, 8);
   assert.equal(projection.projected_restriction_level, 3);
-  assert.equal(projection.projected_deposit_multiplier, 2);
+  assert.equal(projection.projected_deposit_multiplier, 1.5);
   assert.equal(projection.projected_actions.cooldown_recommended, true);
   assert.equal(projection.risk_state.restriction_trigger_source, "penalty");
   assert.equal(
     projection.projected_cooldown_until.toISOString(),
-    "2026-01-01T14:00:00.000Z"
+    "2026-01-04T12:00:00.000Z"
+  );
+});
+
+test("volunteer delivery failures escalate faster than normal user failures", () => {
+  const volunteerProjection = buildTrustProjectionFromEvents([
+    createProjectionEvent(
+      1,
+      "volunteer_delivery_failed",
+      policyPayload("volunteer_delivery_failed"),
+      "2026-01-01T00:00:00.000Z",
+      {
+        subject_type: "volunteer",
+        subject_id: VOLUNTEER_ID,
+      }
+    ),
+    createProjectionEvent(
+      2,
+      "volunteer_delivery_failed",
+      policyPayload("volunteer_delivery_failed"),
+      "2026-01-02T00:00:00.000Z",
+      {
+        subject_type: "volunteer",
+        subject_id: VOLUNTEER_ID,
+      }
+    ),
+    createProjectionEvent(
+      3,
+      "volunteer_delivery_failed",
+      policyPayload("volunteer_delivery_failed"),
+      "2026-01-03T00:00:00.000Z",
+      {
+        subject_type: "volunteer",
+        subject_id: VOLUNTEER_ID,
+      }
+    ),
+  ], "volunteer", VOLUNTEER_ID);
+  const userProjection = buildTrustProjectionFromEvents([
+    createProjectionEvent(
+      1,
+      "user_pickup_failed",
+      policyPayload("user_pickup_failed"),
+      "2026-01-01T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      2,
+      "user_pickup_failed",
+      policyPayload("user_pickup_failed"),
+      "2026-01-02T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      3,
+      "user_pickup_failed",
+      policyPayload("user_pickup_failed"),
+      "2026-01-03T00:00:00.000Z"
+    ),
+  ]);
+
+  assert.equal(volunteerProjection.projected_restriction_level, 3);
+  assert.equal(volunteerProjection.projected_deposit_multiplier, 1.5);
+  assert.ok(volunteerProjection.projected_cooldown_until);
+  assert.equal(userProjection.projected_restriction_level, 2);
+  assert.equal(userProjection.projected_cooldown_until, null);
+});
+
+test("validated provider reports remain significant and repeated reports trigger cooldown", () => {
+  const firstReport = buildTrustProjectionFromEvents([
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+  ], "provider", PROVIDER_ID);
+  const repeatedReports = buildTrustProjectionFromEvents([
+    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
+    createProviderReportValidatedEvent(2, "2026-01-02T00:00:00.000Z"),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(firstReport.trust_score, 85);
+  assert.equal(firstReport.projected_restriction_level, 1);
+  assert.equal(firstReport.projected_deposit_multiplier, 1);
+  assert.equal(firstReport.projected_cooldown_until, null);
+  assert.equal(repeatedReports.trust_score, 70);
+  assert.equal(repeatedReports.projected_restriction_level, 3);
+  assert.equal(repeatedReports.projected_deposit_multiplier, 1.5);
+  assert.equal(
+    repeatedReports.projected_cooldown_until.toISOString(),
+    "2026-01-02T02:00:00.000Z"
   );
 });
 
@@ -269,7 +415,7 @@ test("recovery events do not refresh active cooldowns while restriction remains 
   ], "ngo", NGO_ID);
 
   assert.equal(projection.projected_restriction_level, 3);
-  assert.equal(projection.recovery_progress, 33.33333333333333);
+  assert.equal(projection.recovery_progress, 50);
   assert.equal(
     projection.projected_cooldown_until.toISOString(),
     "2026-01-01T14:00:00.000Z"
@@ -338,7 +484,7 @@ test("recovery can reduce restriction without clearing an unexpired cooldown", (
 
   assert.equal(projection.penalty_level, 4);
   assert.equal(projection.projected_restriction_level, 2);
-  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(projection.projected_deposit_multiplier, 1.25);
   assert.equal(
     projection.projected_cooldown_until.toISOString(),
     "2026-01-01T14:00:00.000Z"
@@ -418,11 +564,11 @@ test("critical projections expose blocked actor recovery route", () => {
   );
   assert.equal(
     projection.recovery_state.recovery_requirements.score_points_to_clear_current_score_trigger,
-    1
+    6
   );
   assert.equal(
     projection.recovery_state.recovery_requirements.successes_to_clear_penalty,
-    18
+    12
   );
 });
 
@@ -439,7 +585,7 @@ test("operational projection recommends deposit escalation at level 2", () => {
   ]);
 
   assert.equal(projection.projected_restriction_level, 2);
-  assert.equal(projection.projected_deposit_multiplier, 1.5);
+  assert.equal(projection.projected_deposit_multiplier, 1.25);
   assert.equal(projection.projected_actions.refundable_deposit_recommended, true);
   assert.equal(projection.projected_actions.enforcement_active, true);
 });
@@ -507,8 +653,7 @@ test("provider trust remains stable across normal listing expiry lifecycle", () 
       trust_impact: "neutral",
     }, "2026-01-03T00:00:00.000Z"),
     createProviderProjectionEvent(3, "provider_successful_fulfillment", {
-      score_delta: 2,
-      fulfillment_delta: 1,
+      ...TRUST_EVENT_RULES.provider_successful_fulfillment,
     }, "2026-01-04T00:00:00.000Z"),
   ], "provider", PROVIDER_ID);
 
@@ -556,15 +701,15 @@ test("provider successful fulfillments clear report penalties through domain rec
       }),
     ], "provider", PROVIDER_ID);
 
-    assert.equal(projection.trust_score, 95);
+    assert.equal(projection.trust_score, 98);
     assert.equal(projection.penalty_level, 0);
     assert.equal(projection.projected_restriction_level, 0);
     assert.equal(projection.restriction_level, 0);
     assert.equal(projection.fulfillment_count, 3);
     assert.equal(projection.failure_streak, 0);
-    assert.equal(projection.success_streak, 0);
+    assert.equal(projection.success_streak, 1);
     assert.equal(projection.recovery_progress, 100);
-    assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+    assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
     assert.equal(projection.last_success_at.toISOString(), "2026-01-04T00:00:00.000Z");
   });
 });
@@ -588,10 +733,10 @@ test("provider fulfillment recovery is independent of score suppression and dail
 
   assert.equal(suppressedBySource.trust_score, 89);
   assert.equal(suppressedBySource.penalty_level, 0);
-  assert.equal(suppressedBySource.projected_restriction_level, 1);
+  assert.equal(suppressedBySource.projected_restriction_level, 0);
   assert.equal(suppressedBySource.fulfillment_count, 3);
-  assert.equal(suppressedBySource.success_streak, 0);
-  assert.equal(suppressedBySource.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(suppressedBySource.success_streak, 1);
+  assert.equal(suppressedBySource.recovery_state.recovery_credit_this_event, 0);
   assert.equal(
     suppressedBySource.score_breakdown.trust_quality.suppression_reason,
     "non_qualifying_source"
@@ -614,8 +759,8 @@ test("provider fulfillment recovery is independent of score suppression and dail
 
     assert.equal(suppressedByDailyCap.trust_score, 89);
     assert.equal(suppressedByDailyCap.penalty_level, 0);
-    assert.equal(suppressedByDailyCap.projected_restriction_level, 1);
-    assert.equal(suppressedByDailyCap.recovery_state.recovery_credit_this_event, 2);
+    assert.equal(suppressedByDailyCap.projected_restriction_level, 0);
+    assert.equal(suppressedByDailyCap.recovery_state.recovery_credit_this_event, 0);
     assert.equal(suppressedByDailyCap.score_breakdown.trust_quality.applied_score_delta, 0);
     assert.equal(suppressedByDailyCap.score_breakdown.trust_quality.daily_cap_applied, true);
   });
@@ -711,7 +856,7 @@ test("consecutive successful completions reduce passive penalties", () => {
   assert.equal(projection.penalty_level, 0);
   assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.recovery_progress, 100);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   assert.equal(projection.recovery_state.recovery_requirements.successes_to_clear_penalty, 0);
 });
 
@@ -721,24 +866,30 @@ test("verified good behavior participates in deterministic recovery", () => {
       score_delta: -10,
       failure_delta: 1,
     }, "2026-01-01T00:00:00.000Z"),
-    createProjectionEvent(2, "verified_good_behavior", {
-      score_delta: 2,
-      completion_delta: 1,
-    }, "2026-01-02T00:00:00.000Z"),
-    createProjectionEvent(3, "verified_good_behavior", {
-      score_delta: 2,
-      completion_delta: 1,
-    }, "2026-01-03T00:00:00.000Z"),
-    createProjectionEvent(4, "verified_good_behavior", {
-      score_delta: 2,
-      completion_delta: 1,
-    }, "2026-01-04T00:00:00.000Z"),
+    createProjectionEvent(
+      2,
+      "verified_good_behavior",
+      policyPayload("verified_good_behavior"),
+      "2026-01-02T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      3,
+      "verified_good_behavior",
+      policyPayload("verified_good_behavior"),
+      "2026-01-03T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      4,
+      "verified_good_behavior",
+      policyPayload("verified_good_behavior"),
+      "2026-01-04T00:00:00.000Z"
+    ),
   ]);
 
   assert.equal(projection.penalty_level, 0);
   assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.projected_deposit_multiplier, 1);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
 });
 
 test("stable successful behavior applies passive decay by event time", () => {
@@ -788,8 +939,8 @@ test("same-provider repeated pickup gains decay by configured diversity policy",
     assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 0);
     assert.equal(projection.trust_score, 98.5);
     assert.equal(projection.penalty_level, 0);
-    assert.equal(projection.success_streak, 0);
-    assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+    assert.equal(projection.success_streak, 1);
+    assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   });
 });
 
@@ -812,7 +963,7 @@ test("daily trust gain cap limits positive score growth", () => {
       }, "2026-01-02T01:00:00.000Z"),
     ]);
 
-    assert.equal(projection.trust_score, 84);
+    assert.equal(projection.trust_score, 88);
     assert.equal(projection.score_breakdown.trust_quality.daily_cap_applied, true);
     assert.equal(projection.score_breakdown.trust_quality.applied_score_delta, 1);
   });
@@ -834,7 +985,7 @@ test("free and zero-value reservations do not award positive trust gain", () => 
   assert.equal(projection.trust_score, 90);
   assert.equal(projection.penalty_level, 2);
   assert.equal(projection.success_streak, 1);
-  assert.equal(projection.recovery_progress, 33.33333333333333);
+  assert.equal(projection.recovery_progress, 50);
   assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   assert.equal(projection.last_success_at.toISOString(), "2026-01-02T00:00:00.000Z");
   assert.equal(
@@ -904,14 +1055,14 @@ test("T5.3.1 user pickups recover penalties independently of score gain suppress
     const sameProviderAfter3 = sameProvider(3);
     assert.equal(sameProviderAfter3.trust_score, 90.5);
     assert.equal(sameProviderAfter3.penalty_level, 3);
-    assert.equal(sameProviderAfter3.projected_restriction_level, 1);
+    assert.equal(sameProviderAfter3.projected_restriction_level, 0);
     assert.equal(sameProviderAfter3.score_breakdown.trust_quality.applied_score_delta, 0);
     assert.equal(sameProviderAfter3.score_breakdown.trust_quality.provider_decay_factor, 0);
 
     const sameProviderAfter6 = sameProvider(6);
-    assert.equal(sameProviderAfter6.trust_score, 94.5);
-    assert.equal(sameProviderAfter6.penalty_level, 1);
-    assert.equal(sameProviderAfter6.projected_restriction_level, 1);
+    assert.equal(sameProviderAfter6.trust_score, 96.5);
+    assert.equal(sameProviderAfter6.penalty_level, 0);
+    assert.equal(sameProviderAfter6.projected_restriction_level, 0);
 
     const sameProviderAfter9 = sameProvider(9);
     assert.equal(sameProviderAfter9.trust_score, 96.5);
@@ -921,12 +1072,12 @@ test("T5.3.1 user pickups recover penalties independently of score gain suppress
     const differentProvidersAfter3 = differentProviders(3);
     assert.equal(differentProvidersAfter3.trust_score, 95);
     assert.equal(differentProvidersAfter3.penalty_level, 3);
-    assert.equal(differentProvidersAfter3.projected_restriction_level, 1);
+    assert.equal(differentProvidersAfter3.projected_restriction_level, 0);
 
     const differentProvidersAfter6 = differentProviders(6);
     assert.equal(differentProvidersAfter6.trust_score, 100);
-    assert.equal(differentProvidersAfter6.penalty_level, 1);
-    assert.equal(differentProvidersAfter6.projected_restriction_level, 1);
+    assert.equal(differentProvidersAfter6.penalty_level, 0);
+    assert.equal(differentProvidersAfter6.projected_restriction_level, 0);
 
     const differentProvidersAfter9 = differentProviders(9);
     assert.equal(differentProvidersAfter9.trust_score, 100);
@@ -941,14 +1092,14 @@ test("T5.3.1 user pickups recover penalties independently of score gain suppress
     assert.equal(zeroValueAfter3.projected_restriction_level, 1);
 
     const zeroValueAfter6 = zeroValue(6);
-    assert.equal(zeroValueAfter6.trust_score, 90);
-    assert.equal(zeroValueAfter6.penalty_level, 1);
-    assert.equal(zeroValueAfter6.projected_restriction_level, 1);
+    assert.equal(zeroValueAfter6.trust_score, 92);
+    assert.equal(zeroValueAfter6.penalty_level, 0);
+    assert.equal(zeroValueAfter6.projected_restriction_level, 0);
 
     const zeroValueAfter9 = zeroValue(9);
     assert.equal(zeroValueAfter9.trust_score, 92);
     assert.equal(zeroValueAfter9.penalty_level, 0);
-    assert.equal(zeroValueAfter9.projected_restriction_level, 1);
+    assert.equal(zeroValueAfter9.projected_restriction_level, 0);
     assert.equal(
       zeroValueAfter9.score_breakdown.trust_quality.suppression_reason,
       "zero_value_reservation"
@@ -994,8 +1145,8 @@ test("free NGO rescue completions qualify for recovery without score gain", () =
   assert.equal(projection.trust_score, 84);
   assert.equal(projection.penalty_level, 2);
   assert.equal(projection.projected_restriction_level, 1);
-  assert.equal(projection.success_streak, 0);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.success_streak, 1);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   assert.equal(projection.last_success_at.toISOString(), "2026-01-05T00:00:00.000Z");
   assert.equal(
     projection.score_breakdown.trust_quality.suppression_reason,
@@ -1043,8 +1194,9 @@ test("free volunteer rescue completions qualify for recovery without score gain"
   assert.equal(projection.trust_score, 80);
   assert.equal(projection.penalty_level, 4);
   assert.equal(projection.projected_restriction_level, 2);
-  assert.equal(projection.success_streak, 0);
-  assert.equal(projection.recovery_state.recovery_credit_this_event, 2);
+  assert.equal(projection.projected_deposit_multiplier, 1.25);
+  assert.equal(projection.success_streak, 1);
+  assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   assert.equal(projection.last_success_at.toISOString(), "2026-01-05T00:00:00.000Z");
   assert.equal(
     projection.score_breakdown.trust_quality.suppression_reason,
@@ -1065,8 +1217,8 @@ test("T5.3 recovery simulations keep cooldown aligned by role", () => {
       successMetadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
       checkpoints: {
         3: { score: 84, penalty: 2, level: 1, cooldown: null, deposit: 1 },
-        6: { score: 88, penalty: 0, level: 1, cooldown: null, deposit: 1 },
-        9: { score: 88, penalty: 0, level: 1, cooldown: null, deposit: 1 },
+        6: { score: 88, penalty: 0, level: 0, cooldown: null, deposit: 1 },
+        9: { score: 88, penalty: 0, level: 0, cooldown: null, deposit: 1 },
       },
     },
     {
@@ -1078,7 +1230,7 @@ test("T5.3 recovery simulations keep cooldown aligned by role", () => {
       successPayload: { score_delta: 4, completion_delta: 1 },
       successMetadata: { provider_id: PROVIDER_ID, is_free: true, food_amount: 0 },
       checkpoints: {
-        3: { score: 80, penalty: 4, level: 2, cooldown: null, deposit: 1.5 },
+        3: { score: 80, penalty: 4, level: 2, cooldown: null, deposit: 1.25 },
       },
     },
     {
@@ -1090,7 +1242,7 @@ test("T5.3 recovery simulations keep cooldown aligned by role", () => {
       successPayload: { score_delta: 3, completion_delta: 1 },
       successMetadata: { provider_id: PROVIDER_ID, food_amount: 100 },
       checkpoints: {
-        3: { score: 93, penalty: 2, level: 1, cooldown: null, deposit: 1 },
+        3: { score: 93, penalty: 2, level: 0, cooldown: null, deposit: 1 },
       },
     },
   ];
@@ -1358,16 +1510,16 @@ test("provider projection rebuild replays historical fulfillments into recovery"
   });
 
   assert.equal(result.eventCount, 4);
-  assert.equal(result.projection.trust_score, 95);
+  assert.equal(result.projection.trust_score, 98);
   assert.equal(result.projection.penalty_level, 0);
   assert.equal(result.projection.projected_restriction_level, 0);
   assert.equal(result.projection.fulfillment_count, 3);
-  assert.equal(result.score.trust_score, 95);
+  assert.equal(result.score.trust_score, 98);
   assert.equal(result.score.penalty_level, 0);
   assert.equal(result.score.projected_restriction_level, 0);
   assert.equal(result.score.fulfillment_count, 3);
   assert.equal(result.score.recovery_progress, 100);
-  assert.equal(result.score.success_streak, 0);
+  assert.equal(result.score.success_streak, 1);
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
 

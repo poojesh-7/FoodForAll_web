@@ -506,7 +506,7 @@ function buildAdminTrustActionEvent({
     actionType === "VERIFIED_GOOD_BEHAVIOR"
   ) {
     eventType = "verified_good_behavior";
-    payload.score_delta = 2;
+    payload.score_delta = 3;
     payload.completion_delta = 1;
     payload.metadata = {
       ...metadata,

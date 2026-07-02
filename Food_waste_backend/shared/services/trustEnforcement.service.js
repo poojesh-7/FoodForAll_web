@@ -400,7 +400,7 @@ async function recordVerifiedGoodBehavior({
       paymentId,
       eventType: "verified_good_behavior",
       eventPayload: {
-        score_delta: 2,
+        score_delta: 3,
         completion_delta: 1,
         metadata: {
           verified_good_behavior: true,

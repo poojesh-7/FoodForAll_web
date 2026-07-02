@@ -14,25 +14,25 @@ const {
 } = require("./observability.service");
 
 const TRUST_EVENT_RULES = {
-  user_pickup_completed: { score_delta: 3, completion_delta: 1 },
-  user_pickup_failed: { score_delta: -10, failure_delta: 1 },
-  user_payment_timeout: { score_delta: -5, failure_delta: 1, timeout_delta: 1 },
-  user_cancelled_reservation: { score_delta: -2, cancellation_delta: 1 },
+  user_pickup_completed: { score_delta: 4, completion_delta: 1 },
+  user_pickup_failed: { score_delta: -7, failure_delta: 1 },
+  user_payment_timeout: { score_delta: -2, timeout_delta: 1 },
+  user_cancelled_reservation: { score_delta: -1, cancellation_delta: 1 },
   user_refund_completed: { score_delta: 1, refund_delta: 1 },
 
-  ngo_delivery_completed: { score_delta: 3, completion_delta: 1 },
-  ngo_delivery_failed: { score_delta: -10, failure_delta: 1 },
-  ngo_cancelled_reservation: { score_delta: -2, cancellation_delta: 1 },
-  ngo_unpicked_expired: { score_delta: -8, failure_delta: 1, timeout_delta: 1 },
+  ngo_delivery_completed: { score_delta: 4, completion_delta: 1 },
+  ngo_delivery_failed: { score_delta: -8, failure_delta: 1 },
+  ngo_cancelled_reservation: { score_delta: -1, cancellation_delta: 1 },
+  ngo_unpicked_expired: { score_delta: -6, failure_delta: 1, timeout_delta: 1 },
 
-  volunteer_delivery_completed: { score_delta: 4, completion_delta: 1 },
+  volunteer_delivery_completed: { score_delta: 5, completion_delta: 1 },
   volunteer_delivery_failed: { score_delta: -12, failure_delta: 1, timeout_delta: 1 },
   volunteer_assignment_timeout: { score_delta: -8, failure_delta: 1, timeout_delta: 1 },
 
   provider_listing_expired: { analytics_only: true, trust_impact: "neutral" },
   provider_report_validated: { score_delta: -15, failure_delta: 1 },
-  provider_successful_fulfillment: { score_delta: 2, fulfillment_delta: 1 },
-  verified_good_behavior: { score_delta: 2, completion_delta: 1 },
+  provider_successful_fulfillment: { score_delta: 3, fulfillment_delta: 1 },
+  verified_good_behavior: { score_delta: 3, completion_delta: 1 },
 
   payment_timeout: { timeout_delta: 1 },
   payment_reconciled: {},

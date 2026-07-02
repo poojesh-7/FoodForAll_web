@@ -1,6 +1,12 @@
 const logger = require("../utils/logger");
 const { restoreListingStock } = require("./inventory.service");
 const { hasReservedStock } = require("./reservationPaymentContext.service");
+const {
+  prepareLifecycleAccounting,
+} = require("./lifecycleAccounting.service");
+const {
+  recordReservationLifecycleTrustEvents,
+} = require("./trustEnforcement.service");
 
 function uniqueSorted(values) {
   return [
@@ -238,11 +244,172 @@ async function restoreReservationStockIfHeld(
   return listing;
 }
 
+async function releasePendingPaymentReservation(
+  client,
+  reservationId,
+  options = {}
+) {
+  const paymentStatus = options.paymentStatus || "failed";
+  const reservationStatus =
+    options.reservationStatus ||
+    (paymentStatus === "expired" ? "expired_payment" : "payment_failed");
+  const reason = options.reason || `payment_${paymentStatus}`;
+  const terminalReason = options.terminalReason || "payment_timeout";
+  const terminalSource =
+    options.terminalSource || options.source || "pending_payment_release";
+  const actorContext = options.actorContext || { role: "system" };
+  const lifecycleState = options.lifecycleState || {
+    outcome: "payment_timeout",
+    refundType: "none",
+  };
+
+  const { reservation, payments, payment } = await lockReservationGraph(
+    client,
+    reservationId,
+    { lockPayments: true }
+  );
+
+  if (!reservation) {
+    return { released: false, reason: "reservation_not_found" };
+  }
+
+  if (
+    reservation.status !== "payment_pending" ||
+    reservation.payment_status !== "pending"
+  ) {
+    return {
+      released: false,
+      reason: "reservation_not_pending_payment",
+      reservation,
+      payment,
+    };
+  }
+
+  const terminalPayment = payments.find((row) =>
+    ["paid", "success", "refund_pending", "refunded"].includes(
+      String(row?.status || "").toLowerCase()
+    )
+  );
+
+  if (terminalPayment) {
+    logger.payment("Skipped pending payment release because payment is terminal", {
+      reservationId,
+      paymentId: terminalPayment.id,
+      paymentStatus: terminalPayment.status,
+      reason,
+    });
+    return {
+      released: false,
+      reason: "payment_already_terminal",
+      reservation,
+      payment: terminalPayment,
+    };
+  }
+
+  const restoredListing = await restoreReservationStockIfHeld(client, reservation, {
+    reason,
+    reactivateIfAvailable: options.reactivateIfAvailable,
+  });
+
+  await client.query(
+    `
+    UPDATE payments
+    SET status=$2,
+        gateway_status=COALESCE($3, gateway_status),
+        reconciliation_status=COALESCE($4, reconciliation_status),
+        last_reconciled_at=NOW(),
+        updated_at=NOW()
+    WHERE reservation_id=$1
+    AND status='pending'
+    `,
+    [
+      reservation.id,
+      paymentStatus,
+      options.gatewayStatus || paymentStatus,
+      options.reconciliationStatus || "terminal",
+    ]
+  );
+
+  const releasedReservation = await client.query(
+    `
+    UPDATE reservations
+    SET status=$2,
+        payment_status=$3,
+        payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+          jsonb_build_object(
+            'payment_terminal_at', NOW(),
+            'payment_terminal_source', $4::text,
+            'payment_release_reason', $5::text
+          ) ||
+          $6::jsonb
+    WHERE id=$1
+    AND status='payment_pending'
+    AND payment_status='pending'
+    RETURNING *
+    `,
+    [
+      reservation.id,
+      reservationStatus,
+      paymentStatus,
+      terminalSource,
+      reason,
+      JSON.stringify(options.paymentContext || {}),
+    ]
+  );
+
+  const updatedReservation = releasedReservation.rows[0] || {
+    ...reservation,
+    status: reservationStatus,
+    payment_status: paymentStatus,
+  };
+
+  if (payment) {
+    await prepareLifecycleAccounting({
+      client,
+      reservation,
+      payment,
+      terminalReason,
+      lifecycleState,
+      actorContext,
+      metadata: {
+        service: "reservationConsistency.releasePendingPaymentReservation",
+        source: terminalSource,
+        ...(options.metadata || {}),
+      },
+    });
+  }
+
+  await recordReservationLifecycleTrustEvents({
+    client,
+    reservationId: reservation.id,
+  });
+
+  logger.info("Pending payment reservation released", {
+    reservationId: reservation.id,
+    listingId: reservation.listing_id,
+    paymentStatus,
+    reservationStatus,
+    reason,
+    stockRestored: Boolean(restoredListing),
+  });
+
+  return {
+    released: true,
+    reservation: updatedReservation,
+    previousReservation: reservation,
+    payment,
+    listingId: reservation.listing_id,
+    restoredListing,
+    stockRestored: Boolean(restoredListing),
+  };
+}
+
 module.exports = {
   lockListingById,
   lockPaymentById,
   lockPaymentGraphByOrderId,
   lockPaymentsByReservationId,
   lockReservationGraph,
+  releasePendingPaymentReservation,
   restoreReservationStockIfHeld,
 };

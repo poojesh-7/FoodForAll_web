@@ -24,6 +24,7 @@ const {
 } = require("../shared/services/inventory.service");
 const {
   lockReservationGraph,
+  releasePendingPaymentReservation,
   restoreReservationStockIfHeld,
 } = require("../shared/services/reservationConsistency.service");
 const {
@@ -42,9 +43,6 @@ const {
 const {
   lifecycleSql,
 } = require("../shared/services/reservationLifecycle.service");
-const {
-  prepareLifecycleAccounting,
-} = require("../shared/services/lifecycleAccounting.service");
 const { providerDisplaySelect } = require("../shared/services/providerDisplay.service");
 const {
   listingImagesSelect,
@@ -1029,58 +1027,43 @@ exports.cancelReservation = async (req, res) => {
     ) {
       paymentTimeoutOrderId = payment?.order_id || null;
 
-      await cancelPayment(client, reservation.id);
-
-      await restoreReservationStockIfHeld(client, reservation, {
+      const release = await releasePendingPaymentReservation(client, reservation.id, {
+        paymentStatus: "failed",
+        reservationStatus: "cancelled_before_confirmation",
         reason: "payment_cancelled_before_confirmation",
-      });
-
-      await client.query(
-        `
-        UPDATE reservations
-        SET status='cancelled_before_confirmation',
-            payment_status='failed',
-            payment_context=COALESCE(payment_context, '{}'::jsonb) ||
-              jsonb_build_object('cancelled_before_confirmation_at', NOW())
-        WHERE id=$1
-        AND status='payment_pending'
-        AND payment_status='pending'
-        `,
-        [reservation.id]
-      );
-
-      if (payment) {
-        await prepareLifecycleAccounting({
-          client,
-          reservation,
-          payment,
-          terminalReason: "payment_cancelled_before_confirmation",
-          lifecycleState: {
-            outcome: "payment_timeout",
-            refundType: "none",
-          },
-          actorContext: {
-            actorUserId: req.user.id,
-            actorRole: req.user.role,
-          },
-          metadata: {
-            controller: "reservation.cancelReservation",
-          },
-        });
-      }
-
-      await recordReservationLifecycleTrustEvents({
-        client,
-        reservationId: reservation.id,
+        terminalReason: "payment_cancelled_before_confirmation",
+        terminalSource: "manual_cancel_hold",
+        actorContext: {
+          actorUserId: req.user.id,
+          actorRole: req.user.role,
+        },
+        metadata: {
+          controller: "reservation.cancelReservation",
+        },
+        paymentContext: {
+          cancelled_before_confirmation_at: new Date().toISOString(),
+        },
       });
 
       await client.query("COMMIT");
       committed = true;
 
       await cleanupCancellationQueues(reservation.id, paymentTimeoutOrderId);
-      await publishListingUpdated(reservation.listing_id, {
-        action: "quantity_updated",
-      });
+      if (release.released) {
+        await Promise.all([
+          publishReservationUpdated(reservation.id, {
+            action: "cancelled",
+            reservation: release.reservation,
+          }),
+          publishPaymentUpdated(reservation.id, {
+            action: "cancelled",
+            reservation: release.reservation,
+          }),
+          publishListingUpdated(reservation.listing_id, {
+            action: "quantity_updated",
+          }),
+        ]);
+      }
 
       return res.json({
         message: "Payment was not completed. Reservation was not created.",

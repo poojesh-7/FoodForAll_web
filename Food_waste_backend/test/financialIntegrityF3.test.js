@@ -193,3 +193,39 @@ test("recovery sweep suppresses duplicate overlap with row locks", () => {
   assert.match(claimBlock, /recovery_attempts=recovery_attempts \+ 1/);
   assert.match(claimBlock, /FOR UPDATE SKIP LOCKED/);
 });
+
+test("stale payment sweep carries expired reservation ids into local release", () => {
+  const reconciliation = repoFile(
+    "Food_waste_backend",
+    "shared",
+    "services",
+    "paymentReconciliation.service.js"
+  );
+  const sweepStart = reconciliation.indexOf(
+    "async function reconcileStalePaymentSessions"
+  );
+  const sweepBlock = reconciliation.slice(sweepStart, sweepStart + 5200);
+  const orderStart = reconciliation.indexOf("async function reconcileOrder");
+  const orderBlock = reconciliation.slice(orderStart, orderStart + 2600);
+
+  assert.match(sweepBlock, /SELECT r\.id AS reservation_id,\s+p\.order_id/s);
+  assert.match(sweepBlock, /reservationsByOrderId/);
+  assert.match(sweepBlock, /expiredReservationIds:\s*reservationIds/);
+  assert.match(orderBlock, /expiredReservationIds = \[\]/);
+  assert.match(orderBlock, /expirePendingReservationsByIds\(/);
+  assert.match(orderBlock, /paymentStatus:\s*"expired"/);
+});
+
+test("payment timeout worker uses BullMQ v5 job scheduler for repeat sweep", () => {
+  const worker = repoFile(
+    "Food_waste_backend",
+    "workers",
+    "paymentTimeout.worker.js"
+  );
+
+  assert.match(worker, /upsertJobScheduler\(/);
+  assert.match(worker, /removeRepeatable\(/);
+  assert.doesNotMatch(worker, /paymentQueue\.add\(\s*[\r\n\s]*["']payment-reconciliation-sweep["'][\s\S]*repeat:\s*\{/);
+  assert.match(worker, /PAYMENT_RECONCILIATION_SWEEP_MS/);
+  assert.match(worker, /locallyExpiredReservations/);
+});

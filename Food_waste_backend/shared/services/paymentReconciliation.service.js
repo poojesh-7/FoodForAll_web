@@ -8,6 +8,7 @@ const {
 const notificationQueue = require("../../queues/notification.queue");
 const refundQueue = require("../../queues/refund.queue");
 const logger = require("../utils/logger");
+
 const {
   PaymentError,
   WebhookVerificationError,
@@ -31,6 +32,7 @@ const {
   lockPaymentGraphByOrderId,
   lockPaymentById,
   lockReservationGraph,
+  releasePendingPaymentReservation,
   restoreReservationStockIfHeld,
 } = require("./reservationConsistency.service");
 const {
@@ -45,9 +47,6 @@ const {
   markFinancialOperationStatusByRefundId,
   operationStatusFromRefundStatus,
 } = require("./refundExecution.service");
-const {
-  prepareLifecycleAccounting,
-} = require("./lifecycleAccounting.service");
 const {
   buildPaymentFinancialTerms,
   ensureSettlementAccountingSchema,
@@ -1055,94 +1054,48 @@ async function markWebhookEventFailed(event, err) {
 }
 
 async function restorePendingReservation(client, reservationId, paymentStatus) {
-  const { reservation, payment } = await lockReservationGraph(client, reservationId, {
-    lockPayments: true,
-  });
-
-  if (!reservation) return null;
-
-  if (
-    reservation.status !== "payment_pending" ||
-    reservation.payment_status !== "pending"
-  ) {
-    return null;
-  }
-
-  if (
-    ["paid", "success", "refund_pending", "refunded"].includes(
-      String(payment?.status || "").toLowerCase()
-    )
-  ) {
-    logger.payment("Skipped stale payment expiry because payment is already terminal", {
-      reservationId,
-      paymentId: payment?.id,
-      paymentStatus: payment?.status,
-    });
-    return null;
-  }
-
-  await restoreReservationStockIfHeld(client, reservation, {
-    reason: `payment_${paymentStatus || "terminal"}`,
-  });
-
-  const reservationStatus =
-    paymentStatus === "expired" ? "expired_payment" : "payment_failed";
-
-  await client.query(
-    `
-    UPDATE payments
-    SET status=$2,
-        gateway_status=$2,
-        reconciliation_status='terminal',
-        last_reconciled_at=NOW(),
-        updated_at=NOW()
-    WHERE reservation_id=$1
-    AND status='pending'
-    `,
-    [reservationId, paymentStatus]
-  );
-
-  await client.query(
-    `
-    UPDATE reservations
-    SET status=$2,
-        payment_status=$3,
-        payment_context=COALESCE(payment_context, '{}'::jsonb) ||
-          jsonb_build_object('payment_terminal_at', NOW(), 'payment_terminal_source', 'gateway_reconciliation')
-    WHERE id=$1
-    AND status='payment_pending'
-    AND payment_status='pending'
-    `,
-    [reservationId, reservationStatus, paymentStatus]
-  );
-
-  if (payment) {
-    await prepareLifecycleAccounting({
-      client,
-      reservation,
-      payment,
-      terminalReason: "payment_timeout",
-      lifecycleState: {
-        outcome: "payment_timeout",
-        refundType: "none",
-      },
-      actorContext: {
-        role: "system",
-      },
-      metadata: {
-        service: "paymentReconciliation.service",
-        source: "restore_pending_reservation",
-      },
-    });
-  }
-
-  logger.info("Pending reservation restored after payment terminal state", {
-    reservationId,
-    listingId: reservation.listing_id,
+  const release = await releasePendingPaymentReservation(client, reservationId, {
     paymentStatus,
+    reservationStatus:
+      paymentStatus === "expired" ? "expired_payment" : "payment_failed",
+    reason: `payment_${paymentStatus || "terminal"}`,
+    terminalReason: "payment_timeout",
+    terminalSource: "gateway_reconciliation",
+    gatewayStatus: paymentStatus,
+    reconciliationStatus: "terminal",
+    metadata: {
+      service: "paymentReconciliation.service",
+      source: "restore_pending_reservation",
+    },
   });
 
-  return reservation.listing_id;
+  return release.released ? release.listingId : null;
+}
+
+async function expirePendingReservationsByIds(
+  client,
+  reservationIds,
+  sideEffects,
+  options = {}
+) {
+  const ids = [...new Set((reservationIds || []).filter(Boolean).map(String))];
+  let releasedReservations = 0;
+
+  for (const reservationId of ids) {
+    const restoredListingId = await restorePendingReservation(
+      client,
+      reservationId,
+      options.paymentStatus || "expired"
+    );
+
+    if (restoredListingId) {
+      releasedReservations += 1;
+      sideEffects.changedListingIds.add(restoredListingId);
+      sideEffects.changedReservationIds.add(reservationId);
+    }
+  }
+
+  return releasedReservations;
 }
 
 async function activatePendingReservation(client, reservation) {
@@ -1941,6 +1894,37 @@ async function publishSideEffects(sideEffects, action = "payment_changed") {
                 });
               })
           : Promise.resolve(),
+        !sideEffects.activatedReservationIds.has(reservationId) &&
+        ["expired_payment", "payment_failed"].includes(reservation?.status) &&
+        reservation?.user_id
+          ? notificationQueue
+              .add("notify-user", {
+                userId: reservation.user_id,
+                type:
+                  reservation.status === "expired_payment"
+                    ? "payment_expired"
+                    : "payment_failed",
+                title:
+                  reservation.status === "expired_payment"
+                    ? "Payment hold expired"
+                    : "Payment failed",
+                message:
+                  reservation.status === "expired_payment"
+                    ? "Your payment hold expired and the reserved food was released."
+                    : "Your payment could not be completed and the reserved food was released.",
+                data: {
+                  reservation_id: reservationId,
+                  listing_id: reservation.listing_id,
+                },
+              })
+              .catch((err) => {
+                logger.warn("Payment release notification failed", {
+                  err,
+                  reservationId,
+                  userId: reservation.user_id,
+                });
+              })
+          : Promise.resolve(),
       ]);
     }),
   ]);
@@ -2234,9 +2218,14 @@ async function fetchCashfreeOrderState(orderId) {
   return normalizePaymentStatusFromGateway(orderResponse.data || {}, payments);
 }
 
-async function reconcileOrder({ orderId, source = "manual" }) {
+async function reconcileOrder({
+  orderId,
+  source = "manual",
+  expiredReservationIds = [],
+} = {}) {
   const gateway = await fetchCashfreeOrderState(orderId);
   const sideEffects = createSideEffects();
+  let locallyExpiredReservations = 0;
 
   try {
     await withTransaction(
@@ -2249,19 +2238,28 @@ async function reconcileOrder({ orderId, source = "manual" }) {
         } else if (failedStatuses.has(gateway.status)) {
           await processFailedOrder(client, orderId, gateway.status, sideEffects);
         } else {
-          await client.query(
-            `
-            UPDATE payments
-            SET gateway_status=$2,
-                reconciliation_status='pending_gateway',
-                reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1,
-                last_reconciled_at=NOW(),
-                updated_at=NOW()
-            WHERE order_id=$1
-            AND status='pending'
-            `,
-            [orderId, gateway.status]
+          locallyExpiredReservations = await expirePendingReservationsByIds(
+            client,
+            expiredReservationIds,
+            sideEffects,
+            { paymentStatus: "expired" }
           );
+
+          if (!locallyExpiredReservations) {
+            await client.query(
+              `
+              UPDATE payments
+              SET gateway_status=$2,
+                  reconciliation_status='pending_gateway',
+                  reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1,
+                  last_reconciled_at=NOW(),
+                  updated_at=NOW()
+              WHERE order_id=$1
+              AND status='pending'
+              `,
+              [orderId, gateway.status]
+            );
+          }
         }
       },
       {
@@ -2289,6 +2287,7 @@ async function reconcileOrder({ orderId, source = "manual" }) {
         source,
         gatewayStatus: gateway.status,
         changedReservations: sideEffects.changedReservationIds.size,
+        locallyExpiredReservations,
       },
     });
 
@@ -2296,6 +2295,7 @@ async function reconcileOrder({ orderId, source = "manual" }) {
       orderId,
       gatewayStatus: gateway.status,
       changedReservations: sideEffects.changedReservationIds.size,
+      locallyExpiredReservations,
     };
   } catch (err) {
     logger.error("Payment order reconciliation failed", { err, orderId, source });
@@ -2938,7 +2938,8 @@ async function reconcileStalePaymentSessions(options = {}) {
     if (Array.isArray(reservationIds) && reservationIds.length > 0) {
       const result = await client.query(
         `
-        SELECT p.order_id
+        SELECT r.id AS reservation_id,
+               p.order_id
         FROM reservations r
         JOIN payments p ON p.reservation_id=r.id
         WHERE r.id = ANY($1::uuid[])
@@ -2964,7 +2965,8 @@ async function reconcileStalePaymentSessions(options = {}) {
     } else {
       const result = await client.query(
         `
-        SELECT p.order_id
+        SELECT r.id AS reservation_id,
+               p.order_id
         FROM reservations r
         JOIN payments p ON p.reservation_id=r.id
         WHERE r.status='payment_pending'
@@ -2999,14 +3001,33 @@ async function reconcileStalePaymentSessions(options = {}) {
   }
 
   const results = [];
-  const orderIds = [...new Set(rows.map((row) => row.order_id).filter(Boolean))];
-  for (const orderId of orderIds) {
+  const reservationsByOrderId = new Map();
+  for (const row of rows) {
+    if (!row.order_id) continue;
+    const reservationIds = reservationsByOrderId.get(row.order_id) || [];
+    reservationIds.push(row.reservation_id);
+    reservationsByOrderId.set(row.order_id, reservationIds);
+  }
+
+  logger.payment("Stale payment reconciliation candidates claimed", {
+    candidateReservations: rows.length,
+    candidateOrders: reservationsByOrderId.size,
+  });
+
+  for (const [orderId, reservationIds] of reservationsByOrderId.entries()) {
     try {
-      results.push(await reconcileOrder({ orderId, source: "stale_cleanup" }));
+      results.push(
+        await reconcileOrder({
+          orderId,
+          source: "stale_cleanup",
+          expiredReservationIds: reservationIds,
+        })
+      );
     } catch (err) {
       logger.error("Stale payment reconciliation item failed", {
         err,
         orderId,
+        reservationIds,
       });
     }
   }
@@ -3024,6 +3045,7 @@ module.exports = {
   markPaymentOrderAttemptCommitted,
   normalizeRefundStatusFromGateway,
   recordPaymentOrderAttempt,
+  expirePendingReservationsByIds,
   reconcileOrder,
   reconcilePendingRefunds,
   reconcileRefundAgainstGateway,

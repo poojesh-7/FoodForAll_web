@@ -241,6 +241,69 @@ test("calibrated policy keeps first payment timeout unrestricted", () => {
   assert.equal(projection.projected_actions.cooldown_recommended, false);
 });
 
+test("successful pickup clears operational cooldown once projection drops below cooldown level", () => {
+  const events = [
+    createProjectionEvent(
+      1,
+      "user_pickup_failed",
+      policyPayload("user_pickup_failed"),
+      "2026-01-01T00:00:00.000Z"
+    ),
+    createProjectionEvent(
+      2,
+      "user_payment_timeout",
+      policyPayload("user_payment_timeout"),
+      "2026-01-01T01:00:00.000Z"
+    ),
+    createProjectionEvent(
+      3,
+      "user_payment_timeout",
+      policyPayload("user_payment_timeout"),
+      "2026-01-01T02:00:00.000Z"
+    ),
+    createProjectionEvent(
+      4,
+      "user_payment_timeout",
+      policyPayload("user_payment_timeout"),
+      "2026-01-01T03:00:00.000Z"
+    ),
+  ];
+  const beforeRecovery = buildTrustProjectionFromEvents(events);
+  const afterRecovery = buildTrustProjectionFromEvents([
+    ...events,
+    createProjectionEvent(
+      5,
+      "user_pickup_completed",
+      policyPayload("user_pickup_completed", {
+        metadata: { provider_id: PROVIDER_ID, food_amount: 100 },
+      }),
+      "2026-01-01T04:00:00.000Z"
+    ),
+  ]);
+
+  assert.equal(beforeRecovery.projected_restriction_level, 3);
+  assert.equal(beforeRecovery.projected_deposit_multiplier, 1.5);
+  assert.equal(
+    beforeRecovery.projected_cooldown_until.toISOString(),
+    "2026-01-01T15:00:00.000Z"
+  );
+  assert.equal(afterRecovery.trust_score, 91);
+  assert.equal(afterRecovery.penalty_level, 5);
+  assert.equal(afterRecovery.projected_restriction_level, 1);
+  assert.equal(afterRecovery.projected_deposit_multiplier, 1);
+  assert.equal(afterRecovery.projected_cooldown_until, null);
+  assert.equal(afterRecovery.projected_actions.cooldown_recommended, false);
+  assert.equal(afterRecovery.projected_actions.refundable_deposit_recommended, false);
+  assert.equal(
+    afterRecovery.projected_actions.cooldown_recovery_alignment.previous_cooldown_until,
+    "2026-01-01T15:00:00.000Z"
+  );
+  assert.equal(
+    afterRecovery.projected_actions.cooldown_recovery_alignment.cooldown_preserved_this_event,
+    false
+  );
+});
+
 test("calibrated policy forgives one failed pickup after successful history", () => {
   const projection = buildTrustProjectionFromEvents([
     createProjectionEvent(
@@ -442,7 +505,7 @@ test("recovery events do not refresh active cooldowns while restriction remains 
   );
 });
 
-test("recovery can reduce restriction without clearing an unexpired cooldown", () => {
+test("recovery clears unexpired cooldown when restriction drops below cooldown level", () => {
   const events = [
     createProjectionEvent(1, "ngo_delivery_failed", {
       score_delta: -10,
@@ -467,7 +530,7 @@ test("recovery can reduce restriction without clearing an unexpired cooldown", (
     }),
   ];
 
-  for (let index = 4; index <= 6; index += 1) {
+  for (let index = 4; index <= 5; index += 1) {
     events.push(
       createProjectionEvent(index, "ngo_delivery_completed", {
         score_delta: 3,
@@ -485,13 +548,15 @@ test("recovery can reduce restriction without clearing an unexpired cooldown", (
   assert.equal(projection.penalty_level, 4);
   assert.equal(projection.projected_restriction_level, 2);
   assert.equal(projection.projected_deposit_multiplier, 1.25);
-  assert.equal(
-    projection.projected_cooldown_until.toISOString(),
-    "2026-01-01T14:00:00.000Z"
-  );
+  assert.equal(projection.projected_cooldown_until, null);
+  assert.equal(projection.projected_actions.cooldown_recommended, false);
   assert.equal(
     projection.projected_actions.cooldown_recovery_alignment.cooldown_preserved_this_event,
-    true
+    false
+  );
+  assert.equal(
+    projection.projected_actions.cooldown_recovery_alignment.previous_cooldown_until,
+    "2026-01-01T14:00:00.000Z"
   );
 });
 

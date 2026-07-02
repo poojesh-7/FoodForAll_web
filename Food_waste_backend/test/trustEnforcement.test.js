@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   assertTrustActionAllowed,
+  buildTrustEnforcementPolicy,
   calculateDepositAmount,
   getTrustEnforcementPolicy,
   recordReservationLifecycleTrustEvents,
@@ -111,6 +112,30 @@ test("trust enforcement escalates deposits using projected deposit multiplier", 
     restrictionLevel: 2,
     depositMultiplier: 1.5,
   }), 150);
+});
+
+test("trust enforcement does not require deposit for recovered level 1 without cooldown", () => {
+  const policy = buildTrustEnforcementPolicy({
+    role: "user",
+    foodCost: 200,
+    projection: {
+      subject_type: "user",
+      subject_id: USER_ID,
+      trust_score: 91,
+      penalty_level: 5,
+      restriction_level: 1,
+      cooldown_until: null,
+      deposit_multiplier: 1,
+      risk_category: "watch",
+      recovery_progress: 50,
+    },
+  });
+
+  assert.equal(policy.canReserve, true);
+  assert.equal(policy.requiresDeposit, false);
+  assert.equal(policy.depositAmount, 0);
+  assert.equal(policy.cooldownUntil, null);
+  assert.equal(policy.restrictionLevel, 1);
 });
 
 test("trust enforcement blocks manual-review restriction levels", async () => {

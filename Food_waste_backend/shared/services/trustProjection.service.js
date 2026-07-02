@@ -640,9 +640,12 @@ function resolveCooldownProjection({ level, state, effect, context, event }) {
     Boolean(candidateCooldownUntil) &&
     Boolean(activePreviousCooldownUntil) &&
     candidateCooldownUntil.getTime() > activePreviousCooldownUntil.getTime();
-  const cooldownUntil = refreshAllowed
-    ? laterDate(activePreviousCooldownUntil, candidateCooldownUntil)
-    : activePreviousCooldownUntil;
+  const cooldownStillJustified = Boolean(candidateCooldownUntil);
+  const cooldownUntil = cooldownStillJustified
+    ? refreshAllowed
+      ? laterDate(activePreviousCooldownUntil, candidateCooldownUntil)
+      : activePreviousCooldownUntil
+    : null;
   const expiredAtEventTime =
     Boolean(previousCooldownUntil) &&
     !activePreviousCooldownUntil &&

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
-import { PublicFooter } from "@/components/public/PublicSite";
+import { PublicFooter, PublicHeader } from "@/components/public/PublicSite";
 import { getPublicGoogleClientId } from "@/lib/env";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
@@ -380,6 +380,7 @@ export default function LoginPage() {
           }}
         />
       )}
+      <PublicHeader />
       <main className="min-h-screen bg-zinc-50 px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
           <section className="space-y-6">

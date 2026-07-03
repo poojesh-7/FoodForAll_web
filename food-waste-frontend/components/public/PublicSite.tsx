@@ -1,8 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import PublicAuthActions from "@/components/public/PublicAuthActions";
+import { PublicNavigation, businessName } from "@/components/public/PublicNavigation";
 
-export const businessName = "FoodForAll";
+export { businessName };
 export const supportEmail = "foodforall.support@gmail.com";
 export const domainSupportEmail = "support@foodforall.in";
 export const plannedDomain = "foodforall.in";
@@ -16,23 +16,7 @@ const publicLinks = [
 ];
 
 export function PublicHeader() {
-  return (
-    <header className="border-b border-zinc-200 bg-white">
-      <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-        <Link href="/" className="text-xl font-semibold text-zinc-950">
-          FoodForAll
-        </Link>
-        <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium text-zinc-700">
-          <PublicAuthActions />
-          {publicLinks.map((link) => (
-            <Link key={link.href} href={link.href} className="hover:text-emerald-700">
-              {link.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
-    </header>
-  );
+  return <PublicNavigation />;
 }
 
 export function PublicFooter() {

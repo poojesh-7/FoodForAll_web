@@ -10,8 +10,8 @@ import {
   type ListingDiscoveryFilters,
 } from "@/lib/listingDiscovery";
 import { mergeListingRows } from "@/lib/realtimeMerge";
-import { authService } from "@/services/auth";
 import { foodService } from "@/services/food.service";
+import { useAuthStore } from "@/store/authStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
 import type {
   FoodListingRow,
@@ -21,29 +21,27 @@ import Link from "next/link";
 
 type MarketplaceListing = FoodListingRow | FoodListingWithDistance;
 
-function getProfileCoordinates(user: {
-  latitude?: number | string | null;
-  longitude?: number | string | null;
-}) {
-  const latitude = Number(user.latitude);
-  const longitude = Number(user.longitude);
+function getProfileCoordinates(user: unknown): { lat: number; lng: number } | null {
+  if (!user || typeof user !== "object") return null;
+
+  const userObj = user as Record<string, unknown>;
+  const latitude = Number(userObj.latitude);
+  const longitude = Number(userObj.longitude);
 
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
   return { lat: latitude, lng: longitude };
 }
 
-async function getMarketplaceListings(filters: ListingDiscoveryFilters) {
+async function getMarketplaceListings(
+  filters: ListingDiscoveryFilters,
+  user: unknown
+) {
   const discoveryParams = getDiscoveryParams(filters);
-  try {
-    const user = await authService.fetchMe();
-    const coordinates = getProfileCoordinates(user);
+  const coordinates = getProfileCoordinates(user);
 
-    if (coordinates) {
-      return foodService.getActiveFood({ ...coordinates, ...discoveryParams });
-    }
-  } catch {
-    // Public marketplace remains available when no signed-in location is present.
+  if (coordinates) {
+    return foodService.getActiveFood({ ...coordinates, ...discoveryParams });
   }
 
   return foodService.getActiveFood(discoveryParams);
@@ -56,6 +54,7 @@ export default function FoodMarketplacePage() {
   const [error, setError] = useState("");
   const listingVersion = useRealtimeStore((state) => state.listingVersion);
   const listingsById = useRealtimeStore((state) => state.listings);
+  const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
     let active = true;
@@ -63,7 +62,7 @@ export default function FoodMarketplacePage() {
     queueMicrotask(() => {
       if (active) setLoading(true);
     });
-    getMarketplaceListings(filters)
+    getMarketplaceListings(filters, user)
       .then((result) => {
         if (active) {
           const realtimeListings = useRealtimeStore.getState().listings;
@@ -89,7 +88,7 @@ export default function FoodMarketplacePage() {
     return () => {
       active = false;
     };
-  }, [filters]);
+  }, [filters, user]);
 
   useEffect(() => {
     if (!listingVersion) return;

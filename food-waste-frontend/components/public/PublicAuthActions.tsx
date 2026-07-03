@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
@@ -56,16 +56,9 @@ export default function PublicAuthActions({
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initialized = useAuthStore((state) => state.initialized);
   const isInitializing = useAuthStore((state) => state.isInitializing);
-  const bootstrapAuth = useAuthStore((state) => state.bootstrapAuth);
   const logout = useAuthStore((state) => state.logout);
   const [loggingOut, setLoggingOut] = useState(false);
   const styles = variantClasses[variant];
-
-  useEffect(() => {
-    if (initialized || isInitializing) return;
-
-    void bootstrapAuth();
-  }, [bootstrapAuth, initialized, isInitializing]);
 
   if (!initialized || isInitializing) {
     return null;

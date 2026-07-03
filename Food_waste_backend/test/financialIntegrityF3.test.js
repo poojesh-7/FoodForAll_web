@@ -45,7 +45,9 @@ test("payment state machine prevents double-terminal regressions", () => {
   assert.equal(isIllegalPaymentTransition("paid", "failed"), true);
   assert.equal(isIllegalPaymentTransition("refunded", "refund_pending"), true);
   assert.equal(isIllegalPaymentTransition("failed", "paid"), true);
+  assert.equal(isIllegalPaymentTransition("expired", "paid"), true);
   assert.equal(isIllegalPaymentTransition("failed", "refund_pending"), false);
+  assert.equal(isIllegalPaymentTransition("expired", "refund_pending"), false);
   assert.equal(isIllegalPaymentTransition("refund_failed", "refund_pending"), false);
 });
 
@@ -214,6 +216,10 @@ test("stale payment sweep carries expired reservation ids into local release", (
   assert.match(orderBlock, /expiredReservationIds = \[\]/);
   assert.match(orderBlock, /expirePendingReservationsByIds\(/);
   assert.match(orderBlock, /paymentStatus:\s*"expired"/);
+  assert.match(orderBlock, /gatewayFetchError = err/);
+  assert.match(orderBlock, /if \(!expiredReservationIds\.length\) \{\s*throw err;\s*\}/s);
+  assert.match(orderBlock, /status:\s*"GATEWAY_UNKNOWN"/);
+  assert.match(orderBlock, /applying local payment expiry/);
 });
 
 test("payment timeout worker uses BullMQ v5 job scheduler for repeat sweep", () => {

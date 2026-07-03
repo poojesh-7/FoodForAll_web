@@ -442,10 +442,18 @@ async function cancelPayment(client, reservationId) {
 
   if (["paid", "refunded"].includes(payment.status)) return;
 
-  await client.query(
-    `UPDATE payments SET status='failed', updated_at=NOW() WHERE id=$1`,
+  // 🔒 Atomic update: Cancel payment with validation
+  const updateResult = await client.query(
+    `UPDATE payments SET status='failed', updated_at=NOW() WHERE id=$1 RETURNING id, status`,
     [payment.id]
   );
+
+  if (!updateResult.rows.length) {
+    throw new Error(
+      `Payment cancellation failed: Could not update payment ${payment.id} ` +
+      `for reservation ${reservationId}. The payment may have been concurrently updated.`
+    );
+  }
 
   logger.payment("Payment cancelled", { reservationId, paymentId: payment.id });
   void recordOperationalEvent({

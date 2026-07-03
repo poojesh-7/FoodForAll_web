@@ -36,7 +36,7 @@ function enqueueDeadLetter(workerName, job, err) {
         classification,
       },
       {
-        jobId: `${workerName}:${job?.id}:retry-exhausted`,
+        jobId: `${workerName}-${job?.id}-retry-exhausted`,
       }
     )
     .catch((deadLetterErr) => {

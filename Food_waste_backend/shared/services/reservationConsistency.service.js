@@ -311,7 +311,11 @@ async function releasePendingPaymentReservation(
     reactivateIfAvailable: options.reactivateIfAvailable,
   });
 
-  await client.query(
+  // 🔒 STATE MACHINE ATOMIC UPDATE - Payment Status Transition
+  // Both payment and reservation MUST transition together.
+  // If either update fails to match its WHERE clause, the transaction fails.
+
+  const paymentUpdateResult = await client.query(
     `
     UPDATE payments
     SET status=$2,
@@ -321,6 +325,7 @@ async function releasePendingPaymentReservation(
         updated_at=NOW()
     WHERE reservation_id=$1
     AND status='pending'
+    RETURNING id, status
     `,
     [
       reservation.id,
@@ -329,6 +334,16 @@ async function releasePendingPaymentReservation(
       options.reconciliationStatus || "terminal",
     ]
   );
+
+  // CRITICAL: Validate payment state transitioned
+  if (!paymentUpdateResult.rows.length) {
+    throw new Error(
+      `Payment state machine violated: Payment for reservation ${reservation.id} ` +
+      `is not in 'pending' status. Cannot transition to '${paymentStatus}'. ` +
+      `Current state is unknown (likely already transitioned by concurrent operation). ` +
+      `This indicates a state machine race condition.`
+    );
+  }
 
   const releasedReservation = await client.query(
     `
@@ -357,11 +372,18 @@ async function releasePendingPaymentReservation(
     ]
   );
 
-  const updatedReservation = releasedReservation.rows[0] || {
-    ...reservation,
-    status: reservationStatus,
-    payment_status: paymentStatus,
-  };
+  // CRITICAL: Validate reservation state transitioned
+  if (!releasedReservation.rows.length) {
+    throw new Error(
+      `Payment state machine violated: Reservation ${reservation.id} ` +
+      `is not in (payment_pending, pending) status. Payment was transitioned to '${paymentStatus}' ` +
+      `but reservation update failed. Expected reservation to be in state (payment_pending, pending) ` +
+      `but it is in state (${reservation.status}, ${reservation.payment_status}). ` +
+      `This indicates a concurrent state transition that broke atomicity.`
+    );
+  }
+
+  const updatedReservation = releasedReservation.rows[0];
 
   if (payment) {
     await prepareLifecycleAccounting({

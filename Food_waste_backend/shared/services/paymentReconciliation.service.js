@@ -2223,7 +2223,29 @@ async function reconcileOrder({
   source = "manual",
   expiredReservationIds = [],
 } = {}) {
-  const gateway = await fetchCashfreeOrderState(orderId);
+  let gateway;
+  let gatewayFetchError = null;
+
+  try {
+    gateway = await fetchCashfreeOrderState(orderId);
+  } catch (err) {
+    gatewayFetchError = err;
+    if (!expiredReservationIds.length) {
+      throw err;
+    }
+
+    gateway = {
+      status: "GATEWAY_UNKNOWN",
+      paymentDetails: {},
+    };
+    logger.warn("Cashfree order state unavailable; applying local payment expiry", {
+      err,
+      orderId,
+      source,
+      expiredReservationCount: expiredReservationIds.length,
+    });
+  }
+
   const sideEffects = createSideEffects();
   let locallyExpiredReservations = 0;
 
@@ -2277,6 +2299,7 @@ async function reconcileOrder({
       source,
       gatewayStatus: gateway.status,
       changedReservations: sideEffects.changedReservationIds.size,
+      gatewayFetchFailed: Boolean(gatewayFetchError),
     });
     void recordOperationalEvent({
       category: "payment",
@@ -2288,6 +2311,8 @@ async function reconcileOrder({
         gatewayStatus: gateway.status,
         changedReservations: sideEffects.changedReservationIds.size,
         locallyExpiredReservations,
+        gatewayFetchFailed: Boolean(gatewayFetchError),
+        gatewayFetchFailure: gatewayFetchError?.message,
       },
     });
 
@@ -2296,6 +2321,7 @@ async function reconcileOrder({
       gatewayStatus: gateway.status,
       changedReservations: sideEffects.changedReservationIds.size,
       locallyExpiredReservations,
+      gatewayFetchFailed: Boolean(gatewayFetchError),
     };
   } catch (err) {
     logger.error("Payment order reconciliation failed", { err, orderId, source });
@@ -2939,24 +2965,65 @@ async function reconcileStalePaymentSessions(options = {}) {
       const result = await client.query(
         `
         SELECT r.id AS reservation_id,
-               p.order_id
+               (
+                 SELECT p.order_id
+                 FROM payments p
+                 WHERE p.reservation_id = r.id
+                 AND (
+                   (
+                     p.status='pending'
+                     AND COALESCE(
+                       r.payment_expires_at,
+                       r.reserved_at + ($2::int * INTERVAL '1 minute')
+                     ) <= NOW()
+                     AND NOT EXISTS (
+                       SELECT 1
+                       FROM cashfree_webhook_events we
+                       WHERE we.order_id=p.order_id
+                       AND we.received_at > NOW() - INTERVAL '2 minutes'
+                       AND we.status IN ('processing', 'failed')
+                     )
+                   )
+                   OR
+                   (
+                     p.status IN ('expired', 'failed')
+                     AND COALESCE(p.payment_terminal_at, p.updated_at) <= NOW()
+                   )
+                 )
+                 ORDER BY p.created_at DESC, p.id DESC
+                 LIMIT 1
+               ) AS order_id
         FROM reservations r
-        JOIN payments p ON p.reservation_id=r.id
         WHERE r.id = ANY($1::uuid[])
         AND r.status='payment_pending'
         AND r.payment_status='pending'
-        AND p.status='pending'
-        AND COALESCE(
-          r.payment_expires_at,
-          r.reserved_at + ($2::int * INTERVAL '1 minute')
-        ) <= NOW()
-        AND NOT EXISTS (
+        AND EXISTS (
           SELECT 1
-          FROM cashfree_webhook_events we
-          WHERE we.order_id=p.order_id
-          AND we.received_at > NOW() - INTERVAL '2 minutes'
-          AND we.status IN ('processing', 'failed')
+          FROM payments p
+          WHERE p.reservation_id = r.id
+          AND (
+            (
+              p.status='pending'
+              AND COALESCE(
+                r.payment_expires_at,
+                r.reserved_at + ($2::int * INTERVAL '1 minute')
+              ) <= NOW()
+              AND NOT EXISTS (
+                SELECT 1
+                FROM cashfree_webhook_events we
+                WHERE we.order_id=p.order_id
+                AND we.received_at > NOW() - INTERVAL '2 minutes'
+                AND we.status IN ('processing', 'failed')
+              )
+            )
+            OR
+            (
+              p.status IN ('expired', 'failed')
+              AND COALESCE(p.payment_terminal_at, p.updated_at) <= NOW()
+            )
+          )
         )
+        ORDER BY r.reserved_at ASC, r.id ASC
         FOR UPDATE OF r SKIP LOCKED
         `,
         [reservationIds, paymentHoldTimeoutMinutes]
@@ -2966,24 +3033,64 @@ async function reconcileStalePaymentSessions(options = {}) {
       const result = await client.query(
         `
         SELECT r.id AS reservation_id,
-               p.order_id
+               (
+                 SELECT p.order_id
+                 FROM payments p
+                 WHERE p.reservation_id = r.id
+                 AND (
+                   (
+                     p.status='pending'
+                     AND COALESCE(
+                       r.payment_expires_at,
+                       r.reserved_at + ($2::int * INTERVAL '1 minute')
+                     ) <= NOW()
+                     AND NOT EXISTS (
+                       SELECT 1
+                       FROM cashfree_webhook_events we
+                       WHERE we.order_id=p.order_id
+                       AND we.received_at > NOW() - INTERVAL '2 minutes'
+                       AND we.status IN ('processing', 'failed')
+                     )
+                   )
+                   OR
+                   (
+                     p.status IN ('expired', 'failed')
+                     AND COALESCE(p.payment_terminal_at, p.updated_at) <= NOW()
+                   )
+                 )
+                 ORDER BY p.created_at DESC, p.id DESC
+                 LIMIT 1
+               ) AS order_id
         FROM reservations r
-        JOIN payments p ON p.reservation_id=r.id
         WHERE r.status='payment_pending'
         AND r.payment_status='pending'
-        AND p.status='pending'
-        AND COALESCE(
-          r.payment_expires_at,
-          r.reserved_at + ($2::int * INTERVAL '1 minute')
-        ) <= NOW()
-        AND NOT EXISTS (
+        AND EXISTS (
           SELECT 1
-          FROM cashfree_webhook_events we
-          WHERE we.order_id=p.order_id
-          AND we.received_at > NOW() - INTERVAL '2 minutes'
-          AND we.status IN ('processing', 'failed')
+          FROM payments p
+          WHERE p.reservation_id = r.id
+          AND (
+            (
+              p.status='pending'
+              AND COALESCE(
+                r.payment_expires_at,
+                r.reserved_at + ($2::int * INTERVAL '1 minute')
+              ) <= NOW()
+              AND NOT EXISTS (
+                SELECT 1
+                FROM cashfree_webhook_events we
+                WHERE we.order_id=p.order_id
+                AND we.received_at > NOW() - INTERVAL '2 minutes'
+                AND we.status IN ('processing', 'failed')
+              )
+            )
+            OR
+            (
+              p.status IN ('expired', 'failed')
+              AND COALESCE(p.payment_terminal_at, p.updated_at) <= NOW()
+            )
+          )
         )
-        ORDER BY p.order_id
+        ORDER BY r.reserved_at ASC, r.id ASC
         LIMIT $1
         FOR UPDATE OF r SKIP LOCKED
         `,

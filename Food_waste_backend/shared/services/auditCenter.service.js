@@ -1391,13 +1391,17 @@ async function getAuditCenter(options = {}) {
     limit: 12,
   };
 
+  // Get database timestamp for consistency with all other timestamps
+  const nowResult = await client.query("SELECT NOW() as generated_at");
+  const generatedAt = nowResult.rows[0]?.generated_at;
+
   const [timeline, recentAdmin] = await Promise.all([
     listAuditEvents({ client, normalizedFilters: filters }),
     listAuditEvents({ client, normalizedFilters: adminFilters }),
   ]);
 
   return {
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt?.toISOString?.() || new Date().toISOString(),
     informational_only: true,
     enforcement_action: null,
     filters: publicFilters(filters),

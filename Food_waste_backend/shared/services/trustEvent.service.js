@@ -87,7 +87,7 @@ async function enqueueTrustProcessing(eventKey, options = {}) {
     "process-trust-events",
     { eventKey },
     jobOptions("operational", {
-      jobId: `trust:${eventKey}`,
+      jobId: `trust-${eventKey}`,
     })
   );
 }

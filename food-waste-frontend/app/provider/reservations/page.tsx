@@ -386,26 +386,8 @@ export default function ProviderReservationsPage() {
       await reservationService.confirmPickup(reservation.id, {
         pickup_code: pickupCode,
       });
-      setReservations((current) =>
-        current.map((item) =>
-          String(item.id) === reservationId
-            ? {
-                ...item,
-                task_status:
-                  reservation.pickup_type === "ngo"
-                    ? "picked_from_provider"
-                    : "picked_up",
-                status:
-                  reservation.pickup_type === "ngo" ? item.status : "picked_up",
-                picked_up_at: new Date().toISOString(),
-                completed_at:
-                  reservation.pickup_type === "ngo"
-                    ? item.completed_at
-                    : new Date().toISOString(),
-              }
-            : item
-        )
-      );
+      // DO NOT create timestamps locally. Backend sets them via NOW() in database.
+      // Reload from server to get authoritative state with server-set timestamps.
       setPickupCodes((current) => ({ ...current, [reservationId]: "" }));
       await reloadProviderReservations();
       setSuccess("Pickup confirmed.");

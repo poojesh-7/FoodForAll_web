@@ -1309,6 +1309,20 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
           fac.currency,
           fac.created_at
         FROM financial_accounting_classifications fac
+        LEFT JOIN financial_ledger_entries fle
+          ON fle.id = fac.financial_ledger_entry_id
+        WHERE NOT (
+          fac.accounting_category IN (
+            'platform_commission_revenue',
+            'provider_settlement_liability'
+          )
+          AND EXISTS (
+            SELECT 1 FROM financial_ledger_entries r
+            WHERE r.reservation_id = fle.reservation_id
+              AND r.payment_session_id = fle.payment_session_id
+              AND r.event_type = 'refund_issued'
+          )
+        )
         UNION ALL
         SELECT
           COALESCE(fle.accounting_category, ${categoryCase}) AS accounting_category,
@@ -1321,6 +1335,24 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
           SELECT 1
           FROM financial_accounting_classifications fac
           WHERE fac.financial_ledger_entry_id=fle.id
+        )
+        /*
+          Exclude historical commission and provider liability ledger rows
+          that have been reversed by a refund. This keeps the dashboard
+          accounting buckets reflective of current (active) balances
+          while preserving ledger immutability and recent event history.
+        */
+        AND NOT (
+          COALESCE(fle.accounting_category, ${categoryCase}) IN (
+            'platform_commission_revenue',
+            'provider_settlement_liability'
+          )
+          AND EXISTS (
+            SELECT 1 FROM financial_ledger_entries r
+            WHERE r.reservation_id = fle.reservation_id
+              AND r.payment_session_id = fle.payment_session_id
+              AND r.event_type = 'refund_issued'
+          )
         )
       )
       SELECT
@@ -1338,20 +1370,36 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
     `),
     client.query(
       `
+      WITH settlement_projection AS (
+        SELECT
+          ps.id,
+          ps.amount,
+          ps.status,
+          EXISTS (
+            SELECT 1
+            FROM financial_ledger_entries fle
+            WHERE fle.reservation_id = ps.reservation_id
+              AND fle.payment_session_id = ps.payment_session_id
+              AND fle.event_type = 'refund_issued'
+          ) AS is_refunded
+        FROM provider_settlements ps
+      )
       SELECT
         COALESCE(SUM(amount) FILTER (
           WHERE status = ANY($1::text[])
+            AND NOT is_refunded
         ), 0)::numeric AS pending,
         COALESCE(SUM(amount) FILTER (
           WHERE status = ANY($2::text[])
         ), 0)::numeric AS paid,
         COUNT(*) FILTER (
           WHERE status = ANY($1::text[])
+            AND NOT is_refunded
         )::int AS pending_count,
         COUNT(*) FILTER (
           WHERE status = ANY($2::text[])
         )::int AS paid_count
-      FROM provider_settlements
+      FROM settlement_projection
       `,
       [OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),

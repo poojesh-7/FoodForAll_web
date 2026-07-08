@@ -983,42 +983,55 @@ async function getProviderSettlementSummary({
     client.query(
       `
       SELECT
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($2::text[])
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.status = ANY($2::text[])
         ), 0)::numeric AS pending_earnings,
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($3::text[])
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.status = ANY($3::text[])
         ), 0)::numeric AS paid_earnings
-      FROM provider_settlements
-      WHERE provider_id=$1
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.payment_session_id = ps.payment_session_id
+        AND fle.event_type = 'refund_issued'
+      WHERE ps.provider_id=$1
+        AND fle.id IS NULL
       `,
       [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
     client.query(
       `
       SELECT
-        id,
-        provider_id,
-        reservation_id,
-        payment_id,
-        payment_session_id,
-        settlement_allocation_id,
-        settlement_batch_id,
-        amount,
-        commission_amount,
-        currency,
-        status,
-        ${sqlNullableTimestampUtc("paid_at")} AS paid_at,
-        payment_reference,
-        notes,
-        processed_by,
-        idempotency_key,
-        metadata,
-        ${sqlTimestampUtc("created_at")} AS created_at,
-        ${sqlTimestampUtc("updated_at")} AS updated_at
-      FROM provider_settlements
-      WHERE provider_id=$1
-      ORDER BY COALESCE(paid_at, updated_at, created_at) DESC, id DESC
+        ps.id,
+        ps.provider_id,
+        ps.reservation_id,
+        ps.payment_id,
+        ps.payment_session_id,
+        ps.settlement_allocation_id,
+        ps.settlement_batch_id,
+        ps.amount,
+        ps.commission_amount,
+        ps.currency,
+        CASE
+          WHEN fle.id IS NOT NULL AND fle.event_type = 'refund_issued' THEN 'refunded'
+          ELSE ps.status
+        END AS status,
+        ${sqlNullableTimestampUtc("ps.paid_at")} AS paid_at,
+        ps.payment_reference,
+        ps.notes,
+        ps.processed_by,
+        ps.idempotency_key,
+        ps.metadata,
+        ${sqlTimestampUtc("ps.created_at")} AS created_at,
+        ${sqlTimestampUtc("ps.updated_at")} AS updated_at
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.payment_session_id = ps.payment_session_id
+        AND fle.event_type = 'refund_issued'
+      WHERE ps.provider_id=$1
+        AND fle.id IS NULL
+      ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC, ps.id DESC
       LIMIT $2
       `,
       [providerId, normalizeLimit(limit, 50)],
@@ -1198,19 +1211,23 @@ async function listAdminProviderSettlements({
     `
     WITH provider_due AS (
       SELECT
-        provider_id,
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($1::text[])
+        ps.provider_id,
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.status = ANY($1::text[])
         ), 0)::numeric AS amount_due,
         COUNT(*) FILTER (
-          WHERE status = ANY($1::text[])
+          WHERE ps.status = ANY($1::text[])
         )::int AS pending_settlements,
         CASE
-          WHEN MAX(COALESCE(paid_at, updated_at, created_at)) IS NULL THEN NULL
-          ELSE to_char(MAX(COALESCE(paid_at, updated_at, created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
+          ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_settlement_at
-      FROM provider_settlements
-      GROUP BY provider_id
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.event_type = 'refund_issued'
+      WHERE fle.id IS NULL
+      GROUP BY ps.provider_id
     ),
     active_accounts AS (
       SELECT DISTINCT ON (provider_id)
@@ -1279,19 +1296,23 @@ async function listAdminProviderSettlements({
     `
     WITH provider_due AS (
       SELECT
-        provider_id,
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($2::text[])
+        ps.provider_id,
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.status = ANY($2::text[])
         ), 0)::numeric AS amount_due,
         COUNT(*) FILTER (
-          WHERE status = ANY($2::text[])
+          WHERE ps.status = ANY($2::text[])
         )::int AS pending_settlements,
         CASE
-          WHEN MAX(COALESCE(paid_at, updated_at, created_at)) IS NULL THEN NULL
-          ELSE to_char(MAX(COALESCE(paid_at, updated_at, created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
+          ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_settlement_at
-      FROM provider_settlements
-      GROUP BY provider_id
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.event_type = 'refund_issued'
+      WHERE fle.id IS NULL
+      GROUP BY ps.provider_id
     ),
     active_accounts AS (
       SELECT DISTINCT ON (provider_id)
@@ -1325,7 +1346,10 @@ async function listAdminProviderSettlements({
       ps.amount,
       ps.commission_amount,
       ps.currency,
-      ps.status,
+      CASE
+        WHEN fle.id IS NOT NULL AND fle.event_type = 'refund_issued' THEN 'refunded'
+        ELSE ps.status
+      END AS status,
       ${sqlNullableTimestampUtc("ps.paid_at")} AS paid_at,
       ps.payment_reference,
       ps.notes,
@@ -1354,11 +1378,16 @@ async function listAdminProviderSettlements({
       ppa.created_at AS payout_created_at,
       ppa.updated_at AS payout_updated_at
     FROM provider_settlements ps
+    LEFT JOIN financial_ledger_entries fle
+      ON fle.reservation_id = ps.reservation_id
+      AND fle.payment_session_id = ps.payment_session_id
+      AND fle.event_type = 'refund_issued'
     JOIN users u ON u.id=ps.provider_id
     LEFT JOIN restaurants r ON r.user_id=ps.provider_id
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=ps.provider_id
     WHERE ps.status = ANY($3::text[])
+      AND fle.id IS NULL
       AND ($5::text IS NULL OR ${adminSettlementSearchCondition(5)})
       AND ($6::text IS NULL OR ps.provider_id::text=$6)
       AND ${adminVerificationFilterCondition(7)}

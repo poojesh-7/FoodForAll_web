@@ -23,3 +23,10 @@ test("direct provider NGO requests validate the same NGO eligibility", () => {
   assert.match(source, /NGO is not eligible for new requests/);
   assert.match(source, /return res\.status\(403\)\.json\(\{ error: "NGO is not eligible for new requests" \}\)/);
 });
+
+test("createFood enqueues listing notifications through the reusable queue pipeline", () => {
+  assert.match(source, /type: "listing_created"/);
+  assert.match(source, /notificationQueue\.add\("notify-user"/);
+  assert.match(source, /listing_id: listing\.id/);
+  assert.match(source, /href: `\/food\/\$\{responseListing\.id\}`|href: `\/ngo\/listings\/\$\{responseListing\.id\}`/);
+});

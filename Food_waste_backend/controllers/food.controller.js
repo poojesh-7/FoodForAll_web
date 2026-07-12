@@ -627,6 +627,76 @@ exports.createFood = async (req, res) => {
       listing: responseListing,
     });
 
+    const listingNotificationAudience = isFreeRescueListing(responseListing)
+      ? { role: "ngo", title: "New Free Listing Available", message: `${responseListing.title} is now available for rescue.`, href: `/ngo/listings/${responseListing.id}` }
+      : { role: "user", title: "New Food Listing Available", message: `${responseListing.title} is now available nearby.`, href: `/food/${responseListing.id}` };
+
+    const recipientQuery = isFreeRescueListing(responseListing)
+      ? `
+        SELECT DISTINCT u.id AS user_id
+        FROM users u
+        JOIN ngos n ON n.user_id = u.id
+        LEFT JOIN trust_scores ts
+          ON ts.subject_type='ngo'
+         AND ts.subject_id=u.id
+        WHERE n.is_verified = true
+          AND u.role = 'ngo'
+          AND (u.banned_until IS NULL OR u.banned_until <= NOW())
+          AND (u.cooldown_until IS NULL OR u.cooldown_until <= NOW())
+          AND NULLIF(TRIM(n.organization_name), '') IS NOT NULL
+          AND LOWER(TRIM(n.organization_name)) <> 'anonymized ngo'
+          AND LOWER(TRIM(COALESCE(u.name, ''))) NOT LIKE 'deleted user %'
+          AND LOWER(TRIM(COALESCE(u.phone, ''))) NOT LIKE 'deleted%'
+          AND COALESCE(ts.projected_restriction_level, ts.restriction_level, 0) < ${NGO_PROVIDER_REQUEST_BLOCK_LEVEL}
+          AND (
+            COALESCE(ts.projected_cooldown_until, ts.cooldown_until) IS NULL
+            OR COALESCE(ts.projected_cooldown_until, ts.cooldown_until) <= NOW()
+          )
+      `
+      : `
+        SELECT DISTINCT u.id AS user_id
+        FROM users u
+        LEFT JOIN trust_scores ts
+          ON ts.subject_type='user'
+         AND ts.subject_id=u.id
+        WHERE u.role = 'user'
+          AND u.is_verified = true
+          AND (u.banned_until IS NULL OR u.banned_until <= NOW())
+          AND (u.cooldown_until IS NULL OR u.cooldown_until <= NOW())
+          AND LOWER(TRIM(COALESCE(u.name, ''))) NOT LIKE 'deleted user %'
+          AND LOWER(TRIM(COALESCE(u.phone, ''))) NOT LIKE 'deleted%'
+          AND COALESCE(ts.projected_restriction_level, ts.restriction_level, 0) < ${NGO_PROVIDER_REQUEST_BLOCK_LEVEL}
+          AND (
+            COALESCE(ts.projected_cooldown_until, ts.cooldown_until) IS NULL
+            OR COALESCE(ts.projected_cooldown_until, ts.cooldown_until) <= NOW()
+          )
+      `;
+
+    const recipientResult = await pool.query(recipientQuery);
+    const recipientUserIds = recipientResult.rows.map((row) => row.user_id).filter(Boolean);
+
+    await Promise.all(
+      recipientUserIds.map((userId) =>
+        notificationQueue.add("notify-user", {
+          userId,
+          type: "listing_created",
+          title: listingNotificationAudience.title,
+          message: listingNotificationAudience.message,
+          data: {
+            listing_id: listing.id,
+            listing_type: isFreeRescueListing(responseListing) ? "free" : "paid",
+            href: listingNotificationAudience.href,
+          },
+        }).catch((err) => {
+          logger.warn("Listing creation notification enqueue failed", {
+            err,
+            listingId: listing.id,
+            userId,
+          });
+        })
+      )
+    );
+
     res.status(201).json({
       message: "Food created successfully",
       listing: responseListing,

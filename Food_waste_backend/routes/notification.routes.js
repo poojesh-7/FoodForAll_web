@@ -9,6 +9,9 @@ router.get("/", authMiddleware, notificationCtrl.getNotifications);
 router.put("/:id/read", authMiddleware, notificationCtrl.markAsRead);
 router.get("/count/unread", authMiddleware, notificationCtrl.getUnreadCount);
 router.put("/read-all", authMiddleware, notificationCtrl.markAllAsRead);
+router.get("/browser-push", authMiddleware, notificationCtrl.listBrowserPushSubscriptions);
+router.post("/browser-push", authMiddleware, notificationCtrl.createBrowserPushSubscription);
+router.delete("/browser-push/:id", authMiddleware, notificationCtrl.deleteBrowserPushSubscription);
 
 router.post("/save-token", authMiddleware, async (req, res) => {
   try {

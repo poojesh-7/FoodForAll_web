@@ -1,5 +1,6 @@
 const pool = require("../shared/config/db");
 const { isValidId } = require("../utils/validation");
+const webPushService = require("../shared/services/webPush.service");
 
 const DEFAULT_NOTIFICATION_LIMIT = 30;
 const MAX_NOTIFICATION_LIMIT = 100;
@@ -143,4 +144,40 @@ exports.markAllAsRead = async (req, res) => {
   );
 
   res.json({ message: "All notifications marked as read" });
+};
+
+exports.listBrowserPushSubscriptions = async (req, res) => {
+  try {
+    const subscriptions = await webPushService.listSubscriptionsForUser(req.user.id);
+    res.json({ subscriptions });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Failed to list subscriptions" });
+  }
+};
+
+exports.createBrowserPushSubscription = async (req, res) => {
+  try {
+    const subscription = await webPushService.upsertSubscriptionForUser(req.user.id, req.body);
+    res.status(201).json({ subscription });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Failed to save subscription" });
+  }
+};
+
+exports.deleteBrowserPushSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) {
+      return res.status(400).json({ error: "Subscription id is required" });
+    }
+
+    const deleted = await webPushService.deleteSubscriptionForUser(req.user.id, id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Subscription not found" });
+    }
+
+    res.json({ message: "Subscription removed" });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Failed to delete subscription" });
+  }
 };

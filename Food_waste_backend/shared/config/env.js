@@ -136,6 +136,13 @@ const envSchema = z.object({
   GOOGLE_WEB_CLIENT_ID: optionalString,
   GOOGLE_ALLOWED_CLIENT_IDS: optionalString,
   AUTH_ENABLE_OTP: optionalString,
+  WEB_PUSH_ENABLED: optionalString,
+  VAPID_PUBLIC_KEY: optionalString,
+  VAPID_PRIVATE_KEY: optionalString,
+  VAPID_SUBJECT: optionalString,
+  PUSH_VAPID_PUBLIC_KEY: optionalString,
+  PUSH_VAPID_PRIVATE_KEY: optionalString,
+  PUSH_VAPID_SUBJECT: optionalString,
   TWILIO_ACCOUNT_SID: optionalString,
   TWILIO_AUTH_TOKEN: optionalString,
   TWILIO_VERIFY_SERVICE_SID: optionalString,
@@ -652,6 +659,10 @@ function applyNormalizedEnv(env) {
   process.env.FRONTEND_URL = parseOrigins(env.FRONTEND_URL)[0];
   process.env.FRONTEND_ORIGINS = [...new Set(frontendOrigins)].join(",");
   process.env.CASHFREE_ENV = env.CASHFREE_ENV === "prod" ? "production" : env.CASHFREE_ENV;
+  process.env.WEB_PUSH_ENABLED = String(env.WEB_PUSH_ENABLED || "false");
+  process.env.VAPID_PUBLIC_KEY = env.VAPID_PUBLIC_KEY || env.PUSH_VAPID_PUBLIC_KEY || "";
+  process.env.VAPID_PRIVATE_KEY = env.VAPID_PRIVATE_KEY || env.PUSH_VAPID_PRIVATE_KEY || "";
+  process.env.VAPID_SUBJECT = env.VAPID_SUBJECT || env.PUSH_VAPID_SUBJECT || "";
   process.env.TRUST_PROXY_HOPS = String(env.TRUST_PROXY_HOPS);
   process.env.SOCKET_PING_INTERVAL_MS = String(env.SOCKET_PING_INTERVAL_MS);
   process.env.SOCKET_PING_TIMEOUT_MS = String(env.SOCKET_PING_TIMEOUT_MS);

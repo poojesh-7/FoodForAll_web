@@ -1,0 +1,2 @@
+ALTER TABLE web_push_subscriptions
+ADD COLUMN revoked_at TIMESTAMPTZ;

@@ -1,0 +1,16 @@
+{
+  "name": "FoodForAll",
+  "short_name": "FoodForAll",
+  "description": "Food waste reduction and community support app",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/window.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

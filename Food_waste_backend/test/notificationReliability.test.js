@@ -5,6 +5,7 @@ const SERVICE_PATH = require.resolve("../shared/services/notification.service");
 const DB_PATH = require.resolve("../shared/config/db");
 const REALTIME_PATH = require.resolve("../shared/services/realtime.service");
 const PUSH_PATH = require.resolve("../shared/services/push.service");
+const WEBPUSH_PATH = require.resolve("../shared/services/webPush.service");
 
 function setCacheExport(path, exports) {
   require.cache[path] = {
@@ -29,10 +30,12 @@ test("notifyUser persists notifications with queue idempotency before delivery",
     db: require.cache[DB_PATH],
     realtime: require.cache[REALTIME_PATH],
     push: require.cache[PUSH_PATH],
+    webpush: require.cache[WEBPUSH_PATH],
   };
   const queries = [];
   const socketEvents = [];
   const pushes = [];
+  const browserPushEvents = [];
 
   setCacheExport(DB_PATH, {
     async query(sql, params) {
@@ -60,6 +63,11 @@ test("notifyUser persists notifications with queue idempotency before delivery",
   setCacheExport(PUSH_PATH, {
     async sendPush(userId, type, title, message) {
       pushes.push({ userId, type, title, message });
+    },
+  });
+  setCacheExport(WEBPUSH_PATH, {
+    async sendBrowserPushNotification(notification, data = {}) {
+      browserPushEvents.push({ notification, data });
     },
   });
   delete require.cache[SERVICE_PATH];
@@ -100,10 +108,25 @@ test("notifyUser persists notifications with queue idempotency before delivery",
       options: { throwOnError: true },
     });
     assert.equal(pushes.length, 1);
+    assert.deepEqual(browserPushEvents, [
+      {
+        notification: {
+          id: "11111111-1111-4111-8111-111111111111",
+          user_id: "22222222-2222-4222-8222-222222222222",
+          type: "queue_test",
+          title: "Queue Test",
+          message: "Retry-safe notification",
+          idempotency_key: "notification-queue:42",
+          created_at: "2026-06-10T08:00:00.000Z",
+        },
+        data: { reservationId: "reservation-1" },
+      },
+    ]);
   } finally {
     restoreCache(SERVICE_PATH, original.service);
     restoreCache(DB_PATH, original.db);
     restoreCache(REALTIME_PATH, original.realtime);
     restoreCache(PUSH_PATH, original.push);
+    restoreCache(WEBPUSH_PATH, original.webpush);
   }
 });

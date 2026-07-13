@@ -1,6 +1,25 @@
 const pool = require("../config/db");
 const logger = require("../utils/logger");
 
+let webpushClient = null;
+
+function getWebPushClient() {
+  if (webpushClient) {
+    return webpushClient;
+  }
+
+  try {
+    webpushClient = require("web-push");
+  } catch (error) {
+    logger.warn("Browser push client unavailable", {
+      error: error?.message || error,
+    });
+    webpushClient = false;
+  }
+
+  return webpushClient;
+}
+
 function isWebPushEnabled() {
   const raw = String(process.env.WEB_PUSH_ENABLED || "false").trim().toLowerCase();
   return ["true", "1", "yes", "on"].includes(raw);
@@ -16,6 +35,149 @@ function getWebPushConfig() {
     vapidSubject:
       process.env.VAPID_SUBJECT || process.env.PUSH_VAPID_SUBJECT || null,
   };
+}
+
+function configureWebPush() {
+  const client = getWebPushClient();
+  if (!client) {
+    return false;
+  }
+
+  const config = getWebPushConfig();
+  if (!config.vapidPrivateKey || !config.vapidPublicKey || !config.vapidSubject) {
+    return false;
+  }
+
+  client.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+  return true;
+}
+
+function buildPushPayload(notification, extraData = {}) {
+  const metadata = {
+    ...extraData,
+    notificationId: notification?.id,
+    notificationType: notification?.type,
+  };
+
+  return {
+    title: notification?.title || "New notification",
+    body: notification?.message || "You have a new notification",
+    icon: "/icon-192x192.png",
+    badge: "/icon-192x192.png",
+    data: metadata,
+    tag: `notification:${notification?.id || "unknown"}`,
+    renotify: true,
+    requireInteraction: false,
+  };
+}
+
+async function deactivateSubscription(subscriptionId, userId, reason) {
+  if (!subscriptionId) return false;
+
+  const result = await pool.query(
+    `
+    UPDATE web_push_subscriptions
+    SET active = FALSE, updated_at = NOW(), revoked_at = NOW()
+    WHERE id=$1 AND user_id=$2 AND active = TRUE
+    RETURNING id
+    `,
+    [subscriptionId, userId]
+  );
+
+  if (!result.rows.length) {
+    return false;
+  }
+
+  logger.info("Browser subscription deactivated", {
+    userId,
+    subscriptionId,
+    reason,
+  });
+  return true;
+}
+
+async function sendBrowserPushNotification(notification, data = {}) {
+  if (!isWebPushEnabled()) {
+    logger.info("Browser push skipped", {
+      reason: "disabled",
+      notificationId: notification?.id,
+      userId: notification?.user_id,
+    });
+    return { skipped: true, reason: "disabled", deliveredCount: 0 };
+  }
+
+  if (!configureWebPush()) {
+    logger.warn("Browser push skipped", {
+      reason: "missing-config",
+      notificationId: notification?.id,
+      userId: notification?.user_id,
+    });
+    return { skipped: true, reason: "missing-config", deliveredCount: 0 };
+  }
+
+  const subscriptions = await listSubscriptionsForUser(notification?.user_id);
+  if (!subscriptions.length) {
+    logger.info("Browser push skipped (no active subscriptions)", {
+      notificationId: notification?.id,
+      userId: notification?.user_id,
+    });
+    return { skipped: true, reason: "no-active-subscriptions", deliveredCount: 0 };
+  }
+
+  const payload = JSON.stringify(buildPushPayload(notification, data));
+  let deliveredCount = 0;
+
+  const client = getWebPushClient();
+  if (!client) {
+    logger.warn("Browser push skipped", {
+      reason: "client-unavailable",
+      notificationId: notification?.id,
+      userId: notification?.user_id,
+    });
+    return { skipped: true, reason: "client-unavailable", deliveredCount: 0 };
+  }
+
+  for (const subscription of subscriptions) {
+    try {
+      await client.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subscription.p256dh,
+            auth: subscription.auth,
+          },
+        },
+        payload
+      );
+      deliveredCount += 1;
+    } catch (error) {
+      const statusCode = error?.statusCode;
+      const reason = statusCode === 404 || statusCode === 410 || error?.message?.includes("subscription")
+        ? "invalid-subscription"
+        : "delivery-failed";
+
+      if (statusCode === 404 || statusCode === 410 || error?.message?.includes("subscription")) {
+        await deactivateSubscription(subscription.id, notification?.user_id, reason);
+      }
+
+      logger.warn("Browser push failed", {
+        notificationId: notification?.id,
+        userId: notification?.user_id,
+        subscriptionId: subscription.id,
+        statusCode,
+        reason,
+      });
+    }
+  }
+
+  logger.info("Browser push sent", {
+    notificationId: notification?.id,
+    userId: notification?.user_id,
+    deliveredCount,
+    subscriptionCount: subscriptions.length,
+  });
+
+  return { skipped: false, reason: null, deliveredCount };
 }
 
 function isSubscriptionPayloadValid(payload) {
@@ -167,6 +329,7 @@ async function cleanupInactiveSubscriptions() {
 }
 
 module.exports = {
+  buildPushPayload,
   cleanupInactiveSubscriptions,
   deactivateSubscriptionsForUser,
   deleteSubscriptionForUser,
@@ -175,5 +338,6 @@ module.exports = {
   isWebPushEnabled,
   listSubscriptionsForUser,
   normalizeSubscriptionPayload,
+  sendBrowserPushNotification,
   upsertSubscriptionForUser,
 };

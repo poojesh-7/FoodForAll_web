@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { sendPush } = require("./push.service");
 const { publishSocketEvent } = require("./realtime.service");
+const { sendBrowserPushNotification } = require("./webPush.service");
 
 function normalizeIdempotencyKey(value) {
   const normalized = String(value || "").trim();
@@ -38,6 +39,18 @@ async function notifyUser(userId, type, title, message, data = {}, options = {})
   );
 
   await sendPush(userId, type, title, message);
+
+  try {
+    await sendBrowserPushNotification(notification, data);
+  } catch (error) {
+    const logger = require("../utils/logger");
+    logger.error("Browser push failed", {
+      userId,
+      notificationId: notification?.id,
+      type,
+      error: error?.message || error,
+    });
+  }
 
   return notification;
 }

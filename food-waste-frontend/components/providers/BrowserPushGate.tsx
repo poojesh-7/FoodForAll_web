@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import BrowserPushPermissionModal from "@/components/notifications/BrowserPushPermissionModal";
 import {
   getBrowserPushPermission,
-  hasBrowserPushModalBeenShownThisSession,
   isBrowserPushSupported,
   markBrowserPushModalShownThisSession,
   shouldShowBrowserPushReminder,
@@ -15,58 +14,39 @@ export default function BrowserPushGate() {
   const initialized = useAuthStore((state) => state.initialized);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isOnboarded = useAuthStore((state) => state.isOnboarded);
-  const user = useAuthStore((state) => state.user);
   const [open, setOpen] = useState(false);
+  const [readyToPrompt, setReadyToPrompt] = useState(false);
   const hasTriggeredRef = useRef(false);
 
   const support = isBrowserPushSupported();
   const permission = getBrowserPushPermission();
   const reminder = shouldShowBrowserPushReminder();
-  const modalShown = hasBrowserPushModalBeenShownThisSession();
+
+  useEffect(() => {
+    if (!initialized || !isAuthenticated || !isOnboarded) {
+      setReadyToPrompt(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setReadyToPrompt(true);
+    }, 800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [initialized, isAuthenticated, isOnboarded]);
 
   const canPrompt = Boolean(
-    initialized &&
+    readyToPrompt &&
+      initialized &&
       isAuthenticated &&
       isOnboarded &&
       support &&
       permission === "default" &&
-      reminder &&
-      !modalShown
+      reminder
   );
 
-  console.log("[WEBPUSH_GATE] mounted", {
-    initialized,
-    isAuthenticated,
-    isOnboarded,
-    user,
-    userRole: user?.role,
-    support,
-    permission,
-    reminder,
-    modalShown,
-    canPrompt,
-    open,
-    hasTriggeredRef: hasTriggeredRef.current,
-  });
-
   useEffect(() => {
-    console.log("[WEBPUSH_GATE] effect", {
-      initialized,
-      isAuthenticated,
-      isOnboarded,
-      support,
-      permission,
-      reminder,
-      modalShown,
-      canPrompt,
-      open,
-      hasTriggeredRef: hasTriggeredRef.current,
-    });
-
     if (!canPrompt || hasTriggeredRef.current) {
-      if (!canPrompt && open) {
-        setOpen(false);
-      }
       return;
     }
 
@@ -74,17 +54,20 @@ export default function BrowserPushGate() {
     markBrowserPushModalShownThisSession();
 
     const timeoutId = window.setTimeout(() => {
-      console.log("[WEBPUSH_GATE] opening modal");
       setOpen(true);
-    }, 600);
+    }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [canPrompt, open, initialized, isAuthenticated, isOnboarded, support, permission, reminder, modalShown]);
+  }, [canPrompt, initialized, isAuthenticated, isOnboarded, support, permission, reminder]);
+
+  const handleClose = () => {
+    setOpen(false);
+  };
 
   return (
     <BrowserPushPermissionModal
       open={open}
-      onClose={() => setOpen(false)}
+      onClose={handleClose}
     />
   );
 }

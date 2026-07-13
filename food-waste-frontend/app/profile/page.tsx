@@ -19,8 +19,13 @@ import type {
   UserProfile,
   UserRole,
 } from "@shared/contracts/api-contracts";
-import BrowserPushPermissionModal from "@/components/notifications/BrowserPushPermissionModal";
-import { getBrowserPushPermission, isBrowserPushSupported } from "@/lib/browserPush";
+import {
+  getBrowserPushPermission,
+  isBrowserPushSupported,
+  requestBrowserPushSubscription,
+  showBrowserPushError,
+  showBrowserPushSuccess,
+} from "@/lib/browserPush";
 
 type ProfileForm = {
   name: string;
@@ -103,11 +108,11 @@ export default function ProfilePage() {
   const [locationSaving, setLocationSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [showPushPrompt, setShowPushPrompt] = useState(false);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [browserPermission, setBrowserPermission] = useState<NotificationPermission | "unsupported">(() => getBrowserPushPermission());
   const authEmail = getAuthEmail(authUser);
   const emailLocked = authUser?.auth_provider === "google" && Boolean(authEmail);
   const canManageBrowserNotifications = Boolean(authUser?.id && isBrowserPushSupported());
-  const browserPermission = getBrowserPushPermission();
 
   useEffect(() => {
     if (!authUser?.id) return;
@@ -241,6 +246,30 @@ export default function ProfilePage() {
       setError(authService.getErrorMessage(err));
     } finally {
       setLocationSaving(false);
+    }
+  };
+
+  const handleEnableNotifications = async () => {
+    if (!canManageBrowserNotifications || permissionBusy) return;
+
+    setPermissionBusy(true);
+
+    try {
+      const result = await requestBrowserPushSubscription();
+      if (result.ok) {
+        setBrowserPermission(getBrowserPushPermission());
+        showBrowserPushSuccess("Notifications enabled on this browser.");
+        return;
+      }
+
+      showBrowserPushError(result.message || "Notifications were not enabled.");
+      setBrowserPermission(getBrowserPushPermission());
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "We could not enable notifications right now.";
+      showBrowserPushError(message);
+    } finally {
+      setPermissionBusy(false);
     }
   };
 
@@ -493,21 +522,26 @@ export default function ProfilePage() {
 
         <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-zinc-950">Notification Settings</h2>
-            {canManageBrowserNotifications && (
+            <h2 className="text-lg font-semibold text-zinc-950">Browser Notifications</h2>
+            {canManageBrowserNotifications && browserPermission !== "granted" && (
               <button
                 type="button"
-                onClick={() => setShowPushPrompt(true)}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-50"
+                onClick={handleEnableNotifications}
+                disabled={permissionBusy}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Enable notifications
+                {permissionBusy ? "Enabling..." : "Enable notifications"}
               </button>
             )}
           </div>
           <p className="text-sm text-zinc-600">
-            {canManageBrowserNotifications
-              ? `Browser permission: ${browserPermission}`
-              : "Browser notifications are not available on this device."}
+            {canManageBrowserNotifications ? (
+              <>
+                Status: <span className="font-medium text-zinc-950">{browserPermission === "granted" ? "Enabled" : "Not Enabled"}</span>
+              </>
+            ) : (
+              "Browser notifications are not available on this device."
+            )}
           </p>
         </section>
 
@@ -536,11 +570,6 @@ export default function ProfilePage() {
         >
           View History
         </Link>
-
-        <BrowserPushPermissionModal
-          open={showPushPrompt}
-          onClose={() => setShowPushPrompt(false)}
-        />
       </div>
     </main>
   );

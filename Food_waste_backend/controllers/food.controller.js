@@ -582,7 +582,13 @@ exports.createFood = async (req, res) => {
         )::geography,
         'active'
       )
-      RETURNING *;
+      RETURNING *,
+        (
+          SELECT restaurant_name
+          FROM restaurants
+          WHERE user_id = $1
+          LIMIT 1
+        ) AS restaurant_name;
       `,
       [
         req.user.id,
@@ -686,6 +692,14 @@ exports.createFood = async (req, res) => {
             listing_id: listing.id,
             listing_type: isFreeRescueListing(responseListing) ? "free" : "paid",
             href: listingNotificationAudience.href,
+            listingTitle: listing.title,
+            foodName: listing.title,
+            restaurant_name: listing.restaurant_name,
+            quantity: listing.quantity,
+            remainingQuantity: listing.remaining_quantity,
+            quantity_unit: listing.quantity_unit,
+            custom_quantity_unit: listing.custom_quantity_unit,
+            pickup_end_time: listing.pickup_end_time,
           },
         }).catch((err) => {
           logger.warn("Listing creation notification enqueue failed", {

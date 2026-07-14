@@ -18,6 +18,9 @@ const {
   normalizeQuantityUnitFields,
 } = require("../shared/services/quantityUnit.service");
 const {
+  buildListingNotificationText,
+} = require("../shared/services/listingNotificationBuilder.service");
+const {
   appendDiscoveryWhere,
   buildDiscoveryOrder,
   normalizeCategory,
@@ -681,13 +684,28 @@ exports.createFood = async (req, res) => {
     const recipientResult = await pool.query(recipientQuery);
     const recipientUserIds = recipientResult.rows.map((row) => row.user_id).filter(Boolean);
 
+    const listingNotificationText = buildListingNotificationText({
+      listingTitle: listing.title,
+      foodName: listing.title,
+      restaurant_name: listing.restaurant_name,
+      quantity: listing.quantity,
+      remainingQuantity: listing.remaining_quantity,
+      quantity_unit: listing.quantity_unit,
+      custom_quantity_unit: listing.custom_quantity_unit,
+      pickup_end_time: listing.pickup_end_time,
+      href: listingNotificationAudience.href,
+      listing_id: listing.id,
+      message: listingNotificationAudience.message,
+      title: listingNotificationAudience.title,
+    });
+
     await Promise.all(
       recipientUserIds.map((userId) =>
         notificationQueue.add("notify-user", {
           userId,
           type: "listing_created",
-          title: listingNotificationAudience.title,
-          message: listingNotificationAudience.message,
+          title: listingNotificationText.title,
+          message: listingNotificationText.message,
           data: {
             listing_id: listing.id,
             listing_type: isFreeRescueListing(responseListing) ? "free" : "paid",

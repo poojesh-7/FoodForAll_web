@@ -85,8 +85,11 @@ export default function NotificationList({
                   </time>
                 </div>
                 {notification.message && (
-                  <p className="mt-1 text-sm leading-5 text-zinc-600">
-                    {notification.message}
+                  <p
+                      className="mt-1 text-sm leading-5 text-zinc-600"
+                      style={{ whiteSpace: "pre-line" }}
+                  >
+                      {notification.message}
                   </p>
                 )}
                 {isUnread && id !== undefined && id !== null && onMarkAsRead && (

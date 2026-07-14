@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const logger = require("../utils/logger");
+const { formatBrowserPushNotification } = require("./notificationFormatter");
 
 let webpushClient = null;
 
@@ -53,19 +54,10 @@ function configureWebPush() {
 }
 
 function buildPushPayload(notification, extraData = {}) {
-  const metadata = {
-    ...extraData,
-    notificationId: notification?.id,
-    notificationType: notification?.type,
-  };
+  const payload = formatBrowserPushNotification(notification, extraData);
 
   return {
-    title: notification?.title || "New notification",
-    body: notification?.message || "You have a new notification",
-    icon: "/icon-192x192.png",
-    badge: "/icon-192x192.png",
-    data: metadata,
-    tag: `notification:${notification?.id || "unknown"}`,
+    ...payload,
     renotify: true,
     requireInteraction: false,
   };

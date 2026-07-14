@@ -677,6 +677,7 @@ exports.bulkReserve = async (req, res) => {
                 title: "New NGO Reservation",
                 message: "An NGO reserved food for pickup.",
                 data: {
+                  href: "/provider/reservations",
                   reservation_id: notification.reservationId,
                   listing_id: notification.listingId,
                 },

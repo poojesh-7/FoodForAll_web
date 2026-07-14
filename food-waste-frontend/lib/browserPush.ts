@@ -49,30 +49,21 @@ export function getBrowserPushPermission(): NotificationPermission | "unsupporte
 
 export function shouldShowBrowserPushReminder() {
   if (typeof window === "undefined") {
-    console.log("[WEBPUSH_GATE] reminder window undefined");
     return false;
   }
 
   const storedValue = window.localStorage.getItem(BROWSER_PUSH_REMINDER_STORAGE_KEY);
-  console.log("[WEBPUSH_GATE] reminder storage", { storedValue, key: BROWSER_PUSH_REMINDER_STORAGE_KEY });
   if (!storedValue) {
-    console.log("[WEBPUSH_GATE] reminder => no stored value, show reminder");
     return true;
   }
 
   const lastDismissedAt = Number(storedValue);
   if (!Number.isFinite(lastDismissedAt)) {
-    console.log("[WEBPUSH_GATE] reminder => invalid stored value, show reminder");
     return true;
   }
 
   const elapsed = Date.now() - lastDismissedAt;
   const show = elapsed >= BROWSER_PUSH_REMINDER_DELAY_MS;
-  console.log("[WEBPUSH_GATE] reminder evaluation", {
-    elapsed,
-    thresholdMs: BROWSER_PUSH_REMINDER_DELAY_MS,
-    show,
-  });
   return show;
 }
 

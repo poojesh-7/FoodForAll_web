@@ -182,7 +182,7 @@ function isSubscriptionPayloadValid(payload) {
 
   try {
     const endpoint = new URL(normalized.endpoint);
-    return endpoint.protocol === "https:" || endpoint.protocol === "http:";
+    return endpoint.protocol === "https:";
   } catch {
     return false;
   }

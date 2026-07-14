@@ -95,10 +95,41 @@ function getNotificationUrl(notification) {
   return "/notifications";
 }
 
+function normalizeNavigationUrl(url) {
+  if (typeof url !== "string") {
+    return null;
+  }
+
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed, self.registration.scope);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+
+    if (new URL(self.registration.scope).origin !== parsed.origin) {
+      return null;
+    }
+
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function navigateOrOpenUrl(url) {
+  const safeUrl = normalizeNavigationUrl(url);
+  if (!safeUrl) {
+    return;
+  }
+
   const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   if (allClients.length > 0) {
-    const target = new URL(url, self.registration.scope).href;
+    const target = new URL(safeUrl, self.registration.scope).href;
 
     for (const client of allClients) {
       try {
@@ -113,7 +144,7 @@ async function navigateOrOpenUrl(url) {
 
     const client = allClients[0];
     try {
-      await client.navigate(url);
+      await client.navigate(safeUrl);
       await client.focus();
       return;
     } catch (error) {
@@ -121,7 +152,7 @@ async function navigateOrOpenUrl(url) {
     }
   }
 
-  await self.clients.openWindow(url);
+  await self.clients.openWindow(safeUrl);
 }
 
 self.addEventListener("notificationclick", (event) => {

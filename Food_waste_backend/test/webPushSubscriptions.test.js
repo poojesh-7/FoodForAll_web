@@ -21,6 +21,16 @@ test("web-push payload validation rejects invalid browser subscription payloads"
   );
 });
 
+test("web-push subscription validation rejects non-HTTPS endpoints", () => {
+  assert.equal(
+    webPushService.isSubscriptionPayloadValid({
+      endpoint: "http://example.com/push",
+      keys: { p256dh: "p256dh-demo", auth: "auth-demo" },
+    }),
+    false
+  );
+});
+
 test("web-push subscription normalization preserves stable shape for storage", () => {
   const normalized = webPushService.normalizeSubscriptionPayload({
     subscription: {

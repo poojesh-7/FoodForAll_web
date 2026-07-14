@@ -637,7 +637,7 @@ exports.createFood = async (req, res) => {
     });
 
     const listingNotificationAudience = isFreeRescueListing(responseListing)
-      ? { role: "ngo", title: "New Free Listing Available", message: `${responseListing.title} is now available for rescue.`, href: `/ngo/listings/${responseListing.id}` }
+      ? { role: "ngo", title: "New Free Listing Available", message: `${responseListing.title} is now available for rescue.`, href: `/ngo/nearby-listings` }
       : { role: "user", title: "New Food Listing Available", message: `${responseListing.title} is now available nearby.`, href: `/food/${responseListing.id}` };
 
     const recipientQuery = isFreeRescueListing(responseListing)
@@ -1563,6 +1563,11 @@ exports.requestNGO = async (req, res) => {
     type: "ngo_request_received",
     title: "New Food Rescue Request",
     message: `${providerDisplayName} requested your NGO to collect food: ${food.title}`,
+    data: {
+      href: "/ngo/incoming-requests",
+      listing_id: listingId,
+      ngo_id,
+    },
   });
 
   const io = req.app.get("io");

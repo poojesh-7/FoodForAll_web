@@ -1882,6 +1882,7 @@ async function publishSideEffects(sideEffects, action = "payment_changed") {
                     ? "An NGO reserved food for pickup."
                     : "A new reservation has been placed.",
                 data: {
+                  href: "/provider/reservations",
                   reservation_id: reservationId,
                   listing_id: reservation.listing_id,
                 },
@@ -1913,6 +1914,7 @@ async function publishSideEffects(sideEffects, action = "payment_changed") {
                     ? "Your payment hold expired and the reserved food was released."
                     : "Your payment could not be completed and the reserved food was released.",
                 data: {
+                  href: "/payment-failed",
                   reservation_id: reservationId,
                   listing_id: reservation.listing_id,
                 },

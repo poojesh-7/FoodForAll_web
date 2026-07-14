@@ -147,6 +147,10 @@ const deliveryTimeoutWorker = new Worker(
         type: "delivery_failed",
         title: "Delivery Failed",
         message: "Food was picked but not delivered to the NGO.",
+        data: {
+          href: "/volunteer/tasks",
+          reservation_id: reservationId,
+        },
 });
 
       await publishSocketEvent(

@@ -155,6 +155,10 @@ const expiryWorker = new Worker(
         type: "listing_expired",
         title: "Listing Expired",
         message: "Your food listing has expired.",
+        data: {
+          href: "/provider/listings",
+          listing_id: listingId,
+        },
       });
 
     } catch (err) {

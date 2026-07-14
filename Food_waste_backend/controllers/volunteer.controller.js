@@ -355,6 +355,10 @@ exports.respondToRequest = async (req, res) => {
           type: "volunteer_accept_request",
           title: "Volunteer Response",
           message: "Volunteer accepted your request to join",
+          data: {
+            href: "/ngo/volunteers",
+            volunteer_id: req.user.id,
+          },
         });
       }
     } else {
@@ -369,7 +373,11 @@ exports.respondToRequest = async (req, res) => {
           userId: ngoUserId,
           type: "volunteer_reject_request",
           title: "Volunteer Response",
-          message: "Volunteer rejected your request"
+          message: "Volunteer rejected your request",
+          data: {
+            href: "/ngo/volunteers",
+            volunteer_id: req.user.id,
+          },
         });
       }
     }
@@ -494,6 +502,11 @@ exports.joinNGO = async (req, res) => {
       type: "volunteer_join_requested",
       title: "Volunteer Join Request",
       message: "A volunteer requested to join your NGO",
+      data: {
+        href: "/ngo/volunteers",
+        volunteer_id: req.user.id,
+        request_id: result.rows[0].id,
+      },
     });
 
     await publishToUsers([ngo.rows[0].user_id, req.user.id], "volunteer_updated", {
@@ -665,6 +678,7 @@ exports.startTask = async (req, res) => {
               title: "Volunteer Started Pickup",
               message: "Volunteer has started the pickup task.",
               data: {
+                href: "/ngo/reservations",
                 reservation_id: updatedReservation.id,
                 listing_id: updatedReservation.listing_id,
                 volunteer_id: volunteerId,
@@ -972,6 +986,7 @@ exports.completeTask = async (req, res) => {
               title: "Delivery Completed",
               message: "Food has been delivered successfully.",
               data: {
+                href: "/ngo/reservations",
                 reservation_id: reservation.id,
                 listing_id: reservation.listing_id,
                 volunteer_id: volunteerId,

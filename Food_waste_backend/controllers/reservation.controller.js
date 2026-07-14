@@ -137,11 +137,16 @@ async function cleanupCancellationQueues(reservationId, orderId) {
 }
 
 async function notifyReservationCancelled(req, reservation) {
-  await notificationQueue.add("notify-user", {
+    await notificationQueue.add("notify-user", {
     userId: reservation.provider_id,
     type: "reservation_cancelled",
     title: "Reservation Cancelled",
     message: "A user cancelled their reservation.",
+    data: {
+      href: "/provider/reservations",
+      reservation_id: reservation.id,
+      listing_id: reservation.listing_id,
+    },
   });
 
   const io = req.app.get("io");
@@ -1348,13 +1353,14 @@ exports.markAsPickedUp = async (req, res) => {
         reservation: updatedReservation,
       }),
       isNGOPickup
-        ? notificationQueue
+            ? notificationQueue
             .add("notify-user", {
               userId: updatedReservation.user_id,
               type: "pickup_completed",
               title: "Food Picked Up",
               message: "Volunteer picked up food from provider.",
               data: {
+                href: `/reservations/${updatedReservation.id}`,
                 reservation_id: updatedReservation.id,
                 listing_id: updatedReservation.listing_id,
                 volunteer_id: updatedReservation.assigned_volunteer_id,

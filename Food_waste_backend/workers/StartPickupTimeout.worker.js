@@ -153,6 +153,10 @@ const pickupTimeoutWorker = new Worker(
         type: "task_failed",
         title: "Task Cancelled",
         message: "Pickup task expired because you did not reach the provider.",
+        data: {
+          href: "/volunteer/tasks",
+          reservation_id: reservationId,
+        },
       });
 
       await publishSocketEvent(

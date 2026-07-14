@@ -1099,12 +1099,16 @@ exports.requestVolunteer = async (req, res) => {
   // const { id, name } = volunteerResult.rows[0];
   const organization_name = ngo.rows[0].organization_name;
 
-  await notificationQueue.add("notify-user", {
-    userId: volunteer_id,
-    type: "volunteer_join_request",
-    title: "NGO Sent Request",
-    message: `${organization_name} has requested you to join the NGO`,
-  });
+    await notificationQueue.add("notify-user", {
+      userId: volunteer_id,
+      type: "volunteer_join_request",
+      title: "NGO Sent Request",
+      message: `${organization_name} has requested you to join the NGO`,
+      data: {
+        href: "/volunteer/requests",
+        ngo_id: ngoId,
+      },
+    });
 
   res.json({ message: "Volunteer request sent" });
 };
@@ -1261,6 +1265,11 @@ async function handleVolunteerJoinRequest(req, res, action) {
         action === "approve"
           ? `${ngo.organization_name} approved your join request`
           : `${ngo.organization_name} rejected your join request`,
+      data: {
+        href: "/volunteer/requests",
+        request_id: requestId,
+        ngo_id: ngo.id,
+      },
     });
 
     await publishToUsers([row.volunteer_id, req.user.id], "volunteer_updated", {
@@ -1644,6 +1653,11 @@ exports.acceptNGORequest = async (req, res) => {
         type: "ngo_request_accepted",
         title: "NGO Accepted Your Request",
         message: `${ngoResult.rows[0].organization_name} accepted your request`,
+        data: {
+          href: "/provider/reservations",
+          listing_id: listingId,
+          ngo_id: ngoResult.rows[0].id,
+        },
       });
     }
 
@@ -1748,6 +1762,10 @@ exports.rejectRequest = async (req, res) => {
       type: "ngo_request_rejected",
       title: "NGO Rejected Your Request",
       message: `Your request for ${title} was rejected by the NGO`,
+      data: {
+        href: "/provider/reservations",
+        listing_id: request.rows[0].listing_id,
+      },
     });
 
     res.json({ message: "Request rejected" });

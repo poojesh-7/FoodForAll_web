@@ -57,6 +57,10 @@ const expiryAlertWorker = new Worker(
         type: "food_expiring",
         title: "Food Expiring Soon",
         message: `${food.title} will expire soon. Rescue it now!`,
+        data: {
+          href: "/ngo/nearby-listings",
+          listing_id: listingId,
+        },
       });
     }
 

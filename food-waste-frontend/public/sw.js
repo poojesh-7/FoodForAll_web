@@ -58,7 +58,73 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+function getNotificationUrl(notification) {
+  const data = notification?.data || {};
+  const href = typeof data.href === "string" && data.href.trim() ? data.href.trim() : null;
+  if (href) {
+    return href;
+  }
+
+  const type = String(data.type || "").trim().toLowerCase();
+  if (type.startsWith("listing_")) {
+    return "/food";
+  }
+  if (
+    type === "listing_reserved" ||
+    type === "listing_updated" ||
+    type === "listing_expiring"
+  ) {
+    return "/food";
+  }
+  if (type.startsWith("reservation_")) {
+    return "/reservations";
+  }
+  if (type.startsWith("provider_settlement") || type.includes("settlement")) {
+    return "/provider/settlements";
+  }
+  if (type.startsWith("volunteer_request") || type.includes("volunteer")) {
+    return "/volunteer/requests";
+  }
+  if (type.includes("appeal")) {
+    return "/trust/appeals";
+  }
+  if (type.includes("trust")) {
+    return "/trust";
+  }
+
+  return "/notifications";
+}
+
+async function navigateOrOpenUrl(url) {
+  const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (allClients.length > 0) {
+    const target = new URL(url, self.registration.scope).href;
+
+    for (const client of allClients) {
+      try {
+        if (new URL(client.url).href === target) {
+          await client.focus();
+          return;
+        }
+      } catch (error) {
+        // ignore invalid URLs or cross-origin clients
+      }
+    }
+
+    const client = allClients[0];
+    try {
+      await client.navigate(url);
+      await client.focus();
+      return;
+    } catch (error) {
+      // fallback to opening a new window
+    }
+  }
+
+  await self.clients.openWindow(url);
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(self.clients.openWindow("/notifications"));
+  event.waitUntil(navigateOrOpenUrl(getNotificationUrl(event.notification)));
 });

@@ -17,7 +17,7 @@ const DIETARY_TAGS = [
   "egg",
   "non_veg",
   "halal",
-  "jain",
+  // "jain",
   "gluten_free",
 ];
 

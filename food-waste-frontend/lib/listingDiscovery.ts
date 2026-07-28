@@ -23,7 +23,7 @@ export const dietaryTagOptions: Array<{ value: DietaryTag; label: string }> = [
   { value: "egg", label: "Egg" },
   { value: "non_veg", label: "Non Veg" },
   { value: "halal", label: "Halal" },
-  { value: "jain", label: "Jain" },
+  // { value: "jain", label: "Jain" },
   { value: "gluten_free", label: "Gluten Free" },
 ];
 

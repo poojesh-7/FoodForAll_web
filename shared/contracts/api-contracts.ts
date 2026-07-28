@@ -37,7 +37,7 @@ export type DietaryTag =
   | "egg"
   | "non_veg"
   | "halal"
-  | "jain"
+  // | "jain"
   | "gluten_free";
 export type ListingSort =
   | "nearest"

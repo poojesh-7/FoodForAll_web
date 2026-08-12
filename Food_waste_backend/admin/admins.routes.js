@@ -35,6 +35,7 @@ router.get(
   adminCtrl.getFinancialDiagnostics,
 );
 router.get("/settlements", adminCtrl.getProviderSettlementConsole);
+router.get("/settlements/monthly", adminCtrl.getMonthlySettlementConsole);
 router.patch(
   "/settlements/:id/paid",
   adminActionLimiter,
@@ -49,6 +50,11 @@ router.patch(
   "/settlements/:id/notes",
   adminActionLimiter,
   adminCtrl.updateProviderSettlementNotes,
+);
+router.patch(
+  "/settlements/:providerId/settle-month",
+  adminActionLimiter,
+  adminCtrl.settleMonthly,
 );
 router.patch(
   "/payout-accounts/:id/verify",

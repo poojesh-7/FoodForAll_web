@@ -996,7 +996,7 @@ async function getProviderSettlementSummary({
         AND fle.payment_session_id = ps.payment_session_id
         AND fle.event_type = 'refund_issued'
       WHERE ps.provider_id=$1
-        AND fle.id IS NULL
+        AND fle.reservation_id IS NULL
       `,
       [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
@@ -1012,7 +1012,7 @@ async function getProviderSettlementSummary({
           AND fle.payment_session_id = ps.payment_session_id
           AND fle.event_type = 'refund_issued'
         WHERE ps.provider_id = $1
-          AND fle.id IS NULL
+          AND fle.reservation_id IS NULL
           AND date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) >= date_trunc('month', NOW()) - INTERVAL '36 months'
       )
       SELECT
@@ -1137,7 +1137,7 @@ async function listProviderSettlementRecords({
       AND fle.payment_session_id = ps.payment_session_id
       AND fle.event_type = 'refund_issued'
     WHERE ${whereClauses.join(' AND ')}
-      AND fle.id IS NULL
+      AND fle.reservation_id IS NULL
     ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC, ps.id DESC
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `;
@@ -1292,6 +1292,291 @@ function serializeAdminSettlement(row) {
   };
 }
 
+function serializeAdminMonthlySettlement(row) {
+  const total = Number(row.total_amount || 0);
+  const paid = Number(row.paid_amount || 0);
+  const pending = Number(row.pending_amount || 0);
+
+  let status = "Pending";
+  if (paid >= total && total > 0) status = "Paid";
+  else if (paid > 0 && paid < total) status = "Partially Paid";
+  else if (paid === 0 && pending === 0) status = "Failed"; // all records failed
+  else if (pending === 0) status = "Paid";
+
+  return {
+    provider_id: row.provider_id,
+    provider_name: row.provider_name || row.restaurant_name || row.provider_phone || "Provider",
+    provider_phone: row.provider_phone || null,
+    restaurant_name: row.restaurant_name || null,
+    month_year: row.month_year,
+    month_label: row.month_label,
+    year: Number(row.year || 0),
+    month: Number(row.month || 0),
+    record_count: Number(row.record_count || 0),
+    total_amount: total,
+    paid_amount: paid,
+    pending_amount: pending,
+    status,
+    last_settlement_at: row.last_settlement_at || null,
+    payout_account: payoutAccountSummary(row),
+  };
+}
+
+async function listAdminMonthlySettlements({
+  client = pool,
+  status = "pending",
+  verificationStatus = "all",
+  limit = DEFAULT_ADMIN_SETTLEMENT_LIMIT,
+  search,
+  providerId,
+  year,
+  month,
+  ensureSchema = true,
+} = {}) {
+  if (ensureSchema) {
+    await ensureProviderPayoutSchema(client);
+  }
+
+  const filter = normalizeAdminSettlementFilter(status);
+  const filterStatuses = adminSettlementStatusesForFilter(filter);
+  const verificationFilter = normalizeAdminVerificationFilter(verificationStatus);
+  const searchPattern = normalizeAdminSettlementSearch(search);
+  const selectedProviderId = trimText(providerId || "", 80) || null;
+  const rowLimit = normalizeLimit(limit);
+
+  // Build summary for provider list (same as regular settlements)
+  const summaryResult = await client.query(
+    `
+    WITH provider_due AS (
+      SELECT
+        ps.provider_id,
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.status = ANY($1::text[])
+        ), 0)::numeric AS amount_due,
+        COUNT(*) FILTER (
+          WHERE ps.status = ANY($1::text[])
+        )::int AS pending_settlements,
+        CASE
+          WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
+          ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_settlement_at
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.event_type = 'refund_issued'
+      WHERE fle.reservation_id IS NULL
+      GROUP BY ps.provider_id
+    ),
+    active_accounts AS (
+      SELECT DISTINCT ON (provider_id)
+        id,
+        provider_id,
+        account_type,
+        upi_id,
+        account_holder_name,
+        bank_account_number,
+        ifsc_code,
+        is_active,
+        is_verified,
+        verification_status,
+        verified_at,
+        verified_by,
+        rejection_reason,
+        ${sqlTimestampUtc("created_at")} AS created_at,
+        ${sqlTimestampUtc("updated_at")} AS updated_at
+      FROM provider_payout_accounts
+      WHERE is_active=true
+      ORDER BY provider_id, created_at DESC, id DESC
+    )
+    SELECT
+      pd.provider_id,
+      u.name AS provider_name,
+      u.phone AS provider_phone,
+      r.restaurant_name,
+      COALESCE(pd.amount_due, 0) AS amount_due,
+      COALESCE(pd.pending_settlements, 0) AS pending_settlements,
+      pd.last_settlement_at,
+      ppa.id AS payout_account_id,
+      ppa.account_type AS payout_account_type,
+      ppa.upi_id AS payout_upi_id,
+      ppa.account_holder_name AS payout_account_holder_name,
+      ppa.bank_account_number AS payout_bank_account_number,
+      ppa.ifsc_code AS payout_ifsc_code,
+      ppa.is_verified AS payout_is_verified,
+      ppa.verification_status AS payout_verification_status,
+      ppa.verified_at AS payout_verified_at,
+      ppa.verified_by AS payout_verified_by,
+      ppa.rejection_reason AS payout_rejection_reason,
+      ppa.created_at AS payout_created_at,
+      ppa.updated_at AS payout_updated_at
+    FROM provider_due pd
+    JOIN users u ON u.id=pd.provider_id
+    LEFT JOIN restaurants r ON r.user_id=pd.provider_id
+    LEFT JOIN active_accounts ppa ON ppa.provider_id=pd.provider_id
+    WHERE ($3::text IS NULL OR ${adminSettlementSearchCondition(3)})
+      AND ${adminVerificationFilterCondition(4)}
+    ORDER BY
+      COALESCE(pd.pending_settlements, 0) DESC,
+      COALESCE(pd.amount_due, 0) DESC,
+      pd.last_settlement_at DESC NULLS LAST,
+      LOWER(COALESCE(r.restaurant_name, u.name, u.phone, 'provider')) ASC
+    LIMIT $2::int
+    `,
+    [
+      OUTSTANDING_SETTLEMENT_STATUSES,
+      rowLimit,
+      searchPattern,
+      verificationFilter,
+    ],
+  );
+
+  // Build monthly aggregates with optional year/month filter
+  // Separate WHERE clauses for WITH statement and outer SELECT
+  const monthlyWithWhereClauses = [
+    "ps.status = ANY($2::text[])",
+    "fle.reservation_id IS NULL",  // No matching refund entry = not refunded
+  ];
+  const monthlySelectWhereClauses = [];
+  const monthlyParams = [rowLimit, filterStatuses, PENDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES];
+  let monthlyParamIndex = 5;
+
+  if (selectedProviderId) {
+    monthlyWithWhereClauses.push(`ps.provider_id::text = $${monthlyParamIndex}`);
+    monthlyParams.push(selectedProviderId);
+    monthlyParamIndex++;
+  }
+
+  if (year && month) {
+    monthlyWithWhereClauses.push(
+      `date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) = to_date($${monthlyParamIndex}, 'YYYY-MM')`
+    );
+    monthlyParams.push(`${String(year)}-${String(month).padStart(2, '0')}`);
+    monthlyParamIndex++;
+  } else if (year) {
+    monthlyWithWhereClauses.push(
+      `EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $${monthlyParamIndex}`
+    );
+    monthlyParams.push(Number(year));
+    monthlyParamIndex++;
+  }
+
+  // Search pattern needs to be in outer SELECT WHERE clause (references u, r, ppa tables)
+  if (searchPattern) {
+    monthlySelectWhereClauses.push(
+      `CONCAT_WS(
+        ' ',
+        u.name,
+        u.phone,
+        r.restaurant_name,
+        ppa.account_type,
+        ppa.upi_id,
+        ppa.account_holder_name,
+        ppa.bank_account_number,
+        ppa.ifsc_code
+      ) ILIKE $${monthlyParamIndex} ESCAPE '\\'`
+    );
+    monthlyParams.push(searchPattern);
+    monthlyParamIndex++;
+  }
+
+  // Verification filter also needs to be in outer SELECT WHERE clause
+  monthlySelectWhereClauses.push(`${adminVerificationFilterCondition(monthlyParamIndex)}`);
+  monthlyParams.push(verificationFilter);
+
+  const result = await client.query(
+    `
+    WITH monthly_settlements AS (
+      SELECT
+        ps.provider_id,
+        to_char(COALESCE(ps.paid_at, ps.updated_at, ps.created_at), 'YYYY-MM') AS month_year,
+        to_char(COALESCE(ps.paid_at, ps.updated_at, ps.created_at), 'Mon YYYY') AS month_label,
+        EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int AS year,
+        EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int AS month,
+        COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($3::text[])), 0)::numeric AS pending_amount,
+        COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($4::text[])), 0)::numeric AS paid_amount,
+        COALESCE(SUM(ps.amount), 0)::numeric AS total_amount,
+        COUNT(*)::int AS record_count,
+        MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::timestamp AS last_settlement_ts
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.payment_session_id = ps.payment_session_id
+        AND fle.event_type = 'refund_issued'
+      WHERE ${monthlyWithWhereClauses.join(' AND ')}
+      GROUP BY ps.provider_id, month_year, month_label, year, month
+    ),
+    active_accounts AS (
+      SELECT DISTINCT ON (provider_id)
+        ppa.id,
+        ppa.provider_id,
+        ppa.account_type,
+        ppa.upi_id,
+        ppa.account_holder_name,
+        ppa.bank_account_number,
+        ppa.ifsc_code,
+        ppa.is_active,
+        ppa.is_verified,
+        ppa.verification_status,
+        ppa.verified_at,
+        ppa.verified_by,
+        ppa.rejection_reason,
+        ${sqlTimestampUtc("ppa.created_at")} AS created_at,
+        ${sqlTimestampUtc("ppa.updated_at")} AS updated_at
+      FROM provider_payout_accounts ppa
+      WHERE ppa.is_active=true
+      ORDER BY ppa.provider_id, ppa.created_at DESC, ppa.id DESC
+    )
+    SELECT
+      ms.provider_id,
+      u.name AS provider_name,
+      u.phone AS provider_phone,
+      r.restaurant_name,
+      ms.month_year,
+      ms.month_label,
+      ms.year,
+      ms.month,
+      ms.pending_amount,
+      ms.paid_amount,
+      ms.total_amount,
+      ms.record_count,
+      to_char(ms.last_settlement_ts, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_settlement_at,
+      ppa.id AS payout_account_id,
+      ppa.account_type AS payout_account_type,
+      ppa.upi_id AS payout_upi_id,
+      ppa.account_holder_name AS payout_account_holder_name,
+      ppa.bank_account_number AS payout_bank_account_number,
+      ppa.ifsc_code AS payout_ifsc_code,
+      ppa.is_verified AS payout_is_verified,
+      ppa.verification_status AS payout_verification_status,
+      ppa.verified_at AS payout_verified_at,
+      ppa.verified_by AS payout_verified_by,
+      ppa.rejection_reason AS payout_rejection_reason,
+      ppa.created_at AS payout_created_at,
+      ppa.updated_at AS payout_updated_at
+    FROM monthly_settlements ms
+    JOIN users u ON u.id = ms.provider_id
+    LEFT JOIN restaurants r ON r.user_id = ms.provider_id
+    LEFT JOIN active_accounts ppa ON ppa.provider_id = ms.provider_id
+    ${monthlySelectWhereClauses.length > 0 ? 'WHERE ' + monthlySelectWhereClauses.join(' AND ') : ''}
+    ORDER BY
+      ms.year DESC,
+      ms.month DESC,
+      ms.record_count DESC,
+      LOWER(COALESCE(r.restaurant_name, u.name, u.phone, 'provider')) ASC
+    LIMIT $1::int
+    `,
+    monthlyParams
+  );
+
+  const monthlySettlements = result.rows.map(serializeAdminMonthlySettlement);
+
+  return {
+    filter,
+    summary: summaryResult.rows.map(serializeAdminSettlementSummary),
+    monthly_settlements: monthlySettlements,
+  };
+}
+
 async function listAdminProviderSettlements({
   client = pool,
   status = "pending",
@@ -1332,7 +1617,7 @@ async function listAdminProviderSettlements({
       LEFT JOIN financial_ledger_entries fle
         ON fle.reservation_id = ps.reservation_id
         AND fle.event_type = 'refund_issued'
-      WHERE fle.id IS NULL
+      WHERE fle.reservation_id IS NULL
       GROUP BY ps.provider_id
     ),
     active_accounts AS (
@@ -1417,7 +1702,7 @@ async function listAdminProviderSettlements({
       LEFT JOIN financial_ledger_entries fle
         ON fle.reservation_id = ps.reservation_id
         AND fle.event_type = 'refund_issued'
-      WHERE fle.id IS NULL
+      WHERE fle.reservation_id IS NULL
       GROUP BY ps.provider_id
     ),
     active_accounts AS (
@@ -1493,7 +1778,7 @@ async function listAdminProviderSettlements({
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=ps.provider_id
     WHERE ps.status = ANY($3::text[])
-      AND fle.id IS NULL
+      AND fle.reservation_id IS NULL
       AND ($5::text IS NULL OR ${adminSettlementSearchCondition(5)})
       AND ($6::text IS NULL OR ps.provider_id::text=$6)
       AND ${adminVerificationFilterCondition(7)}
@@ -1828,6 +2113,7 @@ module.exports = {
   getProviderSettlementSummary,
   listProviderSettlementRecords,
   listAdminProviderSettlements,
+  listAdminMonthlySettlements,
   listAdminProviderPayoutChangeRequests,
   listProviderPayoutAccounts,
   loadActiveProviderPayoutAccount,

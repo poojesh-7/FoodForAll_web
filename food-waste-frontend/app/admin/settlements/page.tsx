@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import AdminMetricCard from "@/components/admin/AdminMetricCard";
 import AdminShell from "@/components/admin/AdminShell";
 import AdminStateBlock from "@/components/admin/AdminStateBlock";
+import { MonthlySettlementRecordsModal } from "@/components/admin/MonthlySettlementRecordsModal";
+import { SettleMonthModal } from "@/components/admin/SettleMonthModal";
 import { formatDateTimeOrFallback } from "@/lib/dateTime";
 import { adminService } from "@/services/admin.service";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -12,6 +14,8 @@ import type {
   AdminProviderSettlementConsoleData,
   AdminProviderSettlementRow,
   AdminProviderSettlementSummaryRow,
+  AdminMonthlySettlementRow,
+  AdminMonthlySettlementConsoleData,
   DbId,
   ProviderPayoutAccount,
 } from "@shared/contracts/api-contracts";
@@ -242,6 +246,8 @@ export default function AdminSettlementsPage() {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [consoleData, setConsoleData] =
     useState<AdminProviderSettlementConsoleData | null>(null);
+  const [monthlyConsoleData, setMonthlyConsoleData] =
+    useState<AdminMonthlySettlementConsoleData | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SettlementDraft>>({});
   const [loading, setLoading] = useState(true);
   const [accountActionState, setAccountActionState] = useState<
@@ -253,6 +259,35 @@ export default function AdminSettlementsPage() {
   const [success, setSuccess] = useState("");
   const [changeRequests, setChangeRequests] = useState<ProviderPayoutChangeRequest[] | null>(null);
   const [changeRequestsLoading, setChangeRequestsLoading] = useState(true);
+  
+  // Modal state for viewing records and settling month
+  const [recordsModalState, setRecordsModalState] = useState<{
+    isOpen: boolean;
+    providerId: DbId | null;
+    month: number;
+    year: number;
+    monthLabel: string;
+  }>({ isOpen: false, providerId: null, month: 0, year: 0, monthLabel: "" });
+
+  const [settleModalState, setSettleModalState] = useState<{
+    isOpen: boolean;
+    providerId: DbId | null;
+    providerName: string;
+    month: number;
+    year: number;
+    monthLabel: string;
+    recordCount: number;
+    totalAmount: number | string;
+  }>({
+    isOpen: false,
+    providerId: null,
+    providerName: "",
+    month: 0,
+    year: 0,
+    monthLabel: "",
+    recordCount: 0,
+    totalAmount: 0,
+  });
 
   const loadChangeRequests = useCallback(async () => {
     try {
@@ -273,17 +308,27 @@ export default function AdminSettlementsPage() {
     try {
       setLoading(true);
       setError("");
-      const result = await adminService.getProviderSettlementConsole({
-        status: filter,
-        verificationStatus: verificationFilter,
-        search: searchQuery.trim() || undefined,
-        providerId: selectedProviderId || undefined,
-        limit: 500,
-      });
-      setConsoleData(result);
+      const [regularResult, monthlyResult] = await Promise.all([
+        adminService.getProviderSettlementConsole({
+          status: filter,
+          verificationStatus: verificationFilter,
+          search: searchQuery.trim() || undefined,
+          providerId: selectedProviderId || undefined,
+          limit: 500,
+        }),
+        adminService.getMonthlySettlementConsole({
+          status: filter,
+          verificationStatus: verificationFilter,
+          search: searchQuery.trim() || undefined,
+          providerId: selectedProviderId || undefined,
+          limit: 500,
+        }),
+      ]);
+      setConsoleData(regularResult);
+      setMonthlyConsoleData(monthlyResult);
       setDrafts((current) => {
         const next = { ...current };
-        for (const settlement of result.settlements) {
+        for (const settlement of regularResult.settlements) {
           const key = String(settlement.id);
           if (!next[key]) {
             next[key] = {
@@ -525,6 +570,7 @@ export default function AdminSettlementsPage() {
   const metricSummary: AdminProviderSettlementSummaryRow[] =
     selectedProvider ? [selectedProvider] : providerSummary;
   const settlements = selectedProvider ? consoleData?.settlements || [] : [];
+  const monthlySettlements = selectedProvider ? monthlyConsoleData?.monthly_settlements || [] : [];
   const visibleChangeRequests = selectedProviderId
     ? selectedProviderChangeRequests
     : changeRequests || [];
@@ -860,10 +906,10 @@ export default function AdminSettlementsPage() {
               </div>
             ) : null}
           </div>
-        ) : settlements.length === 0 ? (
+        ) : monthlySettlements.length === 0 ? (
           <div className="p-4">
             <AdminStateBlock
-              title={`No ${label(filter).toLowerCase()} settlement rows for this provider.`}
+              title={`No ${label(filter).toLowerCase()} settlement records for this provider.`}
             />
           </div>
         ) : (
@@ -936,123 +982,86 @@ export default function AdminSettlementsPage() {
               <table className="min-w-full divide-y divide-zinc-100 text-sm">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
                   <tr>
-                    <th className="px-4 py-3">Provider</th>
-                    <th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Month</th>
+                    <th className="px-4 py-3">Records</th>
+                    <th className="px-4 py-3">Total</th>
+                    <th className="px-4 py-3">Paid</th>
+                    <th className="px-4 py-3">Pending</th>
                     <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Reference</th>
-                    <th className="px-4 py-3">Notes</th>
                     <th className="px-4 py-3">Actions</th>
                   </tr>
                 </thead>
               <tbody className="divide-y divide-zinc-100 align-top">
-                {settlements.map((settlement) => {
-                  const draft = draftFor(drafts, settlement);
-                  const rowKey = String(settlement.id);
-                  const paid = settlement.status === "paid";
+                {monthlySettlements.map((monthly) => {
+                  const monthKey = `${monthly.year}-${String(monthly.month).padStart(2, '0')}`;
                   return (
-                    <tr key={rowKey}>
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-zinc-950">
-                          {providerName(settlement)}
-                        </p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          {formatDateTimeOrFallback(
-                            settlement.paid_at ||
-                              settlement.updated_at ||
-                              settlement.created_at ||
-                              null
-                          )}
-                        </p>
-                      </td>
+                    <tr key={monthKey}>
                       <td className="px-4 py-3 font-medium text-zinc-950">
-                        {formatCurrency(settlement.amount)}
+                        {monthly.month_label}
                       </td>
                       <td className="px-4 py-3 text-zinc-700">
-                        {label(settlement.status)}
+                        {monthly.record_count} records
+                      </td>
+                      <td className="px-4 py-3 font-medium text-zinc-950">
+                        {formatCurrency(monthly.total_amount)}
+                      </td>
+                      <td className="px-4 py-3 text-emerald-700">
+                        {formatCurrency(monthly.paid_amount)}
+                      </td>
+                      <td className="px-4 py-3 text-orange-700">
+                        {formatCurrency(monthly.pending_amount)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${
+                          monthly.status === 'Paid' 
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : monthly.status === 'Partially Paid'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : monthly.status === 'Failed'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-orange-100 text-orange-800'
+                        }`}>
+                          {monthly.status}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
-                        <input
-                          value={draft.payment_reference}
-                          onChange={(event) =>
-                            updateDraft(settlement.id, {
-                              payment_reference: event.target.value,
-                            })
-                          }
-                          disabled={paid}
-                          placeholder="UTR/reference"
-                          className="h-10 min-w-40 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-50"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <textarea
-                          value={draft.notes}
-                          onChange={(event) =>
-                            updateDraft(settlement.id, {
-                              notes: event.target.value,
-                            })
-                          }
-                          className="min-h-20 min-w-56 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        {selectedProviderWorkflowActive ? (
-                          <div>
-                            <p className="text-sm text-zinc-700">
-                              Settlement actions are disabled while payout account workflow is active.
-                            </p>
-                            <p className="mt-1 text-xs text-zinc-500">
-                              {selectedProviderWorkflow.message}
-                            </p>
-                          </div>
-                        ) : (
-                          (() => {
-                            const payoutVerified = isPayoutAccountReady(
-                              settlement.payout_account
-                            );
-                            const markPaidDisabled =
-                              paid ||
-                              submittingId === `${rowKey}:paid` ||
-                              !payoutVerified;
-                            return (
-                              <div className="flex flex-col gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => runSettlementAction(settlement, "paid")}
-                                  disabled={markPaidDisabled}
-                                  title={
-                                    markPaidDisabled && !paid
-                                      ? payoutAccountStatusMessage(
-                                          settlement.payout_account
-                                        )
-                                      : undefined
-                                  }
-                                  className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white disabled:opacity-50"
-                                >
-                                  {submittingId === `${rowKey}:paid`
-                                    ? "Saving..."
-                                    : "Mark Paid"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    runSettlementAction(settlement, "failed")
-                                  }
-                                  disabled={paid || submittingId === `${rowKey}:failed`}
-                                  className="inline-flex min-h-9 items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 disabled:opacity-50"
-                                >
-                                  Mark Failed
-                                </button>
-                                {!paid && (
-                                  <p className="text-xs text-zinc-500">
-                                    {payoutAccountStatusMessage(
-                                      settlement.payout_account
-                                    )}
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })()
-                        )}
+                        <div className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRecordsModalState({
+                                isOpen: true,
+                                providerId: monthly.provider_id,
+                                month: monthly.month,
+                                year: monthly.year,
+                                monthLabel: monthly.month_label,
+                              })
+                            }
+                            className="inline-flex min-h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+                          >
+                            View Records
+                          </button>
+                          {Number(monthly.pending_amount) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSettleModalState({
+                                  isOpen: true,
+                                  providerId: monthly.provider_id,
+                                  providerName: monthly.provider_name || "Provider",
+                                  month: monthly.month,
+                                  year: monthly.year,
+                                  monthLabel: monthly.month_label,
+                                  recordCount: monthly.record_count,
+                                  totalAmount: monthly.pending_amount,
+                                })
+                              }
+                              className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800"
+                            >
+                              Settle Month
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1194,6 +1203,28 @@ export default function AdminSettlementsPage() {
         )}
       </section>
     )}
+    
+    <MonthlySettlementRecordsModal
+      providerId={recordsModalState.providerId || ""}
+      month={recordsModalState.month}
+      year={recordsModalState.year}
+      monthLabel={recordsModalState.monthLabel}
+      isOpen={recordsModalState.isOpen}
+      onClose={() => setRecordsModalState({ ...recordsModalState, isOpen: false })}
+    />
+
+    <SettleMonthModal
+      providerId={settleModalState.providerId || ""}
+      providerName={settleModalState.providerName}
+      month={settleModalState.month}
+      year={settleModalState.year}
+      monthLabel={settleModalState.monthLabel}
+      recordCount={settleModalState.recordCount}
+      totalAmount={settleModalState.totalAmount}
+      isOpen={settleModalState.isOpen}
+      onClose={() => setSettleModalState({ ...settleModalState, isOpen: false })}
+      onSuccess={() => void loadSettlements()}
+    />
     </AdminShell>
   );
 }

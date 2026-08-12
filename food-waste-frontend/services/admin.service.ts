@@ -8,6 +8,9 @@ import type {
   AdminProviderSettlementConsoleData,
   AdminProviderSettlementConsoleQuery,
   AdminProviderSettlementConsoleResponse,
+  AdminMonthlySettlementConsoleData,
+  AdminMonthlySettlementQuery,
+  AdminMonthlySettlementConsoleResponse,
   AdminOperationalAlert,
   AdminOperationalAlertsResponse,
   AdminFinancialSummaryData,
@@ -87,6 +90,7 @@ import type {
   ProviderPayoutAccount,
   VerifyProviderPayoutAccountResponse,
   RejectProviderPayoutAccountResponse,
+  BatchSettleMonthResponse,
 } from "@shared/contracts/api-contracts";
 
 export type AdminNGO = PendingNGORow & {
@@ -369,6 +373,17 @@ export async function getProviderSettlementConsole(
     .settlements;
 }
 
+export async function getMonthlySettlementConsole(
+  params: AdminMonthlySettlementQuery = {}
+): Promise<AdminMonthlySettlementConsoleData> {
+  const { data } = await api.get<
+    AdminMonthlySettlementConsoleResponse | { settlements: AdminMonthlySettlementConsoleData }
+  >("/admin/settlements/monthly", { params });
+
+  return getEnvelopeData<{ settlements: AdminMonthlySettlementConsoleData }>(data)
+    .settlements;
+}
+
 async function patchProviderSettlement(
   id: DbId,
   action: "paid" | "failed" | "notes",
@@ -392,6 +407,23 @@ export async function markProviderSettlementFailed(
   payload: UpdateProviderSettlementStatusRequest = {}
 ): Promise<void> {
   await patchProviderSettlement(id, "failed", payload);
+}
+
+export async function settleMonth(
+  providerId: DbId,
+  year: number,
+  month: number,
+  payload: { payment_reference?: string; notes?: string } = {}
+): Promise<{ settled_count: number; total_amount: number | string }> {
+  const { data } = await api.patch<
+    BatchSettleMonthResponse | { settled_count: number; total_amount: number | string }
+  >(`/admin/settlements/${String(providerId)}/settle-month`, {
+    year,
+    month,
+    ...payload,
+  });
+
+  return getEnvelopeData<{ settled_count: number; total_amount: number | string }>(data);
 }
 
 export async function verifyProviderPayoutAccount(
@@ -889,8 +921,10 @@ export const adminService = {
   validateProviderReport,
   dismissProviderReport,
   getProviderSettlementConsole,
+  getMonthlySettlementConsole,
   markProviderSettlementPaid,
   markProviderSettlementFailed,
+  settleMonth,
   verifyProviderPayoutAccount,
   approveProviderPayoutAccountChange,
   rejectProviderPayoutAccountChange,

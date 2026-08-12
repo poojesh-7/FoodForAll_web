@@ -21,6 +21,7 @@ const {
 } = require("../shared/services/financialLedger.service");
 const {
   listAdminProviderSettlements,
+  listAdminMonthlySettlements,
   listAdminProviderPayoutChangeRequests,
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
@@ -1259,6 +1260,36 @@ exports.getProviderSettlementConsole = async (req, res) => {
   }
 };
 
+exports.getMonthlySettlementConsole = async (req, res) => {
+  const providerId = req.query.providerId || req.query.provider_id;
+  if (providerId && !isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is invalid" });
+  }
+
+  try {
+    const settlements = await listAdminMonthlySettlements({
+      status: req.query.status,
+      verificationStatus:
+        req.query.verificationStatus || req.query.verification_status,
+      limit: req.query.limit,
+      search: req.query.search,
+      providerId,
+      year: req.query.year,
+      month: req.query.month,
+    });
+    res.json({ settlements });
+  } catch (err) {
+    logger.error("Failed to fetch monthly settlement console", {
+      err,
+      adminId: req.user?.id,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch monthly settlements",
+    });
+  }
+};
+
 async function recordSettlementAdminEvent(
   req,
   eventName,
@@ -1387,6 +1418,117 @@ exports.updateProviderSettlementNotes = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to update settlement notes",
+    });
+  }
+};
+
+exports.settleMonthly = async (req, res) => {
+  const { providerId } = req.params;
+  if (!isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is invalid" });
+  }
+
+  const { year, month, payment_reference, notes } = req.body;
+  if (!year || !month || month < 1 || month > 12) {
+    return res
+      .status(400)
+      .json({ error: "Year and month (1-12) are required" });
+  }
+
+  try {
+    // Fetch all pending settlements for this provider in the given month
+    const settlementsResult = await pool.query(
+      `
+      SELECT
+        ps.id,
+        ps.status
+      FROM provider_settlements ps
+      LEFT JOIN financial_ledger_entries fle
+        ON fle.reservation_id = ps.reservation_id
+        AND fle.payment_session_id = ps.payment_session_id
+        AND fle.event_type = 'refund_issued'
+      WHERE ps.provider_id = $1
+        AND ps.status = ANY($2::text[])
+        AND fle.id IS NULL
+        AND EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $3
+        AND EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $4
+      ORDER BY ps.created_at ASC
+      `,
+      [
+        providerId,
+        ["pending", "processing", "allocated", "batched"],
+        Number(year),
+        Number(month),
+      ]
+    );
+
+    const settlements = settlementsResult.rows;
+    if (settlements.length === 0) {
+      return res.status(404).json({
+        error: "No pending settlements found for this provider and month",
+      });
+    }
+
+    // Mark each settlement as paid
+    let settledCount = 0;
+    let totalAmount = 0;
+
+    for (const settlement of settlements) {
+      try {
+        const updated = await transitionProviderSettlementStatus({
+          settlementId: settlement.id,
+          status: "paid",
+          adminId: req.user.id,
+          paymentReference: payment_reference || `batch-${year}-${month}`,
+          notes: notes || `Batch settlement for ${year}-${String(month).padStart(2, "0")}`,
+        });
+
+        if (updated) {
+          settledCount++;
+          totalAmount += Number(updated.amount || 0);
+        }
+      } catch (err) {
+        logger.warn("Failed to settle individual settlement in batch", {
+          err,
+          settlementId: settlement.id,
+          providerId,
+          year,
+          month,
+        });
+        // Continue with next settlement on failure
+      }
+    }
+
+    await recordOperationalEvent({
+      category: "financial",
+      severity: "info",
+      eventName: "admin_batch_settled_provider_month",
+      metadata: {
+        adminId: req.user?.id,
+        providerId,
+        year,
+        month,
+        settled_count: settledCount,
+        total_amount: totalAmount,
+        payment_reference: payment_reference || null,
+      },
+    });
+
+    res.json({
+      message: `Settled ${settledCount} records`,
+      settled_count: settledCount,
+      total_amount: totalAmount,
+    });
+  } catch (err) {
+    logger.error("Batch settlement failed", {
+      err,
+      adminId: req.user?.id,
+      providerId,
+      year,
+      month,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to settle month",
     });
   }
 };

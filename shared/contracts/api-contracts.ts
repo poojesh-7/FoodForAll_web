@@ -817,6 +817,57 @@ export type AdminProviderSettlementConsoleResponse =
 export type UpdateProviderSettlementResponse =
   ApiResponse<{ settlement: ProviderSettlementHistoryRow }>;
 
+export interface AdminMonthlySettlementRow {
+  provider_id: DbId;
+  provider_name?: string | null;
+  provider_phone?: string | null;
+  restaurant_name?: string | null;
+  month_year: string; // YYYY-MM
+  month_label: string; // e.g., 'Aug 2026'
+  year: number;
+  month: number; // 1-12
+  record_count: number;
+  total_amount: number | string;
+  paid_amount: number | string;
+  pending_amount: number | string;
+  status: "Paid" | "Pending" | "Partially Paid" | "Failed";
+  last_settlement_at?: ISODateString | null;
+  payout_account: ProviderPayoutAccount | null;
+}
+
+export interface AdminMonthlySettlementConsoleData {
+  filter: "pending" | "paid" | "failed" | "all" | string;
+  summary: AdminProviderSettlementSummaryRow[];
+  monthly_settlements: AdminMonthlySettlementRow[];
+}
+
+export interface AdminMonthlySettlementQuery {
+  status?: "pending" | "paid" | "failed" | "all" | string;
+  verificationStatus?: "all" | "verified" | "pending_review" | "rejected" | "no_account" | string;
+  verification_status?: "all" | "verified" | "pending_review" | "rejected" | "no_account" | string;
+  limit?: string | number;
+  search?: string;
+  providerId?: DbId;
+  provider_id?: DbId;
+  year?: string | number;
+  month?: string | number; // 1-12, or empty/null for all months
+}
+
+export interface BatchSettleMonthRequest {
+  year: number;
+  month: number; // 1-12
+  payment_reference?: string | null;
+  notes?: string | null;
+}
+
+export type AdminMonthlySettlementConsoleResponse =
+  ApiResponse<{ settlements: AdminMonthlySettlementConsoleData }>;
+export type BatchSettleMonthResponse = ApiResponse<{
+  settled_count: number;
+  total_amount: number | string;
+  message: string;
+}>;
+
 export interface ImpactSummary {
   total_pickups: number | string;
   total_meals_saved: number | string;

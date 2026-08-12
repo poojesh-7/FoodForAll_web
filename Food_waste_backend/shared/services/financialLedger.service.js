@@ -212,11 +212,14 @@ function buildSettlementAllocationSnapshot({
   const depositAmount = roundMoney(
     paymentOwnership.deposit_amount ?? payment.reliability_deposit_amount,
   );
+  const processingFeeAmount = roundMoney(payment.processing_fee);
   const taxAmount = roundMoney(payment.tax_amount || 0);
   const commission = financialTerms.commission_amount;
   const providerAmount = financialTerms.provider_amount;
   const platformAmount = financialTerms.platform_amount;
-  const totalAmount = roundMoney(foodAmount + depositAmount + taxAmount);
+  const totalAmount = roundMoney(
+    foodAmount + depositAmount + processingFeeAmount + taxAmount,
+  );
   const currency = normalizeCurrency(
     paymentOwnership.currency || payment.currency,
   );
@@ -233,6 +236,7 @@ function buildSettlementAllocationSnapshot({
     provider_amount: providerAmount,
     platform_amount: platformAmount,
     deposit_amount: depositAmount,
+    processing_fee_amount: processingFeeAmount,
     tax_amount: taxAmount,
     food_amount: foodAmount,
     total_amount: totalAmount,
@@ -290,6 +294,7 @@ async function ensureSettlementAccountingSchema(client = pool) {
         provider_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         platform_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         deposit_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        processing_fee_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         tax_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         food_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
         total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -299,6 +304,10 @@ async function ensureSettlementAccountingSchema(client = pool) {
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
+    `);
+    await db.query(`
+      ALTER TABLE settlement_allocation_snapshots
+      ADD COLUMN IF NOT EXISTS processing_fee_amount NUMERIC(12,2) NOT NULL DEFAULT 0
     `);
     await db.query(`
       CREATE TABLE IF NOT EXISTS provider_settlements (
@@ -928,6 +937,23 @@ async function recordSettlementAllocation({
       suffix: "total",
     }),
   });
+  const processingFeeAmount = roundMoney(
+    payment.processing_fee ?? allocation.processing_fee_amount,
+  );
+  if (processingFeeAmount > 0) {
+    await recordGatewayFeeExpense({
+      client,
+      payment: {
+        ...payment,
+        processing_fee: processingFeeAmount,
+      },
+      gatewayFeeAmount: processingFeeAmount,
+      metadata: {
+        source: "user_payment",
+        note: "Fixed processing fee",
+      },
+    });
+  }
   if (roundMoney(allocation.food_amount) > 0) {
     await recordLedgerEntry({
       client,
@@ -1180,9 +1206,9 @@ async function recordGatewayFeeExpense({
       idempotency_key: [
         "ledger",
         "gateway_fee_recorded",
-        payment.id || payment.order_id,
+        payment.reservation_id,
+        "processing_fee",
         formatMoneyKey(feeAmount),
-        formatMoneyKey(gatewayTaxAmount),
       ].join(":"),
       metadata: {
         gateway_provider: payment.gateway_provider || "cashfree",

@@ -31,6 +31,8 @@ const {
   buildPaymentFinancialTerms,
 } = require("./financialLedger.service");
 
+const PROCESSING_FEE = 2;
+
 function roundMoney(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return 0;
@@ -75,11 +77,18 @@ async function createPayment({
       "reliability_deposit_amount",
       fallbackDepositAmount
     );
+    const processingFee = getReservationComponent(
+      reservation,
+      "processing_fee",
+      foodAmount > 0 ? PROCESSING_FEE : 0
+    );
 
     return {
       ...reservation,
       food_amount: foodAmount,
       reliability_deposit_amount: depositAmount,
+      processing_fee: processingFee,
+      total_paid: roundMoney(foodAmount + depositAmount + processingFee),
       financial_terms: buildPaymentFinancialTerms({ foodAmount }),
     };
   });
@@ -133,7 +142,12 @@ async function createPayment({
         "reliability_deposit_amount",
         fallbackDepositAmount
       );
-      const rowAmount = roundMoney(foodAmount + depositAmount);
+      const processingFee = getReservationComponent(
+        reservation,
+        "processing_fee",
+        foodAmount > 0 ? PROCESSING_FEE : 0
+      );
+      const rowAmount = roundMoney(foodAmount + depositAmount + processingFee);
       const financialTerms =
         reservation.financial_terms || buildPaymentFinancialTerms({ foodAmount });
 
@@ -142,9 +156,10 @@ async function createPayment({
         INSERT INTO payments
         (reservation_id, order_id, payment_session_id, amount, status,
          food_amount, reliability_deposit_amount, reliability_deposit_status,
+         processing_fee,
          commission_percent, commission_amount, provider_amount,
          food_amount_snapshot, platform_amount, gateway_provider, gateway_order_id)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING *
         `,
         [
@@ -155,6 +170,7 @@ async function createPayment({
           foodAmount,
           depositAmount,
           depositAmount > 0 ? "held" : "not_required",
+          processingFee,
           financialTerms.commission_percent,
           financialTerms.commission_amount,
           financialTerms.provider_amount,
@@ -297,6 +313,10 @@ async function createReservationPayment(options) {
     ...reservation,
     food_amount: roundMoney(reservation.food_amount),
     reliability_deposit_amount: roundMoney(reservation.reliability_deposit_amount),
+    processing_fee: roundMoney(
+      reservation.processing_fee ??
+        (Number(reservation.food_amount) > 0 ? PROCESSING_FEE : 0)
+    ),
   }));
 
   assertPaymentAuthorization({
@@ -312,13 +332,18 @@ async function createReservationPayment(options) {
     (sum, reservation) => sum + roundMoney(reservation.reliability_deposit_amount),
     0
   );
+  const processingFeeAmount = reservations.reduce(
+    (sum, reservation) => sum + roundMoney(reservation.processing_fee),
+    0
+  );
 
   return createPayment({
     ...options,
     reservations,
     totalFoodAmount,
     reliabilityDepositAmount,
-    totalAmount: totalFoodAmount + reliabilityDepositAmount,
+    processingFeeAmount,
+    totalAmount: totalFoodAmount + reliabilityDepositAmount + processingFeeAmount,
   });
 }
 
@@ -465,6 +490,7 @@ async function cancelPayment(client, reservationId) {
 }
 
 module.exports = {
+  PROCESSING_FEE,
   createPayment,
   createReservationPayment,
   createReliabilityDeposit,

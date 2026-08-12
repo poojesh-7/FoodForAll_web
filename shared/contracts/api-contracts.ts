@@ -395,6 +395,7 @@ export interface BulkReserveData {
 export interface ReservationPricingPreview {
   foodAmount: number;
   depositAmount: number;
+  processingFee?: number;
   totalAmount: number;
   requiresDeposit: boolean;
   totalQuantity?: number;

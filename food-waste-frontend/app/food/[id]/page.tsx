@@ -404,7 +404,10 @@ export default function FoodDetailPage() {
       : 0;
   const foodAmount = pricingPreview?.foodAmount ?? fallbackFoodAmount;
   const depositAmount = pricingPreview?.depositAmount ?? 0;
-  const totalAmount = pricingPreview?.totalAmount ?? foodAmount + depositAmount;
+  const processingFee =
+    pricingPreview?.processingFee ?? (foodAmount > 0 ? 2 : 0);
+  const totalAmount =
+    pricingPreview?.totalAmount ?? foodAmount + depositAmount + processingFee;
   const dietaryTags = listing ? getDietaryTags(listing) : [];
 
   const setQuantityWithinLimit = (nextValue: number) => {
@@ -591,6 +594,7 @@ export default function FoodDetailPage() {
                         role="user"
                         foodAmount={foodAmount}
                         depositAmount={depositAmount}
+                        processingFee={processingFee}
                         totalAmount={totalAmount}
                         requiresDeposit={pricingPreview?.requiresDeposit}
                         reservationCapacity={pricingPreview?.reservationCapacity}

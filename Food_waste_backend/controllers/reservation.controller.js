@@ -11,6 +11,7 @@ const {
   createReservationPayment,
   cancelPayment,
   refundReliabilityDeposit,
+  PROCESSING_FEE,
 } = require("../shared/services/payment.service");
 const {
   getTrustEnforcementPolicy,
@@ -266,6 +267,8 @@ exports.createReservation = async (req, res) => {
         await ensureListingNotPreviouslyReserved(client, req.user.id, listing_id);
 
         const foodAmount = Number(food.price) * quantityValue;
+        const processingFee = PROCESSING_FEE;
+        const totalPaid = foodAmount + processingFee;
         const policy = await getTrustEnforcementPolicy({
           client,
           userId: req.user.id,
@@ -295,8 +298,8 @@ exports.createReservation = async (req, res) => {
         const reservationResult = await client.query(
           `
           INSERT INTO reservations
-          (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status, payment_context)
-          VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending',$5::jsonb)
+          (listing_id, user_id, quantity_reserved, pickup_type, task_status, status, pickup_code, payment_status, food_price, processing_fee, total_paid, payment_context)
+          VALUES ($1,$2,$3,'self_pickup','self_pickup','payment_pending',$4,'pending',$5,$6,$7,$8::jsonb)
           RETURNING *
           `,
           [
@@ -304,6 +307,9 @@ exports.createReservation = async (req, res) => {
             req.user.id,
             quantityValue,
             null,
+            foodAmount,
+            processingFee,
+            totalPaid,
             JSON.stringify({
               source: "user_reservation",
               stock_reserved: true,
@@ -318,6 +324,7 @@ exports.createReservation = async (req, res) => {
         return {
           reservation,
           foodAmount,
+          processingFee,
           depositAmount,
           policy,
           reservationCapacity,
@@ -382,6 +389,7 @@ exports.createReservation = async (req, res) => {
                 ...pendingReservation,
                 food_amount: hold.foodAmount,
                 reliability_deposit_amount: hold.depositAmount,
+                processing_fee: hold.processingFee,
               },
             ],
           });
@@ -470,7 +478,8 @@ exports.createReservation = async (req, res) => {
       pricing: {
         foodAmount: hold.foodAmount,
         depositAmount: hold.depositAmount,
-        totalAmount: hold.foodAmount + hold.depositAmount,
+        processingFee: hold.processingFee,
+        totalAmount: hold.foodAmount + hold.depositAmount + hold.processingFee,
         requiresDeposit: hold.depositAmount > 0,
       },
       policy: {
@@ -1477,6 +1486,7 @@ exports.previewReservation = async (req, res) => {
     }
 
     const foodAmount = Number(food.price) * quantityValue;
+    const processingFee = PROCESSING_FEE;
     const policy = await getTrustEnforcementPolicy({
       userId: req.user.id,
       role: req.user.role,
@@ -1493,7 +1503,8 @@ exports.previewReservation = async (req, res) => {
     res.json({
       foodAmount,
       depositAmount,
-      totalAmount: foodAmount + depositAmount,
+      processingFee,
+      totalAmount: foodAmount + depositAmount + processingFee,
       requiresDeposit: depositAmount > 0,
       reservationCapacity,
       policy: {

@@ -247,6 +247,7 @@ function resolveRefundPlan({
       lifecycleOutcome,
       cancellationReason: cancellationReason || null,
       failureReason: failureReason || null,
+      processingFeeRefundNote: "Processing fee is non-refundable",
       trustStateObserved: Boolean(trustState),
     },
   };

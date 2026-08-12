@@ -7,6 +7,7 @@ type PricingBreakdownProps = {
   role: "user" | "ngo";
   foodAmount: number;
   depositAmount: number;
+  processingFee?: number;
   totalAmount: number;
   requiresDeposit?: boolean;
   reservationCapacity?: ReservationCapacity;
@@ -14,13 +15,14 @@ type PricingBreakdownProps = {
 };
 
 function formatMoney(value: number) {
-  return `Rs. ${Number(value || 0).toFixed(2)}`;
+  return `₹${Number(value || 0).toFixed(2)}`;
 }
 
 export default function PricingBreakdown({
   role,
   foodAmount,
   depositAmount,
+  processingFee = 0,
   totalAmount,
   requiresDeposit = depositAmount > 0,
   reservationCapacity,
@@ -38,11 +40,19 @@ export default function PricingBreakdown({
     <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
       <div className="space-y-2 text-sm">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-zinc-600">Food Cost</span>
+          <span className="text-zinc-600">Food price</span>
           <span className="font-semibold text-zinc-950">
             {loading ? "Checking..." : formatMoney(foodAmount)}
           </span>
         </div>
+        {processingFee > 0 && (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-zinc-600">Processing fee</span>
+            <span className="font-semibold text-zinc-950">
+              {formatMoney(processingFee)}
+            </span>
+          </div>
+        )}
         {showDeposit && (
           <div className="flex items-center justify-between gap-3">
             <span className="text-zinc-600">Reliability Deposit</span>

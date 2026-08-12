@@ -9,7 +9,10 @@ async function ensureReservationPaymentContextSchema(client = pool) {
   await client.query(
     `
     ALTER TABLE reservations
-    ADD COLUMN IF NOT EXISTS payment_context JSONB DEFAULT '{}'::jsonb
+    ADD COLUMN IF NOT EXISTS payment_context JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS food_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS processing_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS total_paid NUMERIC(12,2) NOT NULL DEFAULT 0
     `
   );
 }

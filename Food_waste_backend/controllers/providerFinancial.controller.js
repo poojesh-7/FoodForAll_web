@@ -2,6 +2,7 @@ const logger = require("../shared/utils/logger");
 const {
   deactivateProviderPayoutAccount,
   getProviderSettlementSummary,
+  listProviderSettlementRecords,
   listProviderPayoutAccounts,
   replaceProviderPayoutAccount,
   requestProviderPayoutAccountChange,
@@ -154,6 +155,35 @@ exports.getMySettlementSummary = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch settlement summary",
+    });
+  }
+};
+
+exports.getMySettlementRecords = async (req, res) => {
+  try {
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    const month = req.query.month ? Number(req.query.month) : undefined;
+    const status = req.query.status || undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+    const records = await listProviderSettlementRecords({
+      providerId: req.user.id,
+      year,
+      month,
+      status,
+      limit,
+      offset,
+    });
+
+    res.json({ records });
+  } catch (err) {
+    logger.error("Failed to fetch provider settlement records", {
+      err,
+      providerId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch settlement records",
     });
   }
 };

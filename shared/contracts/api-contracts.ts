@@ -744,7 +744,20 @@ export interface ProviderSettlementSummaryData {
     pending: number | string;
     paid: number | string;
   };
-  settlements: ProviderSettlementHistoryRow[];
+  // Monthly summary rows shown on the provider dashboard (one row per month)
+  settlements: ProviderMonthlySettlementRow[];
+}
+
+export interface ProviderMonthlySettlementRow {
+  month_key: string; // YYYY-MM
+  month_label: string; // e.g., 'Aug 2026'
+  year: number;
+  month: number;
+  earnings: number | string;
+  paid: number | string;
+  pending: number | string;
+  count: number;
+  status: "Pending" | "Partially Paid" | "Paid";
 }
 
 export type ProviderSettlementSummaryResponse =

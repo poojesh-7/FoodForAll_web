@@ -16,5 +16,6 @@ router.post(
   providerFinancialCtrl.requestPayoutAccountChange,
 );
 router.get("/settlements", providerFinancialCtrl.getMySettlementSummary);
+router.get("/settlements/records", providerFinancialCtrl.getMySettlementRecords);
 
 module.exports = router;

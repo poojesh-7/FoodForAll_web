@@ -63,11 +63,56 @@ export async function getSettlementSummary(): Promise<ProviderSettlementSummaryD
   return getEnvelopeData<{ summary: ProviderSettlementSummaryData }>(data).summary;
 }
 
+export async function getSettlementRecords(params: {
+  year?: number;
+  month?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ records: any[]; limit: number; offset: number; count: number }> {
+  const { data } = await api.get("/provider/financial/settlements/records", {
+    params,
+  });
+
+  const payload = getEnvelopeData<any>(data);
+
+  // Normalize response shapes:
+  // 1) { records: [...], limit, offset, count }
+  // 2) { records: { records: [...], limit, offset, count } } (backend nested)
+  // 3) [...] (array)
+
+  if (payload && Array.isArray(payload.records)) {
+    return {
+      records: payload.records,
+      limit: Number(payload.limit || payload.records.length || 0),
+      offset: Number(payload.offset || 0),
+      count: Number(payload.count || payload.records.length || 0),
+    };
+  }
+
+  if (payload && payload.records && Array.isArray(payload.records.records)) {
+    const inner = payload.records;
+    return {
+      records: inner.records,
+      limit: Number(inner.limit || inner.records.length || 0),
+      offset: Number(inner.offset || 0),
+      count: Number(inner.count || inner.records.length || 0),
+    };
+  }
+
+  if (Array.isArray(payload)) {
+    return { records: payload, limit: payload.length, offset: 0, count: payload.length };
+  }
+
+  return { records: [], limit: 0, offset: 0, count: 0 };
+}
+
 export const providerFinancialService = {
   getPayoutAccounts,
   savePayoutAccount,
   deactivatePayoutAccount,
   requestPayoutAccountChange,
   getSettlementSummary,
+  getSettlementRecords,
   getErrorMessage,
 };

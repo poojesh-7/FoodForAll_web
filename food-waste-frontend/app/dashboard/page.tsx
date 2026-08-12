@@ -16,6 +16,7 @@ import type {
   ProviderPayoutAccountType,
   ProviderRatingSummary,
   ProviderSettlementSummaryData,
+  ProviderSettlementHistoryRow,
 } from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
@@ -229,8 +230,13 @@ export default function DashboardPage() {
     useState<ProviderSettlementSummaryData | null>(null);
   const [payoutAccount, setPayoutAccount] =
     useState<ProviderPayoutAccount | null>(null);
+  const [recordsOpen, setRecordsOpen] = useState(false);
+  const [recordRows, setRecordRows] = useState<ProviderSettlementHistoryRow[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordMeta, setRecordMeta] = useState({ limit: 0, offset: 0, count: 0 });
   const [accountType, setAccountType] =
     useState<ProviderPayoutAccountType>("UPI");
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [upiId, setUpiId] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
@@ -878,6 +884,22 @@ export default function DashboardPage() {
                         Settlement History
                       </h3>
                     </div>
+                    <div className="px-4 py-3 border-b">
+                      <label className="text-sm mr-2">Year:</label>
+                      <select
+                        value={selectedYear ?? ''}
+                        onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                        className="rounded-md border px-2 py-1 text-sm"
+                      >
+                        <option value="">All</option>
+                        {Array.from(new Set((financialSummary?.settlements || []).map(s => s.year))).map(y => (
+                          <option key={String(y)} value={String(y)}>{String(y)}</option>
+                        ))}
+                      </select>
+                      {selectedYear ? (
+                        <div className="inline-block ml-4 text-sm">Year Total: <strong>{formatCurrency((financialSummary?.settlements || []).filter(s => s.year === selectedYear).reduce((sum, r) => sum + Number(r.earnings || 0), 0))}</strong></div>
+                      ) : null}
+                    </div>
                     {!financialSummary?.settlements.length ? (
                       <p className="p-4 text-sm text-zinc-600">
                         No provider settlements recorded yet.
@@ -887,32 +909,56 @@ export default function DashboardPage() {
                         <table className="min-w-full divide-y divide-zinc-100 text-sm">
                           <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
                             <tr>
-                              <th className="px-4 py-3">Date</th>
-                              <th className="px-4 py-3">Amount</th>
-                              <th className="px-4 py-3">Reference</th>
+                              <th className="px-4 py-3">Month</th>
+                              <th className="px-4 py-3">Earnings</th>
+                              <th className="px-4 py-3">Paid</th>
+                              <th className="px-4 py-3">Pending</th>
                               <th className="px-4 py-3">Status</th>
+                              <th className="px-4 py-3">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-100">
-                            {financialSummary.settlements.map((settlement) => (
-                              <tr key={String(settlement.id)}>
+                            {(financialSummary.settlements || []).filter((m) => !selectedYear || m.year === selectedYear).map((m) => (
+                              <tr key={String(m.month_key)}>
                                 <td className="px-4 py-3 text-zinc-700">
-                                  {settlement.paid_at
-                                    ? formatDateTime(settlement.paid_at)
-                                    : formatDateTime(
-                                        settlement.updated_at ||
-                                          settlement.created_at ||
-                                          ""
-                                      )}
+                                  {m.month_label}
                                 </td>
                                 <td className="px-4 py-3 font-medium text-zinc-950">
-                                  {formatCurrency(settlement.amount)}
+                                  {formatCurrency(m.earnings)}
                                 </td>
                                 <td className="px-4 py-3 text-zinc-700">
-                                  {settlement.payment_reference || "-"}
+                                  {formatCurrency(m.paid)}
+                                </td>
+                                <td className="px-4 py-3 text-zinc-700">
+                                  {formatCurrency(m.pending)}
                                 </td>
                                 <td className="px-4 py-3">
-                                  {settlementStatusChip(settlement.status)}
+                                  <span className="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide bg-amber-100 text-amber-800">{m.status}</span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <button
+                                    type="button"
+                                    className="rounded-md bg-zinc-100 px-3 py-1 text-sm"
+                                    onClick={async () => {
+                                      try {
+                                        setRecordsLoading(true);
+                                        setRecordsOpen(true);
+                                        const res = await providerFinancialService.getSettlementRecords({
+                                          year: m.year,
+                                          month: m.month,
+                                          limit: 50,
+                                        });
+                                        setRecordRows(res.records || []);
+                                        setRecordMeta({ limit: res.limit || 0, offset: res.offset || 0, count: res.count || 0 });
+                                      } catch (err) {
+                                        setRecordRows([]);
+                                      } finally {
+                                        setRecordsLoading(false);
+                                      }
+                                    }}
+                                  >
+                                    View Records
+                                  </button>
                                 </td>
                               </tr>
                             ))}
@@ -920,6 +966,42 @@ export default function DashboardPage() {
                         </table>
                       </div>
                     )}
+                    {recordsOpen ? (
+                      <div className="p-4">
+                        <div className="mb-2 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold">Records</h4>
+                          <button onClick={() => { setRecordsOpen(false); setRecordRows([]); }} className="text-sm text-zinc-600">Close</button>
+                        </div>
+                        {recordsLoading ? (
+                          <p>Loading...</p>
+                        ) : recordRows.length === 0 ? (
+                          <p className="text-sm text-zinc-600">No records for this month.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                                <tr>
+                                  <th className="px-4 py-3">Date</th>
+                                  <th className="px-4 py-3">Amount</th>
+                                  <th className="px-4 py-3">Reference</th>
+                                  <th className="px-4 py-3">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-100">
+                                {recordRows.map((r) => (
+                                  <tr key={String(r.id)}>
+                                    <td className="px-4 py-3 text-zinc-700">{r.paid_at ? formatDateTime(r.paid_at) : formatDateTime(r.updated_at || r.created_at || '')}</td>
+                                    <td className="px-4 py-3 font-medium text-zinc-950">{formatCurrency(r.amount)}</td>
+                                    <td className="px-4 py-3 text-zinc-700">{r.payment_reference || '-'}</td>
+                                    <td className="px-4 py-3">{settlementStatusChip(r.status)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               </div>

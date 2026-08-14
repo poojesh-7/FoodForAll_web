@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"console.log('No frontend tests configured')\""
+    "test": "node --experimental-strip-types --test tests/**/*.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

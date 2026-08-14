@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { authService } from "@/services/auth";
 import ProfileImageManager from "@/components/identity/ProfileImageManager";
 import { foodService } from "@/services/food.service";
@@ -295,16 +296,8 @@ export default function ProfilePage() {
 
         {(error || success) && (
           <div className="space-y-2">
-            {error && (
-              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
-              </p>
-            )}
-            {success && (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                {success}
-              </p>
-            )}
+            {error && <OperationalFeedbackBlock title={error} tone="error" />}
+            {success && <OperationalFeedbackBlock title={success} tone="success" />}
           </div>
         )}
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import ReservationCard from "@/components/reservations/ReservationCard";
 import { openCashfreeCheckout } from "@/lib/cashfree";
@@ -285,16 +286,8 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
           </Link>
         </header>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        {message && (
-          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            {message}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
+        {message && <OperationalFeedbackBlock title={message} tone="warning" />}
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

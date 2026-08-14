@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, ShieldAlert } from "lucide-react";
-import toast from "react-hot-toast";
 import FoodImage from "@/components/FoodImage";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatPlatformDate } from "@/lib/dateTime";
 import {
@@ -351,7 +351,6 @@ export default function ProviderListingsPage() {
         router.push(pendingVerificationRoute);
         return;
       }
-      toast.error(message);
       setError(message);
     } finally {
       setActionLoading(false);
@@ -447,16 +446,8 @@ export default function ProviderListingsPage() {
 
         {(error || success) && (
           <div className="space-y-2">
-            {error && (
-              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
-              </p>
-            )}
-            {success && (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                {success}
-              </p>
-            )}
+            {error && <OperationalFeedbackBlock title={error} tone="error" />}
+            {success && <OperationalFeedbackBlock title={success} tone="success" />}
           </div>
         )}
 

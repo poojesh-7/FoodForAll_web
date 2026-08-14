@@ -11,6 +11,7 @@ import {
   Scale,
   ShieldAlert,
 } from "lucide-react";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import {
   formatGovernanceDate,
   formatGovernanceStatus,
@@ -127,11 +128,7 @@ export default function ProviderModerationCasesPage() {
           </div>
         </div>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {!loading && (
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

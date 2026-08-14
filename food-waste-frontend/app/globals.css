@@ -25,3 +25,43 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.operational-toaster {
+  pointer-events: none;
+  left: auto !important;
+  right: max(1rem, env(safe-area-inset-right, 0px)) !important;
+}
+
+.operational-toast {
+  box-sizing: border-box;
+  width: min(26rem, calc(100vw - 2rem));
+  min-width: min(20rem, calc(100vw - 2rem));
+  max-width: min(26rem, calc(100vw - 2rem));
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 640px) {
+  .operational-toaster {
+    left: auto !important;
+    right: max(0.75rem, env(safe-area-inset-right, 0px)) !important;
+    top: calc(env(safe-area-inset-top, 0px) + 4.25rem) !important;
+  }
+
+  .operational-toast {
+    width: min(22rem, calc(100vw - 1.5rem));
+    min-width: min(20rem, calc(100vw - 1.5rem));
+    max-width: calc(100vw - 1.5rem);
+  }
+}
+
+@media (max-width: 375px) {
+  .operational-toaster {
+    right: max(0.5rem, env(safe-area-inset-right, 0px)) !important;
+  }
+
+  .operational-toast {
+    width: calc(100vw - 1rem);
+    min-width: 0;
+    max-width: calc(100vw - 1rem);
+  }
+}

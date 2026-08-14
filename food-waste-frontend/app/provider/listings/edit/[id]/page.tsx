@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import FoodListingForm from "@/components/FoodListingForm";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { foodService } from "@/services/food.service";
 import {
   formatFoodDate,
@@ -178,11 +179,7 @@ export default function EditProviderListingPage() {
           </p>
         </div>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {initialLoading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

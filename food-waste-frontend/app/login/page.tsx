@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { PublicFooter, PublicHeader } from "@/components/public/PublicSite";
 import { getPublicGoogleClientId } from "@/lib/env";
 import { getPostAuthRedirect } from "@/lib/onboarding";
@@ -423,21 +424,15 @@ export default function LoginPage() {
             {(authError || authSuccess || sessionNotice) && (
               <div aria-live="polite" className="space-y-2">
                 {sessionNotice && (
-                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    {sessionNotice}
-                  </p>
+                  <OperationalFeedbackBlock title={sessionNotice} tone="warning" />
                 )}
 
                 {authError && (
-                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {authError}
-                  </p>
+                  <OperationalFeedbackBlock title={authError} tone="error" />
                 )}
 
                 {authSuccess && (
-                  <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                    {authSuccess}
-                  </p>
+                  <OperationalFeedbackBlock title={authSuccess} tone="success" />
                 )}
               </div>
             )}
@@ -488,12 +483,10 @@ export default function LoginPage() {
             {googleClientId && (googleSdkError || googlePopupNotice) && (
               <div aria-live="polite" className="space-y-2">
                 {googleSdkError && (
-                  <p className="text-sm text-red-700">{googleSdkError}</p>
+                  <OperationalFeedbackBlock title={googleSdkError} tone="error" />
                 )}
                 {googlePopupNotice && (
-                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    {googlePopupNotice}
-                  </p>
+                  <OperationalFeedbackBlock title={googlePopupNotice} tone="warning" />
                 )}
               </div>
             )}

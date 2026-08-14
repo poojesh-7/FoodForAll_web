@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 import type { UserRole } from "@shared/contracts/api-contracts";
@@ -78,9 +79,7 @@ export default function SelectRolePage() {
         </div>
 
         {(formError || authError) && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {formError || authError}
-          </p>
+          <OperationalFeedbackBlock title={formError || authError || ""} tone="error" />
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">

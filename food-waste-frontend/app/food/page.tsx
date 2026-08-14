@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import FoodCard from "@/components/FoodCard";
 import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { isNormalUserPaidListing } from "@/lib/food";
 import {
   defaultListingDiscoveryFilters,
@@ -121,11 +122,7 @@ export default function FoodMarketplacePage() {
           </Link>
         </div>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         <ListingDiscoveryControls
           filters={filters}

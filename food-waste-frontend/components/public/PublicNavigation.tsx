@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import PublicAuthActions from "@/components/public/PublicAuthActions";
 
 export const businessName = "FoodForAll";
@@ -141,14 +141,14 @@ export function PublicNavigation() {
   };
 
   return (
-    <header className="border-b border-zinc-200 bg-white">
+    <header className="border-b border-zinc-200 bg-white/95 backdrop-blur">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         {/* Desktop & Tablet Navigation */}
-        <div className="flex items-center justify-between py-4">
+        <div className="flex min-h-20 items-center justify-between gap-4">
           {/* Logo */}
           <Link
             href="/"
-            className="flex-shrink-0 text-xl font-semibold text-zinc-950"
+            className="flex-shrink-0 rounded-md text-xl font-semibold text-zinc-950 outline-none transition hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-4"
           >
             {businessName}
           </Link>
@@ -156,7 +156,7 @@ export function PublicNavigation() {
           {/* Desktop Navigation (hidden on mobile, shown on lg+) */}
           <nav
             ref={navRef}
-            className="relative hidden flex-1 items-center justify-center gap-6 px-8 text-sm font-medium text-zinc-700 lg:flex"
+            className="relative hidden flex-1 items-center justify-center gap-2 px-8 text-sm font-medium text-zinc-700 lg:flex"
             aria-label="Main navigation"
           >
             {publicLinks.map((link) => {
@@ -166,10 +166,10 @@ export function PublicNavigation() {
                   key={link.href}
                   href={link.href}
                   data-active={active ? "true" : "false"}
-                  className={`relative transition-colors duration-300 ${
+                  className={`relative rounded-md px-3 py-2 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 ${
                     active
-                      ? "text-emerald-700"
-                      : "hover:text-emerald-700"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "hover:bg-zinc-50 hover:text-zinc-950"
                   }`}
                   aria-current={active ? "page" : undefined}
                 >
@@ -198,7 +198,7 @@ export function PublicNavigation() {
           <button
             ref={triggerRef}
             onClick={handleMobileMenuToggle}
-            className="lg:hidden inline-flex items-center justify-center p-2 text-zinc-700 hover:text-emerald-700 transition"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 lg:hidden"
             aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-menu"
@@ -218,7 +218,7 @@ export function PublicNavigation() {
           <div
             id="mobile-menu"
             ref={menuRef}
-            className={`fixed inset-0 top-[73px] z-50 origin-top bg-white lg:hidden transition-all duration-300 ease-out will-change-transform ${
+            className={`fixed inset-0 top-20 z-50 origin-top overflow-y-auto bg-zinc-50 lg:hidden transition-all duration-300 ease-out will-change-transform ${
               mobileMenuVisible
                 ? "translate-y-0 opacity-100"
                 : "-translate-y-6 opacity-0"
@@ -226,39 +226,45 @@ export function PublicNavigation() {
             role="navigation"
             aria-label="Mobile navigation"
           >
-            {/* Mobile Auth Actions - Top of menu */}
-            <div className="border-b border-zinc-200 px-4 py-4">
-              <PublicAuthActions variant="header" showLogout={true} />
-            </div>
+            <div className="space-y-5 px-5 py-5">
+              {/* Mobile Auth Actions - stacked, button-like */}
+              <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+                <PublicAuthActions variant="mobileMenu" showLogout={true} />
+              </section>
 
-            {/* Mobile Navigation Links */}
-            <nav className="flex flex-col">
-              {publicLinks.map((link, index) => {
-                const active = isActive(pathname, link.href);
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={`px-4 py-3 text-sm font-medium border-b border-zinc-100 transition-all duration-300 ease-out ${
-                      active
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "text-zinc-700 hover:bg-zinc-50"
-                    } ${
-                      mobileMenuVisible
-                        ? "translate-y-0 opacity-100"
-                        : "-translate-y-3 opacity-0"
-                    }`}
-                    style={{
-                      transitionDelay: mobileMenuVisible
-                        ? `${index * 40}ms`
-                        : "0ms",
-                    }}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-            </nav>
+              {/* Mobile Navigation Links */}
+              <nav className="space-y-2" aria-label="Public pages">
+                {publicLinks.map((link, index) => {
+                  const active = isActive(pathname, link.href);
+                  return (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      className={`flex min-h-12 items-center justify-between rounded-md border px-4 text-sm font-semibold shadow-sm transition-all duration-300 ease-out ${
+                        active
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
+                      } ${
+                        mobileMenuVisible
+                          ? "translate-y-0 opacity-100"
+                          : "-translate-y-3 opacity-0"
+                      }`}
+                      style={{
+                        transitionDelay: mobileMenuVisible
+                          ? `${index * 40}ms`
+                          : "0ms",
+                      }}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      <span>{link.label}</span>
+                      {active && (
+                        <span className="h-2 w-2 rounded-full bg-emerald-600" />
+                      )}
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
           </div>,
           document.body
         )}

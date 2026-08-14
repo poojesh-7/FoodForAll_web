@@ -4,6 +4,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -343,16 +344,8 @@ export default function ProviderModerationCaseDetailPage() {
           Moderation cases
         </Link>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        {success && (
-          <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {success}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
+        {success && <OperationalFeedbackBlock title={success} tone="success" />}
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

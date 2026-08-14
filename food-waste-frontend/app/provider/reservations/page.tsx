@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ShieldAlert, ShieldCheck, Ticket, Truck } from "lucide-react";
 import { ReservationFoodImage } from "@/components/FoodImage";
 import IdentityChip from "@/components/identity/IdentityChip";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import { MetaChip, SignalTile } from "@/components/reservations/ReservationHighlights";
 import { formatFoodDate, formatQuantityWithUnit } from "@/lib/food";
@@ -558,16 +559,8 @@ export default function ProviderReservationsPage() {
           </Link>
         </header>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        {success && (
-          <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {success}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
+        {success && <OperationalFeedbackBlock title={success} tone="success" />}
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

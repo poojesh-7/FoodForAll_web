@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LocateFixed, MapPin, Search } from "lucide-react";
 import FoodCard from "@/components/FoodCard";
 import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { isNormalUserPaidListing } from "@/lib/food";
 import {
   defaultListingDiscoveryFilters,
@@ -209,11 +210,7 @@ export default function NearbyFoodPage() {
           onApply={() => search()}
         />
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {loading ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">

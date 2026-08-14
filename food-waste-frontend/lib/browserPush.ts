@@ -1,7 +1,7 @@
 "use client";
 
 import api from "@/lib/axios";
-import toast from "react-hot-toast";
+import { showOperationalFeedback } from "@/lib/operationalFeedback";
 
 const BROWSER_PUSH_REMINDER_STORAGE_KEY = "food-waste-browser-push-reminder";
 const BROWSER_PUSH_REMINDER_DELAY_MS = 1000 * 60 * 60 * 24 * 3;
@@ -154,9 +154,9 @@ export async function requestBrowserPushSubscription() {
 }
 
 export function showBrowserPushSuccess(message: string) {
-  toast.success(message);
+  showOperationalFeedback({ message, variant: "success", scope: "browser-push" });
 }
 
 export function showBrowserPushError(message: string) {
-  toast.error(message);
+  showOperationalFeedback({ message, variant: "error", scope: "browser-push" });
 }

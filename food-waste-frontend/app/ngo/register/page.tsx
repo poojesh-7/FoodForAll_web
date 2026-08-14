@@ -2,6 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { getPostAuthRedirect, getRegistrationRedirect } from "@/lib/onboarding";
 import {
   validateBusinessName,
@@ -117,11 +118,7 @@ export default function NGORegisterPage() {
           </p>
         </div>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         <div className="space-y-2">
           <label

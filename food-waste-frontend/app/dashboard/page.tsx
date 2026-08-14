@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import ImpactMetricGrid from "@/components/analytics/ImpactMetricGrid";
+import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
 import { formatDateTime, formatVisibleDateTimes } from "@/lib/dateTime";
 import { getRoleDashboard } from "@/lib/onboarding";
@@ -459,11 +460,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {error && (
-          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {user && Number("restriction_level" in user ? user.restriction_level ?? 0 : 0) > 0 && (
           <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -607,9 +604,12 @@ export default function DashboardPage() {
                   </div>
 
                   {financialMessage && (
-                    <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                      {financialMessage}
-                    </p>
+                    <div className="mt-3">
+                      <OperationalFeedbackBlock
+                        title={financialMessage}
+                        tone="success"
+                      />
+                    </div>
                   )}
 
                   <div className="mt-4">{payoutAccountStatusBadge(payoutAccount)}</div>

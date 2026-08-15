@@ -133,7 +133,7 @@ export default function AppNavigation() {
             className="min-w-0"
           >
             <p className="truncate text-base font-semibold text-zinc-950">
-              Food Rescue
+              FoodForAll
             </p>
             <p className="mt-0.5 text-xs capitalize text-zinc-500">
               {String(currentRole ?? "account")}
@@ -208,7 +208,7 @@ export default function AppNavigation() {
               href={dashboardHref}
               className="truncate text-base font-semibold text-zinc-950"
             >
-              Food Rescue
+              FoodForAll
             </Link>
           </div>
 

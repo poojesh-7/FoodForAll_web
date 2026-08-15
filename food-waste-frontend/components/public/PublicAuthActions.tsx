@@ -41,22 +41,22 @@ const variantClasses: Record<
       "inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2",
   },
   lightCta: {
-    wrapper: "flex flex-wrap gap-3",
+    wrapper: "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap",
     primary:
-      "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800",
+      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto",
     secondary:
-      "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100",
+      "inline-flex w-full shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto",
     logout:
-      "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100",
+      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto",
   },
   darkCta: {
-    wrapper: "flex flex-wrap gap-3",
+    wrapper: "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap",
     primary:
-      "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100",
+      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:w-auto",
     secondary:
-      "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10",
+      "inline-flex w-full shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:w-auto",
     logout:
-      "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10",
+      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:w-auto",
   },
 };
 

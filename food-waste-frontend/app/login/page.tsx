@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
+import { CheckCircle2, MapPin, ShieldCheck, Sparkles } from "lucide-react";
 import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { PublicFooter, PublicHeader } from "@/components/public/PublicSite";
 import { getPublicGoogleClientId } from "@/lib/env";
@@ -55,6 +56,8 @@ const GOOGLE_POPUP_NOTICE =
 const GOOGLE_CREDENTIAL_ERROR =
   "Google sign-in was cancelled or did not return account details. Please try again.";
 const GOOGLE_POPUP_NOTICE_DELAY_MS = 5000;
+const GOOGLE_BUTTON_MAX_WIDTH = 320;
+const GOOGLE_BUTTON_MIN_WIDTH = 200;
 
 type GoogleSdkStatus = "loading" | "ready" | "failed";
 
@@ -142,6 +145,9 @@ export default function LoginPage() {
   const redirectingRef = useRef(false);
   const popupNoticeTimerRef = useRef<number | null>(null);
   const [googlePopupNotice, setGooglePopupNotice] = useState("");
+  const [googleButtonWidth, setGoogleButtonWidth] = useState<number | null>(
+    null
+  );
 
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
@@ -290,7 +296,44 @@ export default function LoginPage() {
 
   useEffect(() => {
     const googleButtonElement = googleButtonRef.current;
-    if (!googleClientId || googleSdkStatus !== "ready" || !googleButtonElement) {
+    if (!googleButtonElement || !googleClientId || googleSdkStatus === "failed") {
+      return;
+    }
+
+    const updateGoogleButtonWidth = () => {
+      const availableWidth = Math.floor(googleButtonElement.clientWidth);
+      if (!availableWidth) return;
+
+      setGoogleButtonWidth(
+        Math.min(
+          GOOGLE_BUTTON_MAX_WIDTH,
+          Math.max(GOOGLE_BUTTON_MIN_WIDTH, availableWidth)
+        )
+      );
+    };
+
+    updateGoogleButtonWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateGoogleButtonWidth);
+      return () =>
+        window.removeEventListener("resize", updateGoogleButtonWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateGoogleButtonWidth);
+    resizeObserver.observe(googleButtonElement);
+
+    return () => resizeObserver.disconnect();
+  }, [googleClientId, googleSdkStatus]);
+
+  useEffect(() => {
+    const googleButtonElement = googleButtonRef.current;
+    if (
+      !googleClientId ||
+      googleSdkStatus !== "ready" ||
+      !googleButtonElement ||
+      !googleButtonWidth
+    ) {
       return;
     }
 
@@ -322,7 +365,7 @@ export default function LoginPage() {
         size: "large",
         text: "continue_with",
         shape: "rectangular",
-        width: 320,
+        width: googleButtonWidth,
         click_listener: schedulePopupNotice,
       });
     } catch (error) {
@@ -348,6 +391,7 @@ export default function LoginPage() {
   }, [
     clearPopupNoticeTimer,
     googleClientId,
+    googleButtonWidth,
     googleSdkStatus,
     handleGoogleCredential,
     schedulePopupNotice,
@@ -382,41 +426,72 @@ export default function LoginPage() {
         />
       )}
       <PublicHeader />
-      <main className="min-h-screen bg-zinc-50 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
-          <section className="space-y-6">
-            <div className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
-              Food rescue platform
+      <main className="bg-zinc-50 px-3 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto grid min-h-[calc(100dvh-8rem)] w-full max-w-6xl items-center gap-6 py-2 sm:py-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:gap-10">
+          <section className="min-w-0 space-y-5">
+            <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase text-emerald-700">
+              <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-words">Food rescue platform</span>
             </div>
             <div className="max-w-2xl space-y-4">
-              <h1 className="text-4xl font-semibold text-zinc-950 sm:text-5xl">
-                FoodForAll
+              <h1 className="text-3xl font-semibold leading-tight text-zinc-950 sm:text-5xl">
+                Sign in to rescue fresh food nearby.
               </h1>
-              <p className="text-lg leading-8 text-zinc-700">
-                Connect restaurants, NGOs, volunteers and communities to rescue
-                surplus food before it goes to waste.
+              <p className="text-base leading-7 text-zinc-700 sm:text-lg sm:leading-8">
+                FoodForAll connects people with surplus meals from trusted local
+                providers, so good food can be reserved, paid for, and collected
+                before it goes to waste.
               </p>
             </div>
             <ul className="grid max-w-2xl gap-3 text-sm font-medium text-zinc-700 sm:grid-cols-3 lg:grid-cols-1">
               {[
-                "Reduce food waste.",
-                "Support communities.",
-                "Create measurable impact.",
+                "Discover affordable food.",
+                "Reserve with confidence.",
+                "Support local impact.",
               ].map((item) => (
-                <li key={item} className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                  {item}
+                <li
+                  key={item}
+                  className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-sm"
+                >
+                  <CheckCircle2
+                    className="h-4 w-4 shrink-0 text-emerald-700"
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 break-words">{item}</span>
                 </li>
               ))}
             </ul>
+            <div className="grid max-w-xl gap-3 text-sm text-zinc-600 sm:grid-cols-2">
+              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+                <MapPin className="h-5 w-5 text-emerald-700" aria-hidden="true" />
+                <p className="mt-2 font-semibold text-zinc-950">
+                  Nearby availability
+                </p>
+                <p className="mt-1 leading-6">
+                  Find pickups from restaurants and providers around you.
+                </p>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+                <ShieldCheck
+                  className="h-5 w-5 text-emerald-700"
+                  aria-hidden="true"
+                />
+                <p className="mt-2 font-semibold text-zinc-950">
+                  Trusted access
+                </p>
+                <p className="mt-1 leading-6">
+                  Continue with Google to enter the same secure account flow.
+                </p>
+              </div>
+            </div>
           </section>
 
-          <section className="w-full space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+          <section className="w-full min-w-0 space-y-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6">
             <div>
-              <h2 className="text-2xl font-semibold text-zinc-950">
+              <h2 className="text-xl font-semibold text-zinc-950 sm:text-2xl">
                 Sign in to FoodForAll
               </h2>
-              <p className="mt-1 text-sm text-zinc-600">
+              <p className="mt-2 text-sm leading-6 text-zinc-600">
                 Continue with Google to access your account.
               </p>
             </div>
@@ -439,7 +514,7 @@ export default function LoginPage() {
 
             {googleClientId ? (
               <div
-                className={`flex min-h-11 justify-center ${
+                className={`flex min-h-11 min-w-0 justify-center ${
                   busy ? "pointer-events-none opacity-60" : ""
                 }`}
                 aria-busy={googleLoading || googleSdkLoading}
@@ -447,8 +522,14 @@ export default function LoginPage() {
                 {googleSdkStatus === "ready" && (
                   <div
                     ref={googleButtonRef}
-                    className="flex min-h-11 w-full justify-center"
-                  />
+                    className="flex min-h-11 w-full min-w-0 justify-center overflow-hidden"
+                  >
+                    {!googleButtonWidth && (
+                      <div className="flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-600">
+                        Preparing Google sign-in...
+                      </div>
+                    )}
+                  </div>
                 )}
                 {googleSdkLoading && (
                   <div className="flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-600">
@@ -494,6 +575,10 @@ export default function LoginPage() {
             <p className="text-sm leading-6 text-zinc-600">
               You will add your contact phone number during profile setup.
             </p>
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-800">
+              Reserve, pay, and collect fresh surplus food through your
+              FoodForAll account.
+            </div>
           </section>
         </div>
       </main>

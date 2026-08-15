@@ -1261,6 +1261,7 @@ exports.getMe = async (req, res) => {
         u.profile_image_url,
         u.profile_image_public_id,
         COALESCE(u.profile_image_url, u.profile_image) AS profile_image,
+        u.address,
         u.latitude,
         u.longitude,
         u.reliability_deposit_amount,

@@ -87,8 +87,8 @@ export default function ProfileImageManager({
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-3">
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-emerald-100 bg-emerald-50/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3">
         <IdentityAvatar
           src={imageUrl}
           name={name}
@@ -96,13 +96,13 @@ export default function ProfileImageManager({
           label={`${role ?? "User"} avatar`}
           size="lg"
         />
-        <div>
+        <div className="min-w-0">
           <p className="text-sm font-semibold text-zinc-950">Profile image</p>
           <p className="text-xs text-zinc-500">JPG, PNG, or WEBP up to 5 MB.</p>
           {error && <p className="mt-1 text-xs font-medium text-red-700">{error}</p>}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
         <input
           ref={inputRef}
           type="file"
@@ -117,7 +117,7 @@ export default function ProfileImageManager({
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={saving}
-          className="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
         >
           {imageUrl ? "Replace" : "Upload"}
         </button>
@@ -126,7 +126,7 @@ export default function ProfileImageManager({
             type="button"
             onClick={() => void removeImage()}
             disabled={saving}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             Remove
           </button>

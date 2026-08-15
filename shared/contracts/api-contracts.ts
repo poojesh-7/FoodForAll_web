@@ -133,6 +133,9 @@ export interface UserProfile {
   auth_provider?: "otp" | "google" | string;
   phone_verified_at?: ISODateString | null;
   role: UserRole | null;
+  address?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   profile_image_url?: string | null;
   profile_image_public_id?: string | null;
   profile_image?: string | null;

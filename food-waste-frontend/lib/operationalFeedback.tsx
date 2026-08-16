@@ -13,6 +13,7 @@ import {
 import {
   getOperationalFeedbackDuration,
   getOperationalFeedbackId,
+  getUserFacingNotificationMessage,
   normalizeOperationalFeedbackMessage,
   shouldNotifyOperationalFeedback,
   type OperationalFeedbackVariant,
@@ -102,16 +103,17 @@ function OperationalToast({
 }
 
 export function showOperationalFeedback(input: OperationalFeedbackInput) {
-  const message = normalizeOperationalFeedbackMessage(input.message);
+  const rawMessage = normalizeOperationalFeedbackMessage(input.message);
 
-  if (!shouldNotifyOperationalFeedback(input.variant, message)) {
+  if (!shouldNotifyOperationalFeedback(input.variant, rawMessage)) {
     return null;
   }
 
   const variant = input.variant === "neutral" ? "info" : input.variant;
+  const message = getUserFacingNotificationMessage(rawMessage);
   const id = getOperationalFeedbackId({
     variant,
-    message,
+    message: rawMessage,
     scope: input.scope,
   });
 

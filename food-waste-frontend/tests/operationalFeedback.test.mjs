@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   getOperationalFeedbackDuration,
   getOperationalFeedbackId,
+  getUserFacingNotificationMessage,
   normalizeOperationalFeedbackMessage,
   shouldNotifyOperationalFeedback,
 } from "../lib/operationalFeedbackCore.ts";
@@ -19,6 +20,52 @@ test("operational feedback ids dedupe identical messages", () => {
   });
 
   assert.equal(first, second);
+});
+
+test("notification text replaces technical messages with user-friendly copy", () => {
+  assert.equal(
+    getUserFacingNotificationMessage("User already has reservation for this listing."),
+    "You've already reserved this food."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Listing is no longer available."),
+    "Sorry, this food is no longer available."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Unauthorized."),
+    "Please sign in to continue."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Forbidden."),
+    "You don't have permission to do this."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Internal server error."),
+    "Something went wrong on our side. Please try again shortly."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Network request failed."),
+    "We couldn't connect right now. Please check your internet connection and try again."
+  );
+});
+
+test("notification text hides payment and HTTP implementation details", () => {
+  assert.equal(
+    getUserFacingNotificationMessage("Cashfree order creation failed."),
+    "We couldn't start the payment. Please try again."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Payment verification failed."),
+    "We couldn't confirm your payment yet. Please check your reservation before trying again."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Opening secure Cashfree checkout..."),
+    "Opening secure payment checkout..."
+  );
+  assert.equal(
+    getUserFacingNotificationMessage("Request failed with status code 500"),
+    "Something went wrong. Please try again."
+  );
 });
 
 test("operational feedback ignores empty and neutral messages", () => {

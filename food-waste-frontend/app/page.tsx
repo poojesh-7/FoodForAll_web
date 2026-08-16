@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import {
-  ArrowRight,
   BadgeIndianRupee,
   CheckCircle2,
   Clock3,
@@ -141,13 +139,6 @@ export default function Home() {
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <Link
-                href="/food"
-                className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto"
-              >
-                Browse food
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </Link>
               <div className="sm:w-auto">
                 <PublicAuthActions variant="lightCta" />
               </div>
@@ -364,13 +355,6 @@ export default function Home() {
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Link
-              href="/food"
-              className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-white px-5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:w-auto"
-            >
-              Browse food
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
             <PublicAuthActions variant="darkCta" />
           </div>
         </div>

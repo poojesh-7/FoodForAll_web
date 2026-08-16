@@ -24,7 +24,6 @@ export default function BrowserPushGate() {
 
   useEffect(() => {
     if (!initialized || !isAuthenticated || !isOnboarded) {
-      setReadyToPrompt(false);
       return;
     }
 

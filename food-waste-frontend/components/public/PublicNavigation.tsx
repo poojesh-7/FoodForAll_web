@@ -27,17 +27,10 @@ function isActive(pathname: string, href: string) {
 export function PublicNavigation() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // Controls whether the mobile menu is mounted at all (kept mounted a
-  // little longer than `mobileMenuOpen` so the close transition can play).
-  const [mobileMenuMounted, setMobileMenuMounted] = useState(false);
-  // Drives the actual transform/opacity classes; toggled a tick after
-  // mount so the "enter" transition runs from a real starting state.
-  const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const navRef = useRef<HTMLElement>(null);
 
-  // Sliding indicator under the active desktop nav link
   const [indicatorStyle, setIndicatorStyle] = useState<{
     left: number;
     width: number;
@@ -72,39 +65,6 @@ export function PublicNavigation() {
     return () => window.removeEventListener("resize", updateIndicator);
   }, []);
 
-  // Close menu when route changes
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [pathname]);
-
-  // Mount/unmount mobile menu with a slide transition
-  useEffect(() => {
-    let rafId1: number;
-    let rafId2: number;
-    let hideTimeout: ReturnType<typeof setTimeout>;
-
-    if (mobileMenuOpen) {
-      setMobileMenuMounted(true);
-      // Two nested rAFs guarantee the browser has painted the initial
-      // (hidden) state at least once before we flip to visible — a
-      // setTimeout can still land in the same paint and skip the
-      // transition entirely, which is what caused the "popping" jump.
-      rafId1 = requestAnimationFrame(() => {
-        rafId2 = requestAnimationFrame(() => setMobileMenuVisible(true));
-      });
-    } else {
-      setMobileMenuVisible(false);
-      hideTimeout = setTimeout(() => setMobileMenuMounted(false), 320);
-    }
-
-    return () => {
-      cancelAnimationFrame(rafId1);
-      cancelAnimationFrame(rafId2);
-      clearTimeout(hideTimeout);
-    };
-  }, [mobileMenuOpen]);
-
-  // Handle keyboard and outside clicks
   useEffect(() => {
     if (!mobileMenuOpen) return;
 
@@ -137,15 +97,17 @@ export function PublicNavigation() {
   }, [mobileMenuOpen]);
 
   const handleMobileMenuToggle = () => {
-    setMobileMenuOpen(!mobileMenuOpen);
+    setMobileMenuOpen((open) => !open);
+  };
+
+  const closeMobileMenu = () => {
+    setMobileMenuOpen(false);
   };
 
   return (
     <header className="border-b border-zinc-200 bg-white/95 backdrop-blur">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        {/* Desktop & Tablet Navigation */}
         <div className="flex min-h-20 items-center justify-between gap-4">
-          {/* Logo */}
           <Link
             href="/"
             className="flex-shrink-0 rounded-md text-xl font-semibold text-zinc-950 outline-none transition hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-4"
@@ -153,7 +115,6 @@ export function PublicNavigation() {
             {businessName}
           </Link>
 
-          {/* Desktop Navigation (hidden on mobile, shown on lg+) */}
           <nav
             ref={navRef}
             className="relative hidden flex-1 items-center justify-center gap-2 px-8 text-sm font-medium text-zinc-700 lg:flex"
@@ -177,7 +138,6 @@ export function PublicNavigation() {
                 </Link>
               );
             })}
-            {/* Sliding active-link indicator */}
             <span
               aria-hidden="true"
               className="pointer-events-none absolute bottom-0 h-0.5 rounded-full bg-emerald-700 transition-all duration-300 ease-out"
@@ -189,12 +149,10 @@ export function PublicNavigation() {
             />
           </nav>
 
-          {/* Desktop Auth Actions */}
           <div className="hidden lg:block">
             <PublicAuthActions variant="header" showLogout={true} />
           </div>
 
-          {/* Mobile Menu Trigger */}
           <button
             ref={triggerRef}
             onClick={handleMobileMenuToggle}
@@ -212,48 +170,33 @@ export function PublicNavigation() {
         </div>
       </div>
 
-      {/* Mobile Menu Portal */}
-      {mobileMenuMounted &&
+      {mobileMenuOpen &&
         createPortal(
           <div
             id="mobile-menu"
             ref={menuRef}
-            className={`fixed inset-0 top-20 z-50 origin-top overflow-y-auto bg-zinc-50 lg:hidden transition-all duration-300 ease-out will-change-transform ${
-              mobileMenuVisible
-                ? "translate-y-0 opacity-100"
-                : "-translate-y-6 opacity-0"
-            }`}
+            className="fixed inset-0 top-20 z-50 origin-top overflow-y-auto bg-zinc-50 lg:hidden"
             role="navigation"
             aria-label="Mobile navigation"
           >
             <div className="space-y-5 px-5 py-5">
-              {/* Mobile Auth Actions - stacked, button-like */}
               <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
                 <PublicAuthActions variant="mobileMenu" showLogout={true} />
               </section>
 
-              {/* Mobile Navigation Links */}
               <nav className="space-y-2" aria-label="Public pages">
-                {publicLinks.map((link, index) => {
+                {publicLinks.map((link) => {
                   const active = isActive(pathname, link.href);
                   return (
                     <Link
                       key={link.href}
                       href={link.href}
-                      className={`flex min-h-12 items-center justify-between rounded-md border px-4 text-sm font-semibold shadow-sm transition-all duration-300 ease-out ${
+                      onClick={closeMobileMenu}
+                      className={`flex min-h-12 items-center justify-between rounded-md border px-4 text-sm font-semibold shadow-sm transition-colors ${
                         active
                           ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                           : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
-                      } ${
-                        mobileMenuVisible
-                          ? "translate-y-0 opacity-100"
-                          : "-translate-y-3 opacity-0"
                       }`}
-                      style={{
-                        transitionDelay: mobileMenuVisible
-                          ? `${index * 40}ms`
-                          : "0ms",
-                      }}
                       aria-current={active ? "page" : undefined}
                     >
                       <span>{link.label}</span>

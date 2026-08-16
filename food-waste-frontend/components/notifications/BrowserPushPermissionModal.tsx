@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   getBrowserPushPermission,
   markBrowserPushReminderDismissed,
@@ -18,14 +18,8 @@ export default function BrowserPushPermissionModal({
   open,
   onClose,
 }: BrowserPushPermissionModalProps) {
-  const [permission, setPermission] = useState(getBrowserPushPermission());
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setPermission(getBrowserPushPermission());
-    }
-  }, [open]);
+  const permission = getBrowserPushPermission();
 
   if (!open) {
     return null;
@@ -44,7 +38,6 @@ export default function BrowserPushPermissionModal({
       }
 
       showBrowserPushError(result.message || "Notifications were not enabled.");
-      setPermission(getBrowserPushPermission());
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "We could not enable notifications right now.";

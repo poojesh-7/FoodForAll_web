@@ -5,6 +5,7 @@ import type {
   ProviderPayoutAccount,
   ProviderPayoutAccountsData,
   ProviderPayoutAccountsResponse,
+  ProviderSettlementHistoryRow,
   ProviderSettlementSummaryData,
   RequestProviderPayoutAccountChangeRequest,
   SaveProviderPayoutAccountRequest,
@@ -18,6 +19,20 @@ function getEnvelopeData<TData>(body: { data: TData } | TData): TData {
 
   return body as TData;
 }
+
+type SettlementRecordsPayload = {
+  records?: ProviderSettlementHistoryRow[] | SettlementRecordsPayload;
+  limit?: unknown;
+  offset?: unknown;
+  count?: unknown;
+};
+
+type SettlementRecordsResult = {
+  records: ProviderSettlementHistoryRow[];
+  limit: number;
+  offset: number;
+  count: number;
+};
 
 export async function getPayoutAccounts(): Promise<ProviderPayoutAccountsData> {
   const { data } = await api.get<
@@ -69,19 +84,21 @@ export async function getSettlementRecords(params: {
   status?: string;
   limit?: number;
   offset?: number;
-}): Promise<{ records: any[]; limit: number; offset: number; count: number }> {
+}): Promise<SettlementRecordsResult> {
   const { data } = await api.get("/provider/financial/settlements/records", {
     params,
   });
 
-  const payload = getEnvelopeData<any>(data);
+  const payload = getEnvelopeData<
+    SettlementRecordsPayload | ProviderSettlementHistoryRow[]
+  >(data);
 
   // Normalize response shapes:
   // 1) { records: [...], limit, offset, count }
   // 2) { records: { records: [...], limit, offset, count } } (backend nested)
   // 3) [...] (array)
 
-  if (payload && Array.isArray(payload.records)) {
+  if (!Array.isArray(payload) && payload && Array.isArray(payload.records)) {
     return {
       records: payload.records,
       limit: Number(payload.limit || payload.records.length || 0),
@@ -90,14 +107,22 @@ export async function getSettlementRecords(params: {
     };
   }
 
-  if (payload && payload.records && Array.isArray(payload.records.records)) {
+  if (
+    !Array.isArray(payload) &&
+    payload &&
+    payload.records &&
+    !Array.isArray(payload.records)
+  ) {
     const inner = payload.records;
-    return {
-      records: inner.records,
-      limit: Number(inner.limit || inner.records.length || 0),
-      offset: Number(inner.offset || 0),
-      count: Number(inner.count || inner.records.length || 0),
-    };
+    const records = inner.records;
+    if (Array.isArray(records)) {
+      return {
+        records,
+        limit: Number(inner.limit || records.length || 0),
+        offset: Number(inner.offset || 0),
+        count: Number(inner.count || records.length || 0),
+      };
+    }
   }
 
   if (Array.isArray(payload)) {

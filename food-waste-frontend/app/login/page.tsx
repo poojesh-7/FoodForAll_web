@@ -427,8 +427,8 @@ export default function LoginPage() {
       )}
       <PublicHeader />
       <main className="bg-zinc-50 px-3 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto grid min-h-[calc(100dvh-8rem)] w-full max-w-6xl items-center gap-6 py-2 sm:py-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:gap-10">
-          <section className="min-w-0 space-y-5">
+        <div className="mx-auto grid min-h-[calc(100dvh-8rem)] w-full max-w-6xl items-center gap-5 py-2 sm:py-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:gap-x-10 lg:gap-y-5">
+          <section className="min-w-0 space-y-5 lg:col-start-1 lg:row-start-1">
             <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase text-emerald-700">
               <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 break-words">Food rescue platform</span>
@@ -437,56 +437,10 @@ export default function LoginPage() {
               <h1 className="text-3xl font-semibold leading-tight text-zinc-950 sm:text-5xl">
                 Sign in to rescue fresh food nearby.
               </h1>
-              <p className="text-base leading-7 text-zinc-700 sm:text-lg sm:leading-8">
-                FoodForAll connects people with surplus meals from trusted local
-                providers, so good food can be reserved, paid for, and collected
-                before it goes to waste.
-              </p>
-            </div>
-            <ul className="grid max-w-2xl gap-3 text-sm font-medium text-zinc-700 sm:grid-cols-3 lg:grid-cols-1">
-              {[
-                "Discover affordable food.",
-                "Reserve with confidence.",
-                "Support local impact.",
-              ].map((item) => (
-                <li
-                  key={item}
-                  className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-sm"
-                >
-                  <CheckCircle2
-                    className="h-4 w-4 shrink-0 text-emerald-700"
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 break-words">{item}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="grid max-w-xl gap-3 text-sm text-zinc-600 sm:grid-cols-2">
-              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
-                <MapPin className="h-5 w-5 text-emerald-700" aria-hidden="true" />
-                <p className="mt-2 font-semibold text-zinc-950">
-                  Nearby availability
-                </p>
-                <p className="mt-1 leading-6">
-                  Find pickups from restaurants and providers around you.
-                </p>
-              </div>
-              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
-                <ShieldCheck
-                  className="h-5 w-5 text-emerald-700"
-                  aria-hidden="true"
-                />
-                <p className="mt-2 font-semibold text-zinc-950">
-                  Trusted access
-                </p>
-                <p className="mt-1 leading-6">
-                  Continue with Google to enter the same secure account flow.
-                </p>
-              </div>
             </div>
           </section>
 
-          <section className="w-full min-w-0 space-y-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6">
+          <section className="w-full min-w-0 space-y-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
             <div>
               <h2 className="text-xl font-semibold text-zinc-950 sm:text-2xl">
                 Sign in to FoodForAll
@@ -578,6 +532,57 @@ export default function LoginPage() {
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-800">
               Reserve, pay, and collect fresh surplus food through your
               FoodForAll account.
+            </div>
+          </section>
+
+          <section className="min-w-0 space-y-5 lg:col-start-1 lg:row-start-2">
+            <div className="max-w-2xl space-y-4">
+              <p className="text-base leading-7 text-zinc-700 sm:text-lg sm:leading-8">
+                FoodForAll connects people with surplus meals from trusted local
+                providers, so good food can be reserved, paid for, and collected
+                before it goes to waste.
+              </p>
+            </div>
+            <ul className="grid max-w-2xl gap-3 text-sm font-medium text-zinc-700 sm:grid-cols-3 lg:grid-cols-1">
+              {[
+                "Discover affordable food.",
+                "Reserve with confidence.",
+                "Support local impact.",
+              ].map((item) => (
+                <li
+                  key={item}
+                  className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-sm"
+                >
+                  <CheckCircle2
+                    className="h-4 w-4 shrink-0 text-emerald-700"
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 break-words">{item}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="grid max-w-xl gap-3 text-sm text-zinc-600 sm:grid-cols-2">
+              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+                <MapPin className="h-5 w-5 text-emerald-700" aria-hidden="true" />
+                <p className="mt-2 font-semibold text-zinc-950">
+                  Nearby availability
+                </p>
+                <p className="mt-1 leading-6">
+                  Find pickups from restaurants and providers around you.
+                </p>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+                <ShieldCheck
+                  className="h-5 w-5 text-emerald-700"
+                  aria-hidden="true"
+                />
+                <p className="mt-2 font-semibold text-zinc-950">
+                  Trusted access
+                </p>
+                <p className="mt-1 leading-6">
+                  Continue with Google to enter the same secure account flow.
+                </p>
+              </div>
             </div>
           </section>
         </div>

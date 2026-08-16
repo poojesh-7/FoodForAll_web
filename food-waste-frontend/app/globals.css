@@ -34,10 +34,65 @@ body {
 
 .operational-toast {
   box-sizing: border-box;
-  width: min(26rem, calc(100vw - 2rem));
-  min-width: min(20rem, calc(100vw - 2rem));
-  max-width: min(26rem, calc(100vw - 2rem));
-  overflow-wrap: break-word;
+  width: min(24rem, calc(100vw - 2rem));
+  min-width: min(20.75rem, calc(100vw - 2rem));
+  max-width: min(24rem, calc(100vw - 2rem));
+  overflow-wrap: anywhere;
+}
+
+.app-toast-shell {
+  box-sizing: border-box;
+}
+
+.app-notification-toast {
+  display: grid;
+  box-sizing: border-box;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.875rem;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  padding: 0.875rem 1rem;
+  text-align: left;
+}
+
+.app-notification-toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #059669;
+  box-shadow: inset 0 0 0 1px #bbf7d0;
+  flex-shrink: 0;
+}
+
+.app-notification-toast__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  padding-top: 0.05rem;
+}
+
+.app-notification-toast__title {
+  color: #064e3b;
+  font-size: 0.925rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.app-notification-toast__message {
+  color: #27272a;
+  font-size: 0.875rem;
+  line-height: 1.35rem;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 @media (max-width: 640px) {
@@ -49,7 +104,7 @@ body {
 
   .operational-toast {
     width: min(22rem, calc(100vw - 1.5rem));
-    min-width: min(20rem, calc(100vw - 1.5rem));
+    min-width: min(20.75rem, calc(100vw - 1.5rem));
     max-width: calc(100vw - 1.5rem);
   }
 }
@@ -63,5 +118,16 @@ body {
     width: calc(100vw - 1rem);
     min-width: 0;
     max-width: calc(100vw - 1rem);
+  }
+
+  .app-notification-toast {
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.75rem;
+    padding: 0.8125rem 0.875rem;
+  }
+
+  .app-notification-toast__icon {
+    width: 2rem;
+    height: 2rem;
   }
 }

@@ -81,14 +81,14 @@ function OperationalToast({
     <div
       role={role}
       aria-live={variant === "error" ? "assertive" : "polite"}
-      className={`operational-toast pointer-events-auto flex w-[min(26rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg transition ${
+      className={`operational-toast pointer-events-auto flex w-[min(24rem,calc(100vw-2rem))] items-center gap-3 rounded-xl border px-3.5 py-3 text-left text-sm shadow-[0_14px_34px_rgba(24,24,27,0.14),0_3px_10px_rgba(24,24,27,0.08)] transition ${
         toastState.visible ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"
       } ${meta.className}`}
     >
-      <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.iconClassName}`} aria-hidden="true" />
+      <Icon className={`h-5 w-5 shrink-0 ${meta.iconClassName}`} aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className="font-semibold leading-5">{title || meta.title}</p>
-        <p className="mt-1 break-words leading-5">{message}</p>
+        <p className="mt-0.5 break-words leading-5">{message}</p>
       </div>
       <button
         type="button"

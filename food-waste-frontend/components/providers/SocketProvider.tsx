@@ -11,6 +11,7 @@ import {
 import { usePathname } from "next/navigation";
 import type { Socket } from "socket.io-client";
 import toast from "react-hot-toast";
+import { Bell } from "lucide-react";
 import { socket } from "@/lib/socket";
 import { useAuthStore } from "@/store/authStore";
 import {
@@ -74,6 +75,30 @@ function getVerificationStatus(
   return user.verification_status ?? null;
 }
 
+function RealtimeNotificationToast({
+  notification,
+}: {
+  notification: NotificationRow;
+}) {
+  const title = notification.title || "New notification";
+
+  return (
+    <div className="app-notification-toast">
+      <span className="app-notification-toast__icon" aria-hidden="true">
+        <Bell className="h-4 w-4" />
+      </span>
+      <span className="app-notification-toast__content">
+        <span className="app-notification-toast__title">{title}</span>
+        {notification.message && (
+          <span className="app-notification-toast__message">
+            {notification.message}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function useSocket() {
   const context = useContext(SocketContext);
   if (!context) {
@@ -118,11 +143,7 @@ export default function SocketProvider({ children }: { children: ReactNode }) {
           .getState()
           .fetchMe({ allowStaleOnFailure: false });
       }
-      toast(
-        notification.message
-          ? `${notification.title || "New notification"}: ${notification.message}`
-          : notification.title || "New notification"
-      );
+      toast(<RealtimeNotificationToast notification={notification} />);
     };
 
     socket.on("reservation_updated", applyReservation);

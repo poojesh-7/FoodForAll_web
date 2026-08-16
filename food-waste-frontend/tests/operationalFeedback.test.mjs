@@ -97,7 +97,9 @@ test("app toaster is globally positioned for fixed viewport feedback", () => {
   assert.match(css, /left:\s*auto !important/);
   assert.match(css, /safe-area-inset-top/);
   assert.doesNotMatch(css, /inset-x/);
-  assert.match(css, /max-width:\s*min\(26rem, calc\(100vw - 2rem\)\)/);
+  assert.match(css, /max-width:\s*min\(24rem, calc\(100vw - 2rem\)\)/);
+  assert.match(css, /\.app-notification-toast/);
+  assert.match(css, /grid-template-columns:\s*2rem minmax\(0, 1fr\)/);
 });
 
 test("toast UI supports variants, dismissal, and accessible announcement", () => {

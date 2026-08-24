@@ -507,6 +507,29 @@ test("F4 user cancellation emits one terminal payment refund across duplicate re
   assert.equal(client.terminal.size, 1);
 });
 
+test("F4 provider-fault refund preserves affected settlement attribution", async () => {
+  const client = createLedgerClient();
+  await recordFinancialOperationLedgerStatus({
+    client,
+    operation: operation({
+      operation_type: "payment_refund",
+      operation_source: "provider_fault_food_not_received",
+      amount: 100,
+      metadata: {
+        refund_id: "refund_provider_fault",
+        provider_settlement_id: "settlement-1",
+      },
+    }),
+    status: "succeeded",
+    refundId: "refund_provider_fault",
+  });
+
+  const entry = Array.from(client.ledger.values())[0];
+  assert.equal(entry.event_type, "refund_issued");
+  assert.equal(entry.provider_settlement_id, "settlement-1");
+  assert.equal(entry.amount, 100);
+});
+
 test("F4 user failed pickup and NGO deposit retention emit deposit_retained", async () => {
   for (const actor of [
     { role: "user", userId: USER_ID, source: "user_failed_pickup" },

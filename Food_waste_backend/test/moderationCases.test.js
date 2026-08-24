@@ -180,6 +180,17 @@ test("provider fault refund preparation creates an ownership-lined food refund o
         };
       }
 
+      if (sql.includes("FROM provider_settlements")) {
+        return {
+          rows: [{
+            id: "settlement-1",
+            amount: 100,
+            status: "pending",
+            settlement_allocation_id: "allocation-1",
+          }],
+        };
+      }
+
       if (sql.includes("INSERT INTO financial_operations")) {
         return {
           rows: [{
@@ -217,6 +228,12 @@ test("provider fault refund preparation creates an ownership-lined food refund o
   assert.equal(financialAction.duplicate_prevented, false);
   assert.equal(financialAction.reservation_id, RESERVATION_ID);
   assert.match(financialAction.refund_id, /^[0-9a-f-]{36}$/);
+  const operationInsert = calls.find((call) =>
+    call.sql.includes("INSERT INTO financial_operations")
+  );
+  const operationMetadata = JSON.parse(operationInsert.params[11]);
+  assert.equal(operationMetadata.provider_settlement_id, "settlement-1");
+  assert.equal(operationMetadata.provider_settlement_adjustment_required, true);
   assert.equal(calls.some((call) => call.sql.includes("FROM payment_ownership")), true);
 });
 

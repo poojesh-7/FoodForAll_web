@@ -1628,6 +1628,20 @@ async function prepareProviderFaultRefund({ client, report, adminId }) {
     throw withStatus("Provider fault refund requires payment ownership", 409);
   }
 
+  const settlementResult = await client.query(
+    `
+    SELECT id, amount, status, settlement_allocation_id
+    FROM provider_settlements
+    WHERE reservation_id=$1
+    AND payment_session_id=$2
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [report.reservation_id, payment.payment_session_id]
+  );
+  const settlement = settlementResult.rows[0] || null;
+
   const plan = buildProviderFaultRefundPlan({
     paymentOwnership: ownership,
     reason: PROVIDER_FAULT_REFUND_REASON,
@@ -1643,6 +1657,10 @@ async function prepareProviderFaultRefund({ client, report, adminId }) {
       service: "moderation.service",
       complaint_report_id: report.id,
       validated_by_admin_id: adminId,
+      provider_settlement_id: settlement?.id || null,
+      provider_settlement_amount: settlement?.amount || null,
+      provider_settlement_status: settlement?.status || null,
+      provider_settlement_adjustment_required: Boolean(settlement),
     },
   });
 

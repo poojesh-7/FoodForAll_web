@@ -1093,6 +1093,10 @@ async function recordFinancialOperationLedgerStatus({
     reservation_id: operation.reservation_id,
     payment_session_id: operation.payment_session_id,
     payment_ownership_id: operation.payment_ownership_id || null,
+    provider_settlement_id:
+      metadata.provider_settlement_id ||
+      operation.metadata?.provider_settlement_id ||
+      null,
     event_type: eventType,
     amount: roundMoney(operation.amount),
     currency: operation.currency,

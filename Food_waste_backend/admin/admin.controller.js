@@ -1,4 +1,5 @@
 const pool = require("../shared/config/db");
+const refundQueue = require("../queues/refund.queue");
 const logger = require("../shared/utils/logger");
 const { isValidId } = require("../utils/validation");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
@@ -2609,6 +2610,7 @@ exports.updateModerationCaseStatus = async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    let validatedReport = null;
 
     const currentDetail = await getModerationCaseDetail({ client, caseId: id });
     if (!currentDetail) {
@@ -2622,7 +2624,7 @@ exports.updateModerationCaseStatus = async (req, res) => {
       currentDetail.report.status === "pending"
     ) {
       if (String(status).toUpperCase() === "VALIDATED") {
-        await validateProviderReport({
+        validatedReport = await validateProviderReport({
           client,
           reportId: currentDetail.report.id,
           adminId: req.user.id,
@@ -2659,6 +2661,13 @@ exports.updateModerationCaseStatus = async (req, res) => {
       caseId: id,
     });
     await client.query("COMMIT");
+    void enqueueProviderFaultRefund(validatedReport?.financial_action).catch((err) => {
+      logger.error("Provider fault refund enqueue failed", {
+        err,
+        caseId: id,
+        operationId: validatedReport?.financial_action?.operation_id,
+      });
+    });
 
     if (
       moderationCase &&
@@ -2739,6 +2748,13 @@ async function reviewProviderReport(req, res, action) {
     }
 
     await client.query("COMMIT");
+    void enqueueProviderFaultRefund(report.financial_action).catch((err) => {
+      logger.error("Provider fault refund enqueue failed", {
+        err,
+        reportId: id,
+        operationId: report.financial_action?.operation_id,
+      });
+    });
     void notifyProviderModerationStatus({
       providerId: report.provider_id,
       caseId: report.moderation_case_id,
@@ -2768,6 +2784,23 @@ async function reviewProviderReport(req, res, action) {
   } finally {
     client.release();
   }
+}
+
+async function enqueueProviderFaultRefund(financialAction) {
+  if (!financialAction?.operation_id || !financialAction?.reservation_id) return;
+
+  await refundQueue.add(
+    "provider-fault-refund",
+    {
+      reservationId: financialAction.reservation_id,
+      refundType: "provider_fault",
+      operationId: financialAction.operation_id,
+      operationSource: "provider_fault_food_not_received",
+    },
+    {
+      jobId: `provider-fault-refund-${financialAction.operation_id}`,
+    }
+  );
 }
 
 exports.validateProviderReport = (req, res) =>

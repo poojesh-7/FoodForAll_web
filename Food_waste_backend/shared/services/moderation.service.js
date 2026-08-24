@@ -1632,18 +1632,44 @@ async function prepareProviderFaultRefund({ client, report, adminId }) {
     paymentOwnership: ownership,
     reason: PROVIDER_FAULT_REFUND_REASON,
   });
+  const refundId = payment.refund_id || crypto.randomUUID();
   const execution = await prepareRefundExecution({
     client,
     plan,
     operationType: "payment_refund",
     operationSource: "provider_fault_food_not_received",
-    refundId: payment.refund_id || null,
+    refundId,
     metadata: {
       service: "moderation.service",
       complaint_report_id: report.id,
       validated_by_admin_id: adminId,
     },
   });
+
+  await client.query(
+    `
+    UPDATE payments
+    SET status='refund_pending',
+        refund_status='refund_pending',
+        refund_id=$1,
+        refund_attempts=COALESCE(refund_attempts, 0) + 1,
+        updated_at=NOW()
+    WHERE id=$2
+    AND status IN ('paid', 'success', 'refund_pending', 'refund_failed')
+    AND refund_status <> 'refunded'
+    `,
+    [refundId, payment.id]
+  );
+
+  await client.query(
+    `
+    UPDATE reservations
+    SET payment_status='refund_pending'
+    WHERE id=$1
+    AND payment_status NOT IN ('refunded', 'refund_failed')
+    `,
+    [report.reservation_id]
+  );
 
   return {
     operation_id: execution.operation.id,
@@ -1652,6 +1678,8 @@ async function prepareProviderFaultRefund({ client, report, adminId }) {
     currency: execution.operation.currency,
     should_execute: execution.shouldExecute,
     duplicate_prevented: execution.duplicatePrevented,
+    refund_id: refundId,
+    reservation_id: report.reservation_id,
   };
 }
 

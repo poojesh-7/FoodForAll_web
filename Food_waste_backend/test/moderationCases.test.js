@@ -191,6 +191,10 @@ test("provider fault refund preparation creates an ownership-lined food refund o
         };
       }
 
+      if (sql.includes("UPDATE payments") || sql.includes("UPDATE reservations")) {
+        return { rowCount: 1, rows: [] };
+      }
+
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
@@ -205,14 +209,14 @@ test("provider fault refund preparation creates an ownership-lined food refund o
     },
   });
 
-  assert.deepEqual(financialAction, {
-    operation_id: "operation-1",
-    status: "processing",
-    amount: 120,
-    currency: "INR",
-    should_execute: true,
-    duplicate_prevented: false,
-  });
+  assert.equal(financialAction.operation_id, "operation-1");
+  assert.equal(financialAction.status, "processing");
+  assert.equal(financialAction.amount, 120);
+  assert.equal(financialAction.currency, "INR");
+  assert.equal(financialAction.should_execute, true);
+  assert.equal(financialAction.duplicate_prevented, false);
+  assert.equal(financialAction.reservation_id, RESERVATION_ID);
+  assert.match(financialAction.refund_id, /^[0-9a-f-]{36}$/);
   assert.equal(calls.some((call) => call.sql.includes("FROM payment_ownership")), true);
 });
 

@@ -549,6 +549,57 @@ async function prepareRefund(reservationId, operationSource) {
   }
 }
 
+async function prepareProviderFaultRefund(reservationId, operationId) {
+  const client = await pool.connect();
+
+  try {
+    await ensurePaymentHardeningSchema(client);
+    await client.query("BEGIN");
+
+    const operationResult = await client.query(
+      `
+      SELECT *
+      FROM financial_operations
+      WHERE id=$1
+      LIMIT 1
+      `,
+      [operationId]
+    );
+    const operation = operationResult.rows[0];
+    if (
+      !operation ||
+      String(operation.reservation_id) !== String(reservationId) ||
+      operation.operation_source !== "provider_fault_food_not_received" ||
+      ["succeeded", "skipped", "retained"].includes(operation.status)
+    ) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const { payment } = await lockReservationGraph(client, reservationId, {
+      lockPayments: true,
+    });
+    const refundId = operation.metadata?.refund_id;
+    if (!payment || !refundId || Number(operation.amount) <= 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query("COMMIT");
+    return {
+      orderId: payment.order_id,
+      refundId,
+      amount: Number(operation.amount),
+      operationId: operation.id,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 const refundWorker = new Worker(
   "refund-queue",
   withWorkerBoundary("refund-queue", async (job) => {
@@ -561,6 +612,69 @@ const refundWorker = new Worker(
     }
 
     const { reservationId, refundType } = job.data;
+    if (refundType === "provider_fault") {
+      const refund = await prepareProviderFaultRefund(
+        reservationId,
+        job.data.operationId
+      );
+
+      if (!refund) return;
+
+      try {
+        const response = await cashfree.PGOrderCreateRefund(
+          refund.orderId,
+          {
+            refund_id: refund.refundId,
+            refund_amount: refund.amount,
+            refund_note: "Refund approved for validated provider food-not-received complaint",
+          },
+          undefined,
+          refund.refundId
+        );
+
+        const refundStatus = normalizeRefundStatus(response.data?.refund_status);
+        await persistRefundStatus(reservationId, refundStatus);
+        await markOperationStatusSafely({
+          client: pool,
+          operationId: refund.operationId,
+          status: operationStatusFromRefundStatus(refundStatus),
+          metadata: {
+            refund_id: refund.refundId,
+            gateway_status: response.data?.refund_status || null,
+            operation_source: "provider_fault_food_not_received",
+          },
+        });
+      } catch (err) {
+        const reconciled = await reconcileRefundErrorWithGateway(
+          refund,
+          "provider_fault_refund_worker_error"
+        );
+        if (reconciled) {
+          await markOperationStatusSafely({
+            client: pool,
+            operationId: refund.operationId,
+            status: operationStatusFromRefundStatus(reconciled.normalizedStatus),
+            metadata: {
+              refund_id: refund.refundId,
+              gateway_status: reconciled.gatewayStatus,
+              recovered_after_error: true,
+            },
+          });
+          return;
+        }
+
+        logger.error("Provider fault refund failed", {
+          err,
+          reservationId,
+          operationId: refund.operationId,
+          refundId: refund.refundId,
+        });
+        throw err;
+      }
+
+      return;
+    }
+
     if (refundType === "reliability_deposit") {
       const refund = await prepareDepositRefund(reservationId, job.data.operationSource);
 

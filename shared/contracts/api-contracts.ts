@@ -1182,6 +1182,8 @@ export type MarkAsPickedUpResponse = ApiResponse<EmptyData>;
 
 export interface ReportProviderRequest {
   reason:
+    | "food_received"
+    | "food_not_received"
     | "fake_listing"
     | "unsafe_food"
     | "expired_food"

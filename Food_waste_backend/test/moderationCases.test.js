@@ -23,15 +23,23 @@ const CASE_ID = "66666666-6666-4666-8666-666666666666";
 const RESPONSE_ID = "77777777-7777-4777-8777-777777777777";
 const APPEAL_ID = "88888888-8888-4888-8888-888888888888";
 
-function providerReport(status = "pending", moderationCaseId = CASE_ID) {
+function providerReport(
+  status = "pending",
+  moderationCaseId = CASE_ID,
+  reason = "unsafe_food"
+) {
   return {
     id: REPORT_ID,
     provider_id: PROVIDER_ID,
     reported_by: REPORTER_ID,
     reservation_id: RESERVATION_ID,
     moderation_case_id: moderationCaseId,
-    reason: "unsafe_food",
-    description: "Food smelled unsafe.",
+    reason,
+    description: reason === "food_not_received"
+      ? "The provider never handed over the food."
+      : reason === "food_received"
+        ? "The food was received and verified."
+        : "Food smelled unsafe.",
     status,
     created_at: "2026-06-05T00:00:00.000Z",
     resolved_at: status === "pending" ? null : "2026-06-05T01:00:00.000Z",
@@ -39,7 +47,7 @@ function providerReport(status = "pending", moderationCaseId = CASE_ID) {
   };
 }
 
-function moderationCase(status = "OPEN") {
+function moderationCase(status = "OPEN", reason = "unsafe_food") {
   return {
     id: CASE_ID,
     case_type: "provider_report",
@@ -49,8 +57,13 @@ function moderationCase(status = "OPEN") {
     opened_by_user_id: REPORTER_ID,
     assigned_admin_id: status === "OPEN" ? null : ADMIN_ID,
     source_report_id: REPORT_ID,
-    reason: "unsafe_food",
-    summary: "Food smelled unsafe.",
+    reason,
+    summary:
+      reason === "food_not_received"
+        ? "Food was not received."
+        : reason === "food_received"
+          ? "Food was received."
+          : "Food smelled unsafe.",
     created_at: "2026-06-05T00:00:00.000Z",
     updated_at: "2026-06-05T00:00:00.000Z",
     closed_at: null,
@@ -118,6 +131,26 @@ function moderationAppeal({
     })),
   };
 }
+
+test("reports accept food_not_received and food_received as valid complaint reasons", async () => {
+  for (const reason of ["food_not_received", "food_received"]) {
+    const client = createClient();
+    const report = await createProviderReport({
+      client,
+      providerId: PROVIDER_ID,
+      reportedBy: REPORTER_ID,
+      reservationId: RESERVATION_ID,
+      reason,
+      description: reason === "food_not_received"
+        ? "The provider never handed over the food."
+        : "The food was received and verified.",
+      applyCooldown: false,
+    });
+
+    assert.equal(report.reason, reason);
+    assert.equal(report.moderation_case_status, "OPEN");
+  }
+});
 
 function createClient(options = {}) {
   const calls = [];
@@ -351,13 +384,13 @@ function createClient(options = {}) {
       }
 
       if (sql.includes("INSERT INTO provider_reports")) {
-        return { rows: [providerReport("pending", null)] };
+        return { rows: [providerReport("pending", null, params[3] || "unsafe_food")] };
       }
 
       if (sql.includes("INSERT INTO moderation_cases") && sql.includes("VALUES (")) {
         createdCaseCount += 1;
         currentCase = {
-          ...moderationCase(params[1] || "OPEN"),
+          ...moderationCase(params[1] || "OPEN", params[4] || "unsafe_food"),
           id: CASE_ID,
         };
         return { rows: [currentCase] };

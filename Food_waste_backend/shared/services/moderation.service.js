@@ -19,6 +19,8 @@ const {
 const { assertAdmin } = require("./authorization.service");
 
 const REPORT_REASONS = new Set([
+  "food_received",
+  "food_not_received",
   "fake_listing",
   "unsafe_food",
   "expired_food",

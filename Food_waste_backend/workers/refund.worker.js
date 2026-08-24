@@ -22,7 +22,10 @@ const {
 const {
   markFinancialOperationStatus,
   operationStatusFromRefundStatus,
+  prepareRefundExecution,
 } = require("../shared/services/refundExecution.service");
+const { getFinancialOwnership } = require("../shared/services/financialOwnership.service");
+const { buildProviderFaultRefundPlan } = require("../shared/services/refundRouting.service");
 const {
   lockReservationGraph,
 } = require("../shared/services/reservationConsistency.service");
@@ -549,29 +552,25 @@ async function prepareRefund(reservationId, operationSource) {
   }
 }
 
-async function prepareProviderFaultRefund(reservationId, operationId) {
+async function prepareProviderFaultRefund(reservationId, reportId) {
   const client = await pool.connect();
 
   try {
     await ensurePaymentHardeningSchema(client);
     await client.query("BEGIN");
 
-    const operationResult = await client.query(
+    const reportResult = await client.query(
       `
       SELECT *
-      FROM financial_operations
+      FROM provider_reports
       WHERE id=$1
+      AND status='validated'
       LIMIT 1
       `,
-      [operationId]
+      [reportId]
     );
-    const operation = operationResult.rows[0];
-    if (
-      !operation ||
-      String(operation.reservation_id) !== String(reservationId) ||
-      operation.operation_source !== "provider_fault_food_not_received" ||
-      ["succeeded", "skipped", "retained"].includes(operation.status)
-    ) {
+    const report = reportResult.rows[0];
+    if (!report || String(report.reservation_id) !== String(reservationId) || report.reason !== "food_not_received") {
       await client.query("ROLLBACK");
       return null;
     }
@@ -579,18 +578,82 @@ async function prepareProviderFaultRefund(reservationId, operationId) {
     const { payment } = await lockReservationGraph(client, reservationId, {
       lockPayments: true,
     });
-    const refundId = operation.metadata?.refund_id;
-    if (!payment || !refundId || Number(operation.amount) <= 0) {
+    if (
+      !payment ||
+      !REFUNDABLE_PAYMENT_STATES.has(payment.status) ||
+      payment.refund_status === "refunded"
+    ) {
       await client.query("ROLLBACK");
       return null;
     }
+
+    const ownershipRows = await getFinancialOwnership({
+      db: client,
+      reservationId,
+      paymentSessionId: payment.payment_session_id,
+    });
+    const ownership = ownershipRows[0];
+    if (!ownership) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const settlementResult = await client.query(
+      `
+      SELECT id, amount, status, settlement_allocation_id
+      FROM provider_settlements
+      WHERE reservation_id=$1
+      AND payment_session_id=$2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [reservationId, payment.payment_session_id]
+    );
+    const settlement = settlementResult.rows[0] || null;
+    const plan = buildProviderFaultRefundPlan({ paymentOwnership: ownership });
+    const refundId = payment.refund_id || crypto.randomUUID();
+    const execution = await prepareRefundExecution({
+      client,
+      plan,
+      operationType: "payment_refund",
+      operationSource: "provider_fault_food_not_received",
+      refundId,
+      metadata: {
+        service: "refund.worker",
+        complaint_report_id: report.id,
+        provider_settlement_id: settlement?.id || null,
+        provider_settlement_amount: settlement?.amount || null,
+        provider_settlement_status: settlement?.status || null,
+        provider_settlement_adjustment_required: Boolean(settlement),
+      },
+    });
+    if (!execution.shouldExecute) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      `
+      UPDATE payments
+      SET status='refund_pending', refund_status='refund_pending', refund_id=$1,
+          refund_attempts=COALESCE(refund_attempts, 0) + 1, updated_at=NOW()
+      WHERE id=$2 AND refund_status <> 'refunded'
+      `,
+      [refundId, payment.id]
+    );
+    await client.query(
+      `UPDATE reservations SET payment_status='refund_pending'
+       WHERE id=$1 AND payment_status NOT IN ('refunded', 'refund_failed')`,
+      [reservationId]
+    );
 
     await client.query("COMMIT");
     return {
       orderId: payment.order_id,
       refundId,
-      amount: Number(operation.amount),
-      operationId: operation.id,
+      amount: Number(execution.operation.amount),
+      operationId: execution.operation.id,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -615,7 +678,7 @@ const refundWorker = new Worker(
     if (refundType === "provider_fault") {
       const refund = await prepareProviderFaultRefund(
         reservationId,
-        job.data.operationId
+        job.data.reportId
       );
 
       if (!refund) return;

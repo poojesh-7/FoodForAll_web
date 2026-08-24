@@ -6,11 +6,6 @@ const { uploadBuffer } = require("./cloudinary.service");
 const {
   recordProviderReportValidated,
 } = require("./trustEnforcement.service");
-const { getFinancialOwnership } = require("./financialOwnership.service");
-const {
-  buildProviderFaultRefundPlan,
-} = require("./refundRouting.service");
-const { prepareRefundExecution } = require("./refundExecution.service");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
 const {
@@ -1566,14 +1561,13 @@ async function validateProviderReport({ client = pool, reportId, adminId, note =
     report,
   });
 
-  let financialAction = null;
-  if (report.reason === PROVIDER_FAULT_REFUND_REASON) {
-    financialAction = await prepareProviderFaultRefund({
-      client,
-      report,
-      adminId,
-    });
-  }
+  const financialAction = report.reason === PROVIDER_FAULT_REFUND_REASON
+    ? {
+        status: "queued",
+        reservation_id: report.reservation_id,
+        complaint_report_id: report.id,
+      }
+    : null;
 
   const updatedCase = await transitionModerationCaseStatus({
     client,
@@ -1593,111 +1587,6 @@ async function validateProviderReport({ client = pool, reportId, adminId, note =
     moderation_case_id: updatedCase?.id || moderationCase.id,
     moderation_case_status: updatedCase?.status || moderationCase.status,
     financial_action: financialAction,
-  };
-}
-
-async function prepareProviderFaultRefund({ client, report, adminId }) {
-  if (report.reason !== PROVIDER_FAULT_REFUND_REASON) return null;
-  if (!report.reservation_id) {
-    throw withStatus("Provider fault refund requires a reservation", 409);
-  }
-
-  const paymentResult = await client.query(
-    `
-    SELECT *
-    FROM payments
-    WHERE reservation_id=$1
-    ORDER BY updated_at DESC NULLS LAST, id DESC
-    LIMIT 1
-    FOR UPDATE
-    `,
-    [report.reservation_id]
-  );
-  const payment = paymentResult.rows[0];
-  if (!payment || payment.status !== "paid") {
-    throw withStatus("Provider fault refund requires a paid reservation", 409);
-  }
-
-  const ownershipRows = await getFinancialOwnership({
-    db: client,
-    reservationId: report.reservation_id,
-    paymentSessionId: payment.payment_session_id,
-  });
-  const ownership = ownershipRows[0];
-  if (!ownership) {
-    throw withStatus("Provider fault refund requires payment ownership", 409);
-  }
-
-  const settlementResult = await client.query(
-    `
-    SELECT id, amount, status, settlement_allocation_id
-    FROM provider_settlements
-    WHERE reservation_id=$1
-    AND payment_session_id=$2
-    ORDER BY created_at DESC, id DESC
-    LIMIT 1
-    FOR UPDATE
-    `,
-    [report.reservation_id, payment.payment_session_id]
-  );
-  const settlement = settlementResult.rows[0] || null;
-
-  const plan = buildProviderFaultRefundPlan({
-    paymentOwnership: ownership,
-    reason: PROVIDER_FAULT_REFUND_REASON,
-  });
-  const refundId = payment.refund_id || crypto.randomUUID();
-  const execution = await prepareRefundExecution({
-    client,
-    plan,
-    operationType: "payment_refund",
-    operationSource: "provider_fault_food_not_received",
-    refundId,
-    metadata: {
-      service: "moderation.service",
-      complaint_report_id: report.id,
-      validated_by_admin_id: adminId,
-      provider_settlement_id: settlement?.id || null,
-      provider_settlement_amount: settlement?.amount || null,
-      provider_settlement_status: settlement?.status || null,
-      provider_settlement_adjustment_required: Boolean(settlement),
-    },
-  });
-
-  await client.query(
-    `
-    UPDATE payments
-    SET status='refund_pending',
-        refund_status='refund_pending',
-        refund_id=$1,
-        refund_attempts=COALESCE(refund_attempts, 0) + 1,
-        updated_at=NOW()
-    WHERE id=$2
-    AND status IN ('paid', 'success', 'refund_pending', 'refund_failed')
-    AND refund_status <> 'refunded'
-    `,
-    [refundId, payment.id]
-  );
-
-  await client.query(
-    `
-    UPDATE reservations
-    SET payment_status='refund_pending'
-    WHERE id=$1
-    AND payment_status NOT IN ('refunded', 'refund_failed')
-    `,
-    [report.reservation_id]
-  );
-
-  return {
-    operation_id: execution.operation.id,
-    status: execution.operation.status,
-    amount: execution.operation.amount,
-    currency: execution.operation.currency,
-    should_execute: execution.shouldExecute,
-    duplicate_prevented: execution.duplicatePrevented,
-    refund_id: refundId,
-    reservation_id: report.reservation_id,
   };
 }
 
@@ -2017,7 +1906,6 @@ module.exports = {
   MAX_PROVIDER_RESPONSE_ATTACHMENTS,
   MODERATION_CASE_STATUSES,
   MODERATION_APPEAL_STATUSES,
-  prepareProviderFaultRefund,
   REPORT_REASONS,
   addModerationAppealAttachments,
   addProviderCaseResponseAttachments,

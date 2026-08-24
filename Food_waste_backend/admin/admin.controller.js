@@ -2794,7 +2794,7 @@ async function enqueueProviderFaultRefund(financialAction) {
     {
       reservationId: financialAction.reservation_id,
       refundType: "provider_fault",
-      operationId: financialAction.operation_id,
+      reportId: financialAction.complaint_report_id,
       operationSource: "provider_fault_food_not_received",
     },
     {

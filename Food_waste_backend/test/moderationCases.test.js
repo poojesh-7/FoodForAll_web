@@ -6,7 +6,6 @@ const {
   dismissProviderReport,
   getModerationCaseDetail,
   listModerationAppeals,
-  prepareProviderFaultRefund,
   submitProviderModerationAppeal,
   submitProviderCaseResponse,
   transitionModerationAppealStatus,
@@ -153,93 +152,10 @@ test("reports accept food_not_received and food_received as valid complaint reas
   }
 });
 
-test("provider fault refund preparation creates an ownership-lined food refund operation", async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-
-      if (sql.includes("FROM payments")) {
-        return { rows: [{ id: "payment-1", status: "paid", payment_session_id: "session-1" }] };
-      }
-
-      if (sql.includes("FROM payment_ownership")) {
-        return {
-          rows: [{
-            id: "ownership-1",
-            reservation_id: RESERVATION_ID,
-            payment_session_id: "session-1",
-            refund_target_user_id: REPORTER_ID,
-            refund_target_role: "user",
-            food_amount: 120,
-            deposit_amount: 25,
-            currency: "INR",
-            ownership_version: 1,
-            snapshot_hash: "snapshot-hash",
-          }],
-        };
-      }
-
-      if (sql.includes("FROM provider_settlements")) {
-        return {
-          rows: [{
-            id: "settlement-1",
-            amount: 100,
-            status: "pending",
-            settlement_allocation_id: "allocation-1",
-          }],
-        };
-      }
-
-      if (sql.includes("INSERT INTO financial_operations")) {
-        return {
-          rows: [{
-            id: "operation-1",
-            status: params[10],
-            amount: params[7],
-            currency: params[8],
-          }],
-        };
-      }
-
-      if (sql.includes("UPDATE payments") || sql.includes("UPDATE reservations")) {
-        return { rowCount: 1, rows: [] };
-      }
-
-      throw new Error(`Unexpected query: ${sql}`);
-    },
-  };
-
-  const financialAction = await prepareProviderFaultRefund({
-    client,
-    adminId: ADMIN_ID,
-    report: {
-      id: REPORT_ID,
-      reason: "food_not_received",
-      reservation_id: RESERVATION_ID,
-    },
-  });
-
-  assert.equal(financialAction.operation_id, "operation-1");
-  assert.equal(financialAction.status, "processing");
-  assert.equal(financialAction.amount, 120);
-  assert.equal(financialAction.currency, "INR");
-  assert.equal(financialAction.should_execute, true);
-  assert.equal(financialAction.duplicate_prevented, false);
-  assert.equal(financialAction.reservation_id, RESERVATION_ID);
-  assert.match(financialAction.refund_id, /^[0-9a-f-]{36}$/);
-  const operationInsert = calls.find((call) =>
-    call.sql.includes("INSERT INTO financial_operations")
-  );
-  const operationMetadata = JSON.parse(operationInsert.params[11]);
-  assert.equal(operationMetadata.provider_settlement_id, "settlement-1");
-  assert.equal(operationMetadata.provider_settlement_adjustment_required, true);
-  assert.equal(calls.some((call) => call.sql.includes("FROM payment_ownership")), true);
-});
-
 function createClient(options = {}) {
   const calls = [];
   let currentCase = moderationCase(options.caseStatus || "OPEN");
+  const reportReason = options.reportReason || "unsafe_food";
   let currentResponse = options.existingResponse
     ? providerResponse({
         responseText: options.responseText,
@@ -529,11 +445,11 @@ function createClient(options = {}) {
       }
 
       if (sql.includes("UPDATE provider_reports") && sql.includes("status='validated'")) {
-        return { rows: [providerReport("validated")] };
+        return { rows: [providerReport("validated", CASE_ID, reportReason)] };
       }
 
       if (sql.includes("UPDATE provider_reports") && sql.includes("status='dismissed'")) {
-        return { rows: [providerReport("dismissed")] };
+        return { rows: [providerReport("dismissed", CASE_ID, reportReason)] };
       }
 
       if (sql.includes("SELECT *") && sql.includes("FROM moderation_cases")) {
@@ -704,6 +620,11 @@ test("validated provider report preserves trust penalty path and closes case", a
 
   assert.equal(report.status, "validated");
   assert.equal(report.moderation_case_status, "VALIDATED");
+  assert.equal(report.financial_action, null);
+  assert.equal(
+    client.calls.some((call) => call.sql.includes("FROM payments")),
+    false
+  );
   assert.ok(
     client.calls.some(
       (call) =>
@@ -717,6 +638,32 @@ test("validated provider report preserves trust penalty path and closes case", a
         call.sql.includes("INSERT INTO moderation_case_events") &&
         call.params[4] === "VALIDATED"
     )
+  );
+});
+
+test("validated provider fault returns only a committed refund queue descriptor", async () => {
+  const client = createClient({ reportReason: "food_not_received" });
+
+  const report = await validateProviderReport({
+    client,
+    reportId: REPORT_ID,
+    adminId: ADMIN_ID,
+  });
+
+  assert.deepEqual(report.financial_action, {
+    status: "queued",
+    reservation_id: RESERVATION_ID,
+    complaint_report_id: REPORT_ID,
+  });
+  assert.equal(
+    client.calls.some((call) =>
+      /FROM (payments|payment_ownership|provider_settlements)/.test(call.sql)
+    ),
+    false
+  );
+  assert.equal(
+    client.calls.some((call) => call.sql.includes("INSERT INTO financial_operations")),
+    false
   );
 });
 

@@ -59,6 +59,7 @@ function defaultTrustScore(subjectType, subjectId) {
     cooldown_until: null,
     deposit_multiplier: 1,
     risk_category: "normal",
+    provider_complaint_count: 0,
     recovery_progress: 100,
     recovery_state: {},
     risk_state: {},
@@ -86,6 +87,7 @@ function normalizeTrustScore(row, subjectType, subjectId) {
       1
     ),
     risk_category: row.risk_category || "normal",
+    provider_complaint_count: asNumber(row.provider_complaint_count, 0),
     recovery_progress: asNumber(row.recovery_progress, 100),
     recovery_state: row.recovery_state || {},
     risk_state: row.risk_state || {},
@@ -100,6 +102,7 @@ async function loadTrustProjection({ client = pool, subjectType, subjectId }) {
     `
     SELECT subject_type, subject_id, trust_score, penalty_level,
            restriction_level, cooldown_until, deposit_multiplier,
+           provider_complaint_count,
            projected_restriction_level, projected_cooldown_until,
            projected_deposit_multiplier, risk_category, recovery_progress,
            recovery_state, risk_state, score_breakdown, projected_actions, updated_at

@@ -423,29 +423,40 @@ test("volunteer delivery failures escalate faster than normal user failures", ()
   assert.equal(userProjection.projected_cooldown_until, null);
 });
 
-test("validated provider reports remain significant and repeated reports trigger cooldown", () => {
-  const firstReport = buildTrustProjectionFromEvents([
-    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
-  ], "provider", PROVIDER_ID);
-  const repeatedReports = buildTrustProjectionFromEvents([
-    createProviderReportValidatedEvent(1, "2026-01-01T00:00:00.000Z"),
-    createProviderReportValidatedEvent(2, "2026-01-02T00:00:00.000Z"),
+test("provider complaints require ten validated reports before a one-hour cooldown", () => {
+  const reports = Array.from({ length: 9 }, (_, index) =>
+    createProviderReportValidatedEvent(index + 1, `2026-01-01T${String(index).padStart(2, "0")}:00:00.000Z`)
+  );
+  const belowThreshold = buildTrustProjectionFromEvents(reports, "provider", PROVIDER_ID);
+  const atThreshold = buildTrustProjectionFromEvents([
+    ...reports,
+    createProviderReportValidatedEvent(10, "2026-01-02T00:00:00.000Z"),
   ], "provider", PROVIDER_ID);
 
-  assert.equal(firstReport.trust_score, 85);
-  assert.equal(firstReport.projected_restriction_level, 1);
-  assert.equal(firstReport.projected_deposit_multiplier, 1);
-  assert.equal(firstReport.projected_cooldown_until, null);
-  assert.equal(repeatedReports.trust_score, 70);
-  assert.equal(repeatedReports.projected_restriction_level, 3);
-  assert.equal(repeatedReports.projected_deposit_multiplier, 1.5);
+  assert.equal(belowThreshold.provider_complaint_count, 9);
+  assert.equal(belowThreshold.trust_score, 100);
+  assert.equal(belowThreshold.projected_restriction_level, 0);
+  assert.equal(belowThreshold.projected_cooldown_until, null);
+  assert.equal(atThreshold.provider_complaint_count, 10);
+  assert.equal(atThreshold.projected_restriction_level, 1);
   assert.equal(
-    repeatedReports.projected_cooldown_until.toISOString(),
-    "2026-01-02T02:00:00.000Z"
+    atThreshold.projected_cooldown_until.toISOString(),
+    "2026-01-02T01:00:00.000Z"
   );
 });
 
-test("provider fault reports use a lighter penalty and recover after two fulfillments", () => {
+test("provider complaint thresholds escalate cooldowns by ten validated reports", () => {
+  const events = Array.from({ length: 20 }, (_, index) =>
+    createProviderReportValidatedEvent(index + 1, `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`)
+  );
+  const projection = buildTrustProjectionFromEvents(events, "provider", PROVIDER_ID);
+
+  assert.equal(projection.provider_complaint_count, 20);
+  assert.equal(projection.projected_restriction_level, 2);
+  assert.equal(projection.projected_cooldown_until.toISOString(), "2026-01-20T02:00:00.000Z");
+});
+
+test("provider fault reports join the complaint cycle and recover after two fulfillments", () => {
   const events = buildProviderReportTrustEvents({
     id: "report-provider-fault",
     provider_id: PROVIDER_ID,
@@ -457,10 +468,7 @@ test("provider fault reports use a lighter penalty and recover after two fulfill
 
   assert.equal(events.length, 1);
   assert.equal(events[0].eventType, "provider_fault_report_validated");
-  assert.equal(
-    events[0].eventPayload.score_delta,
-    TRUST_EVENT_RULES.provider_fault_report_validated.score_delta
-  );
+  assert.equal(events[0].eventPayload.score_delta, 0);
 
   const projection = buildTrustProjectionFromEvents([
     events[0],
@@ -776,11 +784,11 @@ test("only actionable provider failures affect provider projections", () => {
     }, "2026-01-02T00:00:00.000Z"),
   ], "provider", PROVIDER_ID);
 
-  assert.equal(projection.trust_score, 85);
-  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.trust_score, 100);
+  assert.equal(projection.penalty_level, 0);
   assert.equal(projection.timeout_count, 0);
-  assert.equal(projection.failure_count, 1);
-  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.failure_count, 0);
+  assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.projected_deposit_multiplier, 1);
   assert.equal(projection.projected_actions.cooldown_recommended, false);
 });
@@ -800,13 +808,13 @@ test("provider successful fulfillments clear report penalties through domain rec
       }),
     ], "provider", PROVIDER_ID);
 
-    assert.equal(projection.trust_score, 98);
+    assert.equal(projection.trust_score, 100);
     assert.equal(projection.penalty_level, 0);
     assert.equal(projection.projected_restriction_level, 0);
     assert.equal(projection.restriction_level, 0);
     assert.equal(projection.fulfillment_count, 3);
     assert.equal(projection.failure_streak, 0);
-    assert.equal(projection.success_streak, 1);
+    assert.equal(projection.success_streak, 3);
     assert.equal(projection.recovery_progress, 100);
     assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
     assert.equal(projection.last_success_at.toISOString(), "2026-01-04T00:00:00.000Z");
@@ -830,11 +838,11 @@ test("provider fulfillment recovery is independent of score suppression and dail
     }),
   ], "provider", PROVIDER_ID);
 
-  assert.equal(suppressedBySource.trust_score, 89);
+  assert.equal(suppressedBySource.trust_score, 100);
   assert.equal(suppressedBySource.penalty_level, 0);
   assert.equal(suppressedBySource.projected_restriction_level, 0);
   assert.equal(suppressedBySource.fulfillment_count, 3);
-  assert.equal(suppressedBySource.success_streak, 1);
+  assert.equal(suppressedBySource.success_streak, 3);
   assert.equal(suppressedBySource.recovery_state.recovery_credit_this_event, 0);
   assert.equal(
     suppressedBySource.score_breakdown.trust_quality.suppression_reason,
@@ -856,7 +864,7 @@ test("provider fulfillment recovery is independent of score suppression and dail
       }),
     ], "provider", PROVIDER_ID);
 
-    assert.equal(suppressedByDailyCap.trust_score, 89);
+    assert.equal(suppressedByDailyCap.trust_score, 100);
     assert.equal(suppressedByDailyCap.penalty_level, 0);
     assert.equal(suppressedByDailyCap.projected_restriction_level, 0);
     assert.equal(suppressedByDailyCap.recovery_state.recovery_credit_this_event, 0);
@@ -882,13 +890,13 @@ test("internal provider fulfillments remain blocked from recovery", () => {
     }),
   ], "provider", PROVIDER_ID);
 
-  assert.equal(projection.trust_score, 85);
-  assert.equal(projection.penalty_level, 2);
-  assert.equal(projection.projected_restriction_level, 1);
+  assert.equal(projection.trust_score, 100);
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.projected_restriction_level, 0);
   assert.equal(projection.fulfillment_count, 3);
   assert.equal(projection.failure_streak, 0);
   assert.equal(projection.success_streak, 0);
-  assert.equal(projection.recovery_progress, 0);
+  assert.equal(projection.recovery_progress, 100);
   assert.equal(projection.recovery_state.recovery_credit_this_event, 0);
   assert.equal(projection.last_success_at, null);
   assert.equal(
@@ -1529,8 +1537,8 @@ test("provider projection rebuild replays trust_events with neutral listing expi
               trust_score: params[2],
               penalty_level: params[3],
               timeout_count: params[10],
-              projected_restriction_level: params[13],
-              projected_deposit_multiplier: params[15],
+              projected_restriction_level: params[14],
+              projected_deposit_multiplier: params[16],
             },
           ],
         };
@@ -1548,10 +1556,10 @@ test("provider projection rebuild replays trust_events with neutral listing expi
   });
 
   assert.equal(result.eventCount, 2);
-  assert.equal(result.score.trust_score, 85);
-  assert.equal(result.score.penalty_level, 2);
+  assert.equal(result.score.trust_score, 100);
+  assert.equal(result.score.penalty_level, 0);
   assert.equal(result.score.timeout_count, 0);
-  assert.equal(result.score.projected_restriction_level, 1);
+  assert.equal(result.score.projected_restriction_level, 0);
   assert.equal(result.score.projected_deposit_multiplier, 1);
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
@@ -1587,11 +1595,11 @@ test("provider projection rebuild replays historical fulfillments into recovery"
               subject_id: params[1],
               trust_score: params[2],
               penalty_level: params[3],
-              restriction_level: params[6],
+              restriction_level: params[5],
               fulfillment_count: params[11],
-              projected_restriction_level: params[13],
-              recovery_progress: params[16],
-              success_streak: params[18],
+              projected_restriction_level: params[14],
+              recovery_progress: params[17],
+              success_streak: params[19],
             },
           ],
         };
@@ -1609,16 +1617,16 @@ test("provider projection rebuild replays historical fulfillments into recovery"
   });
 
   assert.equal(result.eventCount, 4);
-  assert.equal(result.projection.trust_score, 98);
+  assert.equal(result.projection.trust_score, 100);
   assert.equal(result.projection.penalty_level, 0);
   assert.equal(result.projection.projected_restriction_level, 0);
   assert.equal(result.projection.fulfillment_count, 3);
-  assert.equal(result.score.trust_score, 98);
+  assert.equal(result.score.trust_score, 100);
   assert.equal(result.score.penalty_level, 0);
   assert.equal(result.score.projected_restriction_level, 0);
   assert.equal(result.score.fulfillment_count, 3);
   assert.equal(result.score.recovery_progress, 100);
-  assert.equal(result.score.success_streak, 1);
+  assert.equal(result.score.success_streak, 3);
   assert.ok(calls.some((call) => String(call.sql).includes("FROM trust_events")));
 });
 

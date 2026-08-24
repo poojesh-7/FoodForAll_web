@@ -8,6 +8,8 @@ const {
 const RECOVERY_STREAK_TARGET = 2;
 const RECOVERY_PENALTY_CREDIT = 2;
 const RECOVERY_SCORE_RECOVERY_PER_PENALTY = 2;
+const PROVIDER_COMPLAINT_THRESHOLD = 10;
+const PROVIDER_COMPLAINTS_PER_LEVEL = 10;
 const DECAY_INTERVAL_DAYS = Number(process.env.TRUST_DECAY_INTERVAL_DAYS || 14);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -31,6 +33,10 @@ const DOMAIN_RECOVERY_EVENT_TYPES = new Set([
   "ngo_delivery_completed",
   "volunteer_delivery_completed",
   "provider_successful_fulfillment",
+]);
+const PROVIDER_COMPLAINT_EVENT_TYPES = new Set([
+  "provider_report_validated",
+  "provider_fault_report_validated",
 ]);
 
 function getTrustFarmingConfig() {
@@ -178,6 +184,7 @@ function buildTrustEffect(event) {
   const restrictionType = payload.restriction_type || payload.restrictionType || null;
   const activeUntil = parseDateOrNull(payload.active_until || payload.activeUntil);
   const cooldownUntil = parseDateOrNull(payload.cooldown_until || payload.cooldownUntil);
+  const providerComplaint = PROVIDER_COMPLAINT_EVENT_TYPES.has(event.event_type);
   if (gainSuppressionReason) {
     incrementCounter("food_rescue_trust_farming_guard_events_total", {
       event: "suspicious_gain_patterns",
@@ -190,12 +197,12 @@ function buildTrustEffect(event) {
   return {
     subjectType: event.subject_type,
     subjectId: event.subject_id,
-    scoreDelta: analyticsOnly ? 0 : scoreDelta,
-    rawScoreDelta: analyticsOnly ? 0 : rawScoreDelta,
+    scoreDelta: analyticsOnly || providerComplaint ? 0 : scoreDelta,
+    rawScoreDelta: analyticsOnly || providerComplaint ? 0 : rawScoreDelta,
     gainSuppressionReason,
     recoverySuppressionReason: recoverySuppression,
-    penaltyDelta: analyticsOnly ? 0 : penaltyDelta,
-    failureDelta: analyticsOnly ? 0 : failureDelta,
+    penaltyDelta: analyticsOnly || providerComplaint ? 0 : penaltyDelta,
+    failureDelta: analyticsOnly || providerComplaint ? 0 : failureDelta,
     cancellationDelta: analyticsOnly ? 0 : cancellationDelta,
     completionDelta: analyticsOnly ? 0 : completionDelta,
     timeoutDelta: analyticsOnly ? 0 : timeoutDelta,
@@ -405,6 +412,14 @@ function penaltyFromEffect(effect) {
     Math.max(0, effect.cancellationDelta);
 }
 
+function providerComplaintLevel(complaintCount) {
+  if (complaintCount < PROVIDER_COMPLAINT_THRESHOLD) return 0;
+  return Math.min(
+    5,
+    Math.floor(complaintCount / PROVIDER_COMPLAINTS_PER_LEVEL)
+  );
+}
+
 function scoreTriggersThreshold(score, threshold) {
   if (threshold.scoreBelow !== undefined) return score < threshold.scoreBelow;
   return score <= threshold.scoreAtOrBelow;
@@ -523,7 +538,8 @@ function buildBlockedActorRecoveryStatus({ level, cooldownUntil, recoveryRequire
   };
 }
 
-function cooldownDurationMs(level, failureStreak) {
+function cooldownDurationMs(level, failureStreak, providerComplaint = false) {
+  if (providerComplaint && level > 0) return level * HOUR_MS;
   if (level < 3) return 0;
   if (level === 3) return failureStreak >= 3 ? 12 * HOUR_MS : 2 * HOUR_MS;
   if (level === 4) return 12 * HOUR_MS;
@@ -551,12 +567,14 @@ function cooldownRefreshCauses({
   penaltyLevel,
   previousFailureStreak,
   failureStreak,
+  providerComplaintLevelIncreased = false,
 }) {
   const causes = [];
   if (negative) causes.push("negative_event");
   if (level > previousRestrictionLevel) causes.push("restriction_level_increased");
   if (penaltyLevel > previousPenaltyLevel) causes.push("penalty_level_increased");
   if (failureStreak > previousFailureStreak) causes.push("failure_streak_increased");
+  if (providerComplaintLevelIncreased) causes.push("provider_complaint_threshold_reached");
   return causes;
 }
 
@@ -618,7 +636,8 @@ function resolveCooldownProjection({ level, state, effect, context, event }) {
   const eventTimeValue = context.eventTime;
   const previousCooldownUntil = parseDateOrNull(context.previousCooldownUntil);
   const activePreviousCooldownUntil = activeCooldownAt(previousCooldownUntil, eventTimeValue);
-  const durationMs = cooldownDurationMs(level, state.failure_streak);
+  const providerComplaint = PROVIDER_COMPLAINT_EVENT_TYPES.has(event.event_type);
+  const durationMs = cooldownDurationMs(level, state.failure_streak, providerComplaint);
   const projectedCandidateCooldownUntil = durationMs
     ? addMs(eventTimeValue, durationMs)
     : null;
@@ -631,6 +650,8 @@ function resolveCooldownProjection({ level, state, effect, context, event }) {
     penaltyLevel: state.penalty_level,
     previousFailureStreak: context.previousFailureStreak,
     failureStreak: state.failure_streak,
+    providerComplaintLevelIncreased:
+      providerComplaint && level > context.previousProviderComplaintLevel,
   });
   const refreshAllowed = causes.length > 0;
   const createdThisEvent =
@@ -712,6 +733,7 @@ function initialProjection(subjectType, subjectId) {
     timeout_count: 0,
     fulfillment_count: 0,
     refund_count: 0,
+    provider_complaint_count: 0,
     projected_restriction_level: 0,
     projected_cooldown_until: null,
     projected_deposit_multiplier: 1,
@@ -744,7 +766,11 @@ function calculateOperationalProjection(state, event, effect, context) {
     failureStreak: state.failure_streak,
   };
   const calculatedLevel = calculateRestrictionLevel(restrictionMetrics);
-  const level = Math.max(levelFloor, calculatedLevel);
+  const complaintLevel =
+    state.subject_type === "provider"
+      ? providerComplaintLevel(state.provider_complaint_count || 0)
+      : 0;
+  const level = Math.max(levelFloor, calculatedLevel, complaintLevel);
   const triggerSources =
     levelFloor > calculatedLevel
       ? ["manual"]
@@ -831,6 +857,10 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
 
   let successStreak = success && !negative ? current.success_streak + 1 : 0;
   const failureStreak = negative ? current.failure_streak + 1 : 0;
+  const reachedProviderRecoveryTarget =
+    effect.subjectType === "provider" &&
+    isDomainRecoverySuccess(event, effect) &&
+    successStreak >= RECOVERY_STREAK_TARGET;
   const recoveryCycles =
     success && !negative && penaltyBeforeRecovery > 0 && successStreak >= RECOVERY_STREAK_TARGET
       ? Math.floor(successStreak / RECOVERY_STREAK_TARGET)
@@ -842,6 +872,14 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
   if (recoveryCycles > 0) {
     successStreak %= RECOVERY_STREAK_TARGET;
   }
+
+  const providerComplaintCycleReset =
+    reachedProviderRecoveryTarget;
+  const providerComplaintCount = PROVIDER_COMPLAINT_EVENT_TYPES.has(event.event_type)
+    ? current.provider_complaint_count + 1
+    : providerComplaintCycleReset
+      ? 0
+      : current.provider_complaint_count;
 
   const penaltyLevel = Math.max(0, penaltyBeforeRecovery - recoveryCredit);
   const projectedScore = clamp(
@@ -869,6 +907,7 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
       current.fulfillment_count + Math.max(0, effect.fulfillmentDelta)
     ),
     refund_count: Math.max(0, current.refund_count + Math.max(0, effect.refundDelta)),
+    provider_complaint_count: providerComplaintCount,
     success_streak: successStreak,
     failure_streak: failureStreak,
     last_success_at: success ? currentEventTime : current.last_success_at,
@@ -894,6 +933,9 @@ function projectOperationalTrustState(previous, event, effect, context = {}) {
     previousRestrictionLevel: Math.max(
       0,
       Number(current.projected_restriction_level ?? current.restriction_level ?? 0)
+    ),
+    previousProviderComplaintLevel: providerComplaintLevel(
+      current.provider_complaint_count || 0
     ),
   });
 
@@ -1083,7 +1125,7 @@ async function upsertTrustScore(client, event, projection) {
       subject_type, subject_id, trust_score, penalty_level,
       deposit_multiplier, cooldown_until, restriction_level,
       failure_count, cancellation_count, completion_count,
-      timeout_count, fulfillment_count, refund_count,
+      timeout_count, fulfillment_count, refund_count, provider_complaint_count,
       projected_restriction_level, projected_cooldown_until,
       projected_deposit_multiplier, recovery_progress, risk_category,
       success_streak, failure_streak, last_success_at, last_failure_at, last_decay_at,
@@ -1092,9 +1134,9 @@ async function upsertTrustScore(client, event, projection) {
     )
     VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-      $21,$22,$23,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,
-      $29,NOW()
+      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+      $22,$23,$24,$25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29::jsonb,
+      $30,NOW()
     )
     ON CONFLICT (subject_type, subject_id)
     DO UPDATE SET
@@ -1109,6 +1151,7 @@ async function upsertTrustScore(client, event, projection) {
       timeout_count=EXCLUDED.timeout_count,
       fulfillment_count=EXCLUDED.fulfillment_count,
       refund_count=EXCLUDED.refund_count,
+      provider_complaint_count=EXCLUDED.provider_complaint_count,
       projected_restriction_level=EXCLUDED.projected_restriction_level,
       projected_cooldown_until=EXCLUDED.projected_cooldown_until,
       projected_deposit_multiplier=EXCLUDED.projected_deposit_multiplier,
@@ -1142,6 +1185,7 @@ async function upsertTrustScore(client, event, projection) {
       projection.timeout_count,
       projection.fulfillment_count,
       projection.refund_count,
+      projection.provider_complaint_count,
       projection.projected_restriction_level,
       projection.projected_cooldown_until,
       projection.projected_deposit_multiplier,

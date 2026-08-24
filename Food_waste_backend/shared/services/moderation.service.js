@@ -6,6 +6,11 @@ const { uploadBuffer } = require("./cloudinary.service");
 const {
   recordProviderReportValidated,
 } = require("./trustEnforcement.service");
+const { getFinancialOwnership } = require("./financialOwnership.service");
+const {
+  buildProviderFaultRefundPlan,
+} = require("./refundRouting.service");
+const { prepareRefundExecution } = require("./refundExecution.service");
 const store = require("./rateLimitStore.service");
 const logger = require("../utils/logger");
 const {
@@ -33,6 +38,7 @@ const REPORT_REASONS = new Set([
 const DUPLICATE_REPORT_MESSAGE =
   "You already reported this provider for this reservation.";
 const REPORT_COOLDOWN_MS = 5 * 60 * 1000;
+const PROVIDER_FAULT_REFUND_REASON = "food_not_received";
 const MAX_REPORT_ATTACHMENTS = 3;
 const MAX_PROVIDER_RESPONSE_ATTACHMENTS = 3;
 const MAX_APPEAL_ATTACHMENTS = 3;
@@ -1560,6 +1566,15 @@ async function validateProviderReport({ client = pool, reportId, adminId, note =
     report,
   });
 
+  let financialAction = null;
+  if (report.reason === PROVIDER_FAULT_REFUND_REASON) {
+    financialAction = await prepareProviderFaultRefund({
+      client,
+      report,
+      adminId,
+    });
+  }
+
   const updatedCase = await transitionModerationCaseStatus({
     client,
     caseId: moderationCase.id,
@@ -1577,6 +1592,66 @@ async function validateProviderReport({ client = pool, reportId, adminId, note =
     ...report,
     moderation_case_id: updatedCase?.id || moderationCase.id,
     moderation_case_status: updatedCase?.status || moderationCase.status,
+    financial_action: financialAction,
+  };
+}
+
+async function prepareProviderFaultRefund({ client, report, adminId }) {
+  if (report.reason !== PROVIDER_FAULT_REFUND_REASON) return null;
+  if (!report.reservation_id) {
+    throw withStatus("Provider fault refund requires a reservation", 409);
+  }
+
+  const paymentResult = await client.query(
+    `
+    SELECT *
+    FROM payments
+    WHERE reservation_id=$1
+    ORDER BY updated_at DESC NULLS LAST, id DESC
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [report.reservation_id]
+  );
+  const payment = paymentResult.rows[0];
+  if (!payment || payment.status !== "paid") {
+    throw withStatus("Provider fault refund requires a paid reservation", 409);
+  }
+
+  const ownershipRows = await getFinancialOwnership({
+    db: client,
+    reservationId: report.reservation_id,
+    paymentSessionId: payment.payment_session_id,
+  });
+  const ownership = ownershipRows[0];
+  if (!ownership) {
+    throw withStatus("Provider fault refund requires payment ownership", 409);
+  }
+
+  const plan = buildProviderFaultRefundPlan({
+    paymentOwnership: ownership,
+    reason: PROVIDER_FAULT_REFUND_REASON,
+  });
+  const execution = await prepareRefundExecution({
+    client,
+    plan,
+    operationType: "payment_refund",
+    operationSource: "provider_fault_food_not_received",
+    refundId: payment.refund_id || null,
+    metadata: {
+      service: "moderation.service",
+      complaint_report_id: report.id,
+      validated_by_admin_id: adminId,
+    },
+  });
+
+  return {
+    operation_id: execution.operation.id,
+    status: execution.operation.status,
+    amount: execution.operation.amount,
+    currency: execution.operation.currency,
+    should_execute: execution.shouldExecute,
+    duplicate_prevented: execution.duplicatePrevented,
   };
 }
 
@@ -1845,6 +1920,7 @@ module.exports = {
   MAX_PROVIDER_RESPONSE_ATTACHMENTS,
   MODERATION_CASE_STATUSES,
   MODERATION_APPEAL_STATUSES,
+  prepareProviderFaultRefund,
   REPORT_REASONS,
   addModerationAppealAttachments,
   addProviderCaseResponseAttachments,

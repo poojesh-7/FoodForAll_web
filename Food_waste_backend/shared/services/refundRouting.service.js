@@ -164,6 +164,44 @@ function buildRetention({ ownership, retentionType, amount, currency, reason }) 
   };
 }
 
+function buildProviderFaultRefundPlan({ paymentOwnership, reason = "food_not_received" } = {}) {
+  const ownership = requireOwnership(paymentOwnership);
+  const currency = normalizeCurrency(ownership.currency);
+  const foodAmount = roundMoney(ownership.food_amount);
+
+  return {
+    refunds:
+      foodAmount > 0
+        ? [
+            buildRefund({
+              ownership,
+              refundType: "food",
+              amount: foodAmount,
+              currency,
+              reason,
+            }),
+          ]
+        : [],
+    retainedAmounts: [],
+    payouts: [],
+    commissions: [],
+    metadata: {
+      routingVersion: ROUTING_VERSION,
+      routingSource: "payment_ownership",
+      paymentOwnershipId: String(ownership.id),
+      reservationId: String(ownership.reservation_id),
+      paymentSessionId: String(ownership.payment_session_id),
+      ownershipVersion: Number(ownership.ownership_version || 1),
+      snapshotHash: ownership.snapshot_hash || null,
+      refundScope: "payment",
+      lifecycleOutcome: "provider_fault",
+      refundReason: reason,
+      processingFeeRefundNote: "Processing fee is non-refundable",
+      reliabilityDepositRefundNote: "Reliability deposit is unchanged",
+    },
+  };
+}
+
 function resolveRefundPlan({
   reservation,
   payment,
@@ -256,6 +294,7 @@ function resolveRefundPlan({
 module.exports = {
   DEFAULT_CURRENCY,
   ROUTING_VERSION,
+  buildProviderFaultRefundPlan,
   inferLifecycleOutcome,
   inferRefundScope,
   resolveRefundPlan,

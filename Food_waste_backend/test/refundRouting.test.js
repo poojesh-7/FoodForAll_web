@@ -2,8 +2,10 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  buildProviderFaultRefundPlan,
   resolveRefundPlan,
 } = require("../shared/services/refundRouting.service");
+const { validateRefundPlan } = require("../shared/services/refundExecution.service");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const NGO_ID = "22222222-2222-4222-8222-222222222222";
@@ -102,6 +104,33 @@ test("unrestricted user cancellation refunds food only", () => {
     { type: "food", amount: 120, actorUserId: USER_ID, actorRole: "user" },
   ]);
   assert.equal(plan.retainedAmounts.length, 0);
+});
+
+test("validated provider food-not-received complaint refunds food only", () => {
+  const plan = buildProviderFaultRefundPlan({
+    paymentOwnership: ownership(),
+  });
+
+  assert.deepEqual(refundSummary(plan), [
+    { type: "food", amount: 120, actorUserId: USER_ID, actorRole: "user" },
+  ]);
+  assert.equal(plan.retainedAmounts.length, 0);
+  assert.equal(plan.metadata.lifecycleOutcome, "provider_fault");
+  assert.equal(plan.metadata.refundReason, "food_not_received");
+});
+
+test("provider fault refund cannot route to a provider recipient", () => {
+  const plan = buildProviderFaultRefundPlan({
+    paymentOwnership: ownership({
+      refund_target_user_id: PROVIDER_ID,
+      refund_target_role: "provider",
+    }),
+  });
+
+  assert.throws(
+    () => validateRefundPlan(plan),
+    /Provider cannot be a refund recipient/
+  );
 });
 
 test("successful user pickup refunds deposit to frozen deposit owner", () => {

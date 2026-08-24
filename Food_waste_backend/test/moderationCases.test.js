@@ -6,6 +6,7 @@ const {
   dismissProviderReport,
   getModerationCaseDetail,
   listModerationAppeals,
+  prepareProviderFaultRefund,
   submitProviderModerationAppeal,
   submitProviderCaseResponse,
   transitionModerationAppealStatus,
@@ -150,6 +151,69 @@ test("reports accept food_not_received and food_received as valid complaint reas
     assert.equal(report.reason, reason);
     assert.equal(report.moderation_case_status, "OPEN");
   }
+});
+
+test("provider fault refund preparation creates an ownership-lined food refund operation", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+
+      if (sql.includes("FROM payments")) {
+        return { rows: [{ id: "payment-1", status: "paid", payment_session_id: "session-1" }] };
+      }
+
+      if (sql.includes("FROM payment_ownership")) {
+        return {
+          rows: [{
+            id: "ownership-1",
+            reservation_id: RESERVATION_ID,
+            payment_session_id: "session-1",
+            refund_target_user_id: REPORTER_ID,
+            refund_target_role: "user",
+            food_amount: 120,
+            deposit_amount: 25,
+            currency: "INR",
+            ownership_version: 1,
+            snapshot_hash: "snapshot-hash",
+          }],
+        };
+      }
+
+      if (sql.includes("INSERT INTO financial_operations")) {
+        return {
+          rows: [{
+            id: "operation-1",
+            status: params[10],
+            amount: params[7],
+            currency: params[8],
+          }],
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const financialAction = await prepareProviderFaultRefund({
+    client,
+    adminId: ADMIN_ID,
+    report: {
+      id: REPORT_ID,
+      reason: "food_not_received",
+      reservation_id: RESERVATION_ID,
+    },
+  });
+
+  assert.deepEqual(financialAction, {
+    operation_id: "operation-1",
+    status: "processing",
+    amount: 120,
+    currency: "INR",
+    should_execute: true,
+    duplicate_prevented: false,
+  });
+  assert.equal(calls.some((call) => call.sql.includes("FROM payment_ownership")), true);
 });
 
 function createClient(options = {}) {

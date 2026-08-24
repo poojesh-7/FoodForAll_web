@@ -2787,7 +2787,7 @@ async function reviewProviderReport(req, res, action) {
 }
 
 async function enqueueProviderFaultRefund(financialAction) {
-  if (!financialAction?.operation_id || !financialAction?.reservation_id) return;
+  if (!financialAction?.complaint_report_id || !financialAction?.reservation_id) return;
 
   await refundQueue.add(
     "provider-fault-refund",
@@ -2798,7 +2798,7 @@ async function enqueueProviderFaultRefund(financialAction) {
       operationSource: "provider_fault_food_not_received",
     },
     {
-      jobId: `provider-fault-refund-${financialAction.operation_id}`,
+      jobId: `provider-fault-refund-${financialAction.complaint_report_id}`,
     }
   );
 }

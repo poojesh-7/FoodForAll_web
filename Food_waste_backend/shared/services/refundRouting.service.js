@@ -168,20 +168,35 @@ function buildProviderFaultRefundPlan({ paymentOwnership, reason = "food_not_rec
   const ownership = requireOwnership(paymentOwnership);
   const currency = normalizeCurrency(ownership.currency);
   const foodAmount = roundMoney(ownership.food_amount);
+  const depositAmount = roundMoney(ownership.deposit_amount);
+  const refunds = [];
+
+  if (foodAmount > 0) {
+    refunds.push(
+      buildRefund({
+        ownership,
+        refundType: "food",
+        amount: foodAmount,
+        currency,
+        reason,
+      })
+    );
+  }
+
+  if (depositAmount > 0) {
+    refunds.push(
+      buildRefund({
+        ownership,
+        refundType: "deposit",
+        amount: depositAmount,
+        currency,
+        reason: "provider_fault",
+      })
+    );
+  }
 
   return {
-    refunds:
-      foodAmount > 0
-        ? [
-            buildRefund({
-              ownership,
-              refundType: "food",
-              amount: foodAmount,
-              currency,
-              reason,
-            }),
-          ]
-        : [],
+    refunds,
     retainedAmounts: [],
     payouts: [],
     commissions: [],
@@ -197,7 +212,7 @@ function buildProviderFaultRefundPlan({ paymentOwnership, reason = "food_not_rec
       lifecycleOutcome: "provider_fault",
       refundReason: reason,
       processingFeeRefundNote: "Processing fee is non-refundable",
-      reliabilityDepositRefundNote: "Reliability deposit is unchanged",
+      reliabilityDepositRefundNote: "Reliability deposit is refunded with the food amount",
     },
   };
 }

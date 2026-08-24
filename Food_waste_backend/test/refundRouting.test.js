@@ -106,15 +106,17 @@ test("unrestricted user cancellation refunds food only", () => {
   assert.equal(plan.retainedAmounts.length, 0);
 });
 
-test("validated provider food-not-received complaint refunds food only", () => {
+test("validated provider food-not-received complaint refunds food and deposit", () => {
   const plan = buildProviderFaultRefundPlan({
     paymentOwnership: ownership(),
   });
 
   assert.deepEqual(refundSummary(plan), [
     { type: "food", amount: 120, actorUserId: USER_ID, actorRole: "user" },
+    { type: "deposit", amount: 25, actorUserId: USER_ID, actorRole: "user" },
   ]);
   assert.equal(plan.retainedAmounts.length, 0);
+  assert.equal(plan.metadata.reliabilityDepositRefundNote.includes("refunded"), true);
   assert.equal(plan.metadata.lifecycleOutcome, "provider_fault");
   assert.equal(plan.metadata.refundReason, "food_not_received");
 });

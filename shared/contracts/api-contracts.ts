@@ -735,6 +735,10 @@ export interface ProviderSettlementHistoryRow extends DbRow {
   paid_at?: ISODateString | null;
   payment_reference?: string | null;
   notes?: string | null;
+  refund_amount?: number | string;
+  refund_deduction_amount?: number | string;
+  pending_refund_amount?: number | string;
+  refund_note?: string | null;
   processed_by?: DbId | null;
   created_at?: ISODateString | null;
   updated_at?: ISODateString | null;
@@ -750,6 +754,8 @@ export interface ProviderSettlementSummaryData {
   refunds?: {
     total: number | string;
     count: number | string;
+    deducted: number | string;
+    pending: number | string;
   };
   // Monthly summary rows shown on the provider dashboard (one row per month)
   settlements: ProviderMonthlySettlementRow[];
@@ -765,7 +771,7 @@ export interface ProviderMonthlySettlementRow {
   pending: number | string;
   refunded?: number | string;
   count: number;
-  status: "Pending" | "Partially Paid" | "Paid" | "Refunded";
+  status: "Pending" | "Partially Paid" | "Paid" | "Paid - Refund Pending" | "Refunded";
 }
 
 export type ProviderSettlementSummaryResponse =
@@ -777,6 +783,8 @@ export interface AdminProviderSettlementRow extends ProviderSettlementHistoryRow
   restaurant_name?: string | null;
   amount_due: number | string;
   pending_settlements: number | string;
+  pending_refund_amount?: number | string;
+  refund_deduction_amount?: number | string;
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;
 }
@@ -788,6 +796,8 @@ export interface AdminProviderSettlementSummaryRow {
   restaurant_name?: string | null;
   amount_due: number | string;
   pending_settlements: number | string;
+  pending_refund_amount?: number | string;
+  refund_deduction_amount?: number | string;
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;
 }

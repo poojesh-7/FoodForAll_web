@@ -31,6 +31,13 @@ function label(value: unknown) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function effectiveSettlementAmount(record: AdminProviderSettlementRow) {
+  return Math.max(
+    0,
+    Number(record.amount || 0) - Number(record.refund_deduction_amount || 0),
+  );
+}
+
 export function MonthlySettlementRecordsModal({
   providerId,
   month,
@@ -145,7 +152,12 @@ export function MonthlySettlementRecordsModal({
                         )}
                       </td>
                       <td className="px-4 py-3 font-medium text-zinc-950">
-                        {formatCurrency(record.amount)}
+                        {formatCurrency(effectiveSettlementAmount(record))}
+                        {record.refund_note ? (
+                          <p className="mt-1 max-w-64 text-xs font-normal text-amber-700">
+                            {record.refund_note}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-zinc-700">
                         {label(record.status)}

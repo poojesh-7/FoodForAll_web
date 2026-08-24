@@ -679,6 +679,13 @@ export default function AdminSettlementsPage() {
           value={verificationCounts.rejected}
           detail="Rejected payout accounts"
         />
+        {selectedProvider ? (
+          <AdminMetricCard
+            label="Refund Carry-Forward"
+            value={formatCurrency(selectedProvider.pending_refund_amount)}
+            detail="Deduct from next settlement"
+          />
+        ) : null}
       </section>
 
       <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -992,10 +999,10 @@ export default function AdminSettlementsPage() {
                   </tr>
                 </thead>
               <tbody className="divide-y divide-zinc-100 align-top">
-                {monthlySettlements.map((monthly) => {
+                {monthlySettlements.map((monthly, index) => {
                   const monthKey = `${monthly.year}-${String(monthly.month).padStart(2, '0')}`;
                   return (
-                    <tr key={monthKey}>
+                    <tr key={`${monthly.provider_id}-${monthKey}-${index}`}>
                       <td className="px-4 py-3 font-medium text-zinc-950">
                         {monthly.month_label}
                       </td>

@@ -950,10 +950,40 @@ function serializeSettlement(row) {
     paid_at: row.paid_at || null,
     payment_reference: row.payment_reference || null,
     notes: row.notes || null,
+    refund_amount: Number(row.refund_amount || 0),
+    refund_deduction_amount: Number(row.refund_deduction_amount || 0),
+    pending_refund_amount: Number(row.pending_refund_amount || 0),
+    refund_note: row.refund_note || null,
     processed_by: row.processed_by || null,
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
   };
+}
+
+function applyRefundCarryForward(records) {
+  let remainingRefund = records
+    .filter((record) => Number(record.refund_amount || 0) > 0)
+    .reduce((sum, record) => sum + Number(record.refund_amount || record.amount || 0), 0);
+
+  const outstanding = records
+    .filter((record) => PENDING_SETTLEMENT_STATUSES.includes(record.status))
+    .sort((left, right) => new Date(left.created_at || 0) - new Date(right.created_at || 0));
+
+  for (const record of outstanding) {
+    const deduction = Math.min(remainingRefund, Number(record.amount || 0));
+    record.refund_deduction_amount = Math.round(deduction * 100) / 100;
+    remainingRefund = Math.max(0, remainingRefund - deduction);
+  }
+
+  return records.map((record) => ({
+    ...record,
+    pending_refund_amount: Math.round(remainingRefund * 100) / 100,
+    refund_note: Number(record.refund_amount || 0) > 0
+      ? "Refunded to user; deducted from next settlement."
+      : record.refund_deduction_amount > 0
+        ? "User refund deduction applied."
+        : null,
+  }));
 }
 
 function sqlTimestampUtc(columnName) {
@@ -987,32 +1017,41 @@ async function getProviderSettlementSummary({
         SELECT
           ps.amount,
           ps.status,
-          EXISTS (
-            SELECT 1
+          LEAST(ps.amount, COALESCE((
+            SELECT SUM(fle.amount)
             FROM financial_ledger_entries fle
             WHERE fle.reservation_id = ps.reservation_id
               AND fle.payment_session_id = ps.payment_session_id
               AND fle.event_type = 'refund_issued'
-          ) AS is_refunded
+          ), 0))::numeric AS refund_amount
         FROM provider_settlements ps
         WHERE ps.provider_id=$1
+      ), totals AS (
+        SELECT
+          COALESCE(SUM(refund_amount), 0)::numeric AS refund_total,
+          COALESCE(SUM(amount) FILTER (
+            WHERE status = ANY($2::text[])
+          ), 0)::numeric AS outstanding_total
+        FROM settlement_projection
       )
       SELECT
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($2::text[])
-            AND NOT is_refunded
-        ), 0)::numeric AS pending_earnings,
+        GREATEST(
+          totals.outstanding_total
+            - LEAST(totals.refund_total, totals.outstanding_total),
+          0
+        )::numeric AS pending_earnings,
         COALESCE(SUM(amount) FILTER (
           WHERE status = ANY($3::text[])
-            AND NOT is_refunded
+            AND refund_amount = 0
         ), 0)::numeric AS paid_earnings,
-        COALESCE(SUM(amount) FILTER (
-          WHERE is_refunded
-        ), 0)::numeric AS user_refunds,
+        totals.refund_total AS user_refunds,
+        LEAST(totals.refund_total, totals.outstanding_total)::numeric AS refunded_deducted,
+        GREATEST(totals.refund_total - totals.outstanding_total, 0)::numeric AS pending_refunds,
         COUNT(*) FILTER (
-          WHERE is_refunded
+          WHERE refund_amount > 0
         )::int AS user_refund_count
-      FROM settlement_projection
+      FROM settlement_projection, totals
+      GROUP BY totals.refund_total, totals.outstanding_total
       `,
       [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
@@ -1038,9 +1077,9 @@ async function getProviderSettlementSummary({
         to_char(month_start, 'Mon YYYY') AS month_label,
         EXTRACT(YEAR FROM month_start)::int AS year,
         EXTRACT(MONTH FROM month_start)::int AS month,
-        COALESCE(SUM(amount) FILTER (WHERE NOT is_refunded), 0)::numeric AS earnings,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[]) AND NOT is_refunded), 0)::numeric AS paid,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[]) AND NOT is_refunded), 0)::numeric AS pending,
+        COALESCE(SUM(amount), 0)::numeric AS earnings,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[])), 0)::numeric AS paid,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[])), 0)::numeric AS pending,
         COALESCE(SUM(amount) FILTER (WHERE is_refunded), 0)::numeric AS refunded,
         COUNT(*)::int AS count
       FROM monthly_source
@@ -1060,7 +1099,7 @@ async function getProviderSettlementSummary({
     const refunded = Number(row.refunded || 0);
     let status = "Pending";
     if (total === 0 && refunded > 0) status = "Refunded";
-    else if (paid >= total && total > 0) status = "Paid";
+    else if (paid + refunded >= total && total > 0) status = refunded > 0 ? "Paid - Refund Pending" : "Paid";
     else if (paid === 0) status = "Pending";
     else status = "Partially Paid";
 
@@ -1088,6 +1127,8 @@ async function getProviderSettlementSummary({
     refunds: {
       total: Number(totals.rows[0]?.user_refunds || 0),
       count: Number(totals.rows[0]?.user_refund_count || 0),
+      deducted: Number(totals.rows[0]?.refunded_deducted || 0),
+      pending: Number(totals.rows[0]?.pending_refunds || 0),
     },
     settlements: monthlyRows,
   };
@@ -1134,7 +1175,6 @@ async function listProviderSettlementRecords({
       else statuses = [normalizedStatus];
 
       whereClauses.push(`ps.status = ANY($${paramIndex}::text[])`);
-      whereClauses.push("fle.id IS NULL");
       params.push(statuses);
       paramIndex++;
     }
@@ -1152,10 +1192,8 @@ async function listProviderSettlementRecords({
       ps.amount,
       ps.commission_amount,
       ps.currency,
-      CASE
-        WHEN fle.id IS NOT NULL AND fle.event_type = 'refund_issued' THEN 'refunded'
-        ELSE ps.status
-      END AS status,
+      ps.status AS status,
+      COALESCE(fle.refund_amount, 0)::numeric AS refund_amount,
       ${sqlNullableTimestampUtc('ps.paid_at')} AS paid_at,
       ps.payment_reference,
       ps.notes,
@@ -1164,7 +1202,7 @@ async function listProviderSettlementRecords({
       ${sqlTimestampUtc('ps.updated_at')} AS updated_at
     FROM provider_settlements ps
     LEFT JOIN LATERAL (
-      SELECT id, event_type
+      SELECT id, event_type, LEAST(amount, ps.amount) AS refund_amount
       FROM financial_ledger_entries
       WHERE reservation_id = ps.reservation_id
         AND payment_session_id = ps.payment_session_id
@@ -1182,8 +1220,9 @@ async function listProviderSettlementRecords({
 
   const result = await client.query(baseQuery, params);
 
+  const records = applyRefundCarryForward(result.rows.map(serializeSettlement));
   return {
-    records: result.rows.map(serializeSettlement),
+    records,
     limit: Number(limit),
     offset: Number(offset) || 0,
     count: result.rows.length,
@@ -1313,6 +1352,8 @@ function serializeAdminSettlementSummary(row) {
     restaurant_name: row.restaurant_name || null,
     amount_due: Number(row.amount_due || 0),
     pending_settlements: Number(row.pending_settlements || 0),
+    pending_refund_amount: Number(row.pending_refund_amount || 0),
+    refund_deduction_amount: Number(row.refund_deduction_amount || 0),
     paid_settlements: Number(row.paid_settlements || 0),
     failed_settlements: Number(row.failed_settlements || 0),
     last_settlement_at: row.last_settlement_at || null,
@@ -1382,12 +1423,35 @@ async function listAdminMonthlySettlements({
   // Build summary for provider list (same as regular settlements)
   const summaryResult = await client.query(
     `
-    WITH provider_due AS (
+    WITH settlement_projection AS (
+      SELECT
+        ps.*,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
+      FROM provider_settlements ps
+    ), provider_due AS (
       SELECT
         ps.provider_id,
-        COALESCE(SUM(ps.amount) FILTER (
-          WHERE ps.status = ANY($1::text[])
-        ), 0)::numeric AS amount_due,
+        GREATEST(
+          COALESCE(SUM(ps.amount) FILTER (
+            WHERE ps.status = ANY($1::text[])
+          ), 0)
+            - LEAST(
+              COALESCE(SUM(ps.refund_amount), 0),
+              COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($1::text[])), 0)
+            ),
+          0
+        )::numeric AS amount_due,
+        COALESCE(SUM(ps.refund_amount), 0)::numeric AS refund_total,
+        LEAST(
+          COALESCE(SUM(ps.refund_amount), 0),
+          COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($1::text[])), 0)
+        )::numeric AS refund_deduction_amount,
         COUNT(*) FILTER (
           WHERE ps.status = ANY($1::text[])
         )::int AS pending_settlements,
@@ -1395,11 +1459,7 @@ async function listAdminMonthlySettlements({
           WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
           ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_settlement_at
-      FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.event_type = 'refund_issued'
-      WHERE fle.reservation_id IS NULL
+      FROM settlement_projection ps
       GROUP BY ps.provider_id
     ),
     active_accounts AS (
@@ -1430,6 +1490,8 @@ async function listAdminMonthlySettlements({
       r.restaurant_name,
       COALESCE(pd.amount_due, 0) AS amount_due,
       COALESCE(pd.pending_settlements, 0) AS pending_settlements,
+      GREATEST(COALESCE(pd.refund_total, 0) - COALESCE(pd.refund_deduction_amount, 0), 0) AS pending_refund_amount,
+      COALESCE(pd.refund_deduction_amount, 0) AS refund_deduction_amount,
       pd.last_settlement_at,
       ppa.id AS payout_account_id,
       ppa.account_type AS payout_account_type,
@@ -1469,7 +1531,6 @@ async function listAdminMonthlySettlements({
   // Separate WHERE clauses for WITH statement and outer SELECT
   const monthlyWithWhereClauses = [
     "ps.status = ANY($2::text[])",
-    "fle.reservation_id IS NULL",  // No matching refund entry = not refunded
   ];
   const monthlySelectWhereClauses = [];
   const monthlyParams = [rowLimit, filterStatuses, PENDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES];
@@ -1520,23 +1581,54 @@ async function listAdminMonthlySettlements({
 
   const result = await client.query(
     `
-    WITH monthly_settlements AS (
+    WITH settlement_projection AS (
+      SELECT
+        ps.*,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
+      FROM provider_settlements ps
+    ), monthly_settlements AS (
       SELECT
         ps.provider_id,
         to_char(COALESCE(ps.paid_at, ps.updated_at, ps.created_at), 'YYYY-MM') AS month_year,
         to_char(COALESCE(ps.paid_at, ps.updated_at, ps.created_at), 'Mon YYYY') AS month_label,
         EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int AS year,
         EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int AS month,
-        COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($3::text[])), 0)::numeric AS pending_amount,
-        COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($4::text[])), 0)::numeric AS paid_amount,
-        COALESCE(SUM(ps.amount), 0)::numeric AS total_amount,
+        GREATEST(
+          COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($3::text[])), 0)
+            - LEAST(
+              COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($3::text[])), 0),
+              COALESCE((
+                SELECT SUM(LEAST(refunded_ps.amount, COALESCE((
+                  SELECT SUM(fle.amount)
+                  FROM financial_ledger_entries fle
+                  WHERE fle.reservation_id = refunded_ps.reservation_id
+                    AND fle.payment_session_id = refunded_ps.payment_session_id
+                    AND fle.event_type = 'refund_issued'
+                ), 0)))
+                FROM provider_settlements refunded_ps
+                WHERE refunded_ps.provider_id = ps.provider_id
+                  AND EXISTS (
+                    SELECT 1
+                    FROM financial_ledger_entries fle
+                    WHERE fle.reservation_id = refunded_ps.reservation_id
+                      AND fle.payment_session_id = refunded_ps.payment_session_id
+                      AND fle.event_type = 'refund_issued'
+                  )
+              ), 0)
+            ),
+          0
+        )::numeric AS pending_amount,
+        COALESCE(SUM(ps.amount - ps.refund_amount) FILTER (WHERE ps.status = ANY($4::text[])), 0)::numeric AS paid_amount,
+        COALESCE(SUM(ps.amount - ps.refund_amount), 0)::numeric AS total_amount,
         COUNT(*)::int AS record_count,
         MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::timestamp AS last_settlement_ts
-      FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.payment_session_id = ps.payment_session_id
-        AND fle.event_type = 'refund_issued'
+      FROM settlement_projection ps
       WHERE ${monthlyWithWhereClauses.join(' AND ')}
       GROUP BY ps.provider_id, month_year, month_label, year, month
     ),
@@ -1635,12 +1727,35 @@ async function listAdminProviderSettlements({
 
   const summaryResult = await client.query(
     `
-    WITH provider_due AS (
+    WITH settlement_projection AS (
+      SELECT
+        ps.*,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
+      FROM provider_settlements ps
+    ), provider_due AS (
       SELECT
         ps.provider_id,
-        COALESCE(SUM(ps.amount) FILTER (
-          WHERE ps.status = ANY($1::text[])
-        ), 0)::numeric AS amount_due,
+        GREATEST(
+          COALESCE(SUM(ps.amount) FILTER (
+            WHERE ps.status = ANY($1::text[])
+          ), 0)
+            - LEAST(
+              COALESCE(SUM(ps.refund_amount), 0),
+              COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($1::text[])), 0)
+            ),
+          0
+        )::numeric AS amount_due,
+        COALESCE(SUM(ps.refund_amount), 0)::numeric AS refund_total,
+        LEAST(
+          COALESCE(SUM(ps.refund_amount), 0),
+          COALESCE(SUM(ps.amount) FILTER (WHERE ps.status = ANY($1::text[])), 0)
+        )::numeric AS refund_deduction_amount,
         COUNT(*) FILTER (
           WHERE ps.status = ANY($1::text[])
         )::int AS pending_settlements,
@@ -1648,11 +1763,7 @@ async function listAdminProviderSettlements({
           WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
           ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_settlement_at
-      FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.event_type = 'refund_issued'
-      WHERE fle.reservation_id IS NULL
+      FROM settlement_projection ps
       GROUP BY ps.provider_id
     ),
     active_accounts AS (
@@ -1683,6 +1794,8 @@ async function listAdminProviderSettlements({
       r.restaurant_name,
       COALESCE(pd.amount_due, 0) AS amount_due,
       COALESCE(pd.pending_settlements, 0) AS pending_settlements,
+      GREATEST(COALESCE(pd.refund_total, 0) - COALESCE(pd.refund_deduction_amount, 0), 0) AS pending_refund_amount,
+      COALESCE(pd.refund_deduction_amount, 0) AS refund_deduction_amount,
       pd.last_settlement_at,
       ppa.id AS payout_account_id,
       ppa.account_type AS payout_account_type,
@@ -1720,10 +1833,21 @@ async function listAdminProviderSettlements({
 
   const result = await client.query(
     `
-    WITH provider_due AS (
+    WITH settlement_projection AS (
+      SELECT
+        ps.*,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
+      FROM provider_settlements ps
+    ), provider_due AS (
       SELECT
         ps.provider_id,
-        COALESCE(SUM(ps.amount) FILTER (
+        COALESCE(SUM(ps.amount - ps.refund_amount) FILTER (
           WHERE ps.status = ANY($2::text[])
         ), 0)::numeric AS amount_due,
         COUNT(*) FILTER (
@@ -1733,11 +1857,7 @@ async function listAdminProviderSettlements({
           WHEN MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) IS NULL THEN NULL
           ELSE to_char(MAX(COALESCE(ps.paid_at, ps.updated_at, ps.created_at)), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_settlement_at
-      FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.event_type = 'refund_issued'
-      WHERE fle.reservation_id IS NULL
+      FROM settlement_projection ps
       GROUP BY ps.provider_id
     ),
     active_accounts AS (
@@ -1772,10 +1892,8 @@ async function listAdminProviderSettlements({
       ps.amount,
       ps.commission_amount,
       ps.currency,
-      CASE
-        WHEN fle.id IS NOT NULL AND fle.event_type = 'refund_issued' THEN 'refunded'
-        ELSE ps.status
-      END AS status,
+      ps.status AS status,
+      LEAST(ps.amount, COALESCE(fle.amount, 0))::numeric AS refund_amount,
       ${sqlNullableTimestampUtc("ps.paid_at")} AS paid_at,
       ps.payment_reference,
       ps.notes,
@@ -1813,7 +1931,6 @@ async function listAdminProviderSettlements({
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
     LEFT JOIN active_accounts ppa ON ppa.provider_id=ps.provider_id
     WHERE ps.status = ANY($3::text[])
-      AND fle.reservation_id IS NULL
       AND ($5::text IS NULL OR ${adminSettlementSearchCondition(5)})
       AND ($6::text IS NULL OR ps.provider_id::text=$6)
       AND ${adminVerificationFilterCondition(7)}
@@ -1838,7 +1955,9 @@ async function listAdminProviderSettlements({
     ],
   );
 
-  const settlements = result.rows.map(serializeAdminSettlement);
+  const settlements = applyRefundCarryForward(
+    result.rows.map(serializeAdminSettlement),
+  );
 
   return {
     filter,

@@ -851,7 +851,7 @@ export default function DashboardPage() {
                   <h2 className="text-base font-semibold text-zinc-950">
                     Earnings
                   </h2>
-                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-5">
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Pending Earnings
@@ -876,6 +876,17 @@ export default function DashboardPage() {
                         {formatCurrency(financialSummary?.refunds?.total)}
                       </p>
                     </div>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                      <p className="text-sm font-medium text-amber-800">
+                        Refund Carry-Forward
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-amber-950">
+                        {formatCurrency(financialSummary?.refunds?.pending)}
+                      </p>
+                      <p className="mt-1 text-xs text-amber-800">
+                        To be deducted from next settlement
+                      </p>
+                    </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Lifetime Earnings
@@ -885,6 +896,9 @@ export default function DashboardPage() {
                           (Number(financialSummary?.earnings.pending || 0) || 0) +
                             (Number(financialSummary?.earnings.paid || 0) || 0)
                         )}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-800">
+                        Pending + Paid Earnings
                       </p>
                     </div>
                   </div>
@@ -929,8 +943,8 @@ export default function DashboardPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-100">
-                            {(financialSummary.settlements || []).filter((m) => !selectedYear || m.year === selectedYear).map((m) => (
-                              <tr key={String(m.month_key)}>
+                            {(financialSummary.settlements || []).filter((m) => !selectedYear || m.year === selectedYear).map((m, index) => (
+                              <tr key={`${String(m.month_key)}-${index}`}>
                                 <td className="px-4 py-3 text-zinc-700">
                                   {m.month_label}
                                 </td>
@@ -944,7 +958,7 @@ export default function DashboardPage() {
                                   {formatCurrency(m.pending)}
                                 </td>
                                 <td className="px-4 py-3">
-                                  <span className="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide bg-amber-100 text-amber-800">{m.status}</span>
+                                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide ${m.status === "Paid - Refund Pending" ? "bg-sky-100 text-sky-800" : m.status === "Paid" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{m.status}</span>
                                 </td>
                                 <td className="px-4 py-3">
                                   <button
@@ -1002,7 +1016,14 @@ export default function DashboardPage() {
                                 {recordRows.map((r) => (
                                   <tr key={String(r.id)}>
                                     <td className="px-4 py-3 text-zinc-700">{r.paid_at ? formatDateTime(r.paid_at) : formatDateTime(r.updated_at || r.created_at || '')}</td>
-                                    <td className="px-4 py-3 font-medium text-zinc-950">{formatCurrency(r.amount)}</td>
+                                    <td className="px-4 py-3 font-medium text-zinc-950">
+                                      {formatCurrency(r.amount)}
+                                      {r.refund_note ? (
+                                        <p className="mt-1 max-w-56 text-xs font-normal text-amber-700">
+                                          {r.refund_note}
+                                        </p>
+                                      ) : null}
+                                    </td>
                                     <td className="px-4 py-3 text-zinc-700">{r.payment_reference || '-'}</td>
                                     <td className="px-4 py-3">{settlementStatusChip(r.status)}</td>
                                   </tr>

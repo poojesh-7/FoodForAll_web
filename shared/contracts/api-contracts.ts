@@ -747,6 +747,10 @@ export interface ProviderSettlementSummaryData {
     pending: number | string;
     paid: number | string;
   };
+  refunds?: {
+    total: number | string;
+    count: number | string;
+  };
   // Monthly summary rows shown on the provider dashboard (one row per month)
   settlements: ProviderMonthlySettlementRow[];
 }
@@ -759,8 +763,9 @@ export interface ProviderMonthlySettlementRow {
   earnings: number | string;
   paid: number | string;
   pending: number | string;
+  refunded?: number | string;
   count: number;
-  status: "Pending" | "Partially Paid" | "Paid";
+  status: "Pending" | "Partially Paid" | "Paid" | "Refunded";
 }
 
 export type ProviderSettlementSummaryResponse =

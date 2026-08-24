@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   deactivateProviderPayoutAccount,
   getProviderSettlementSummary,
+  listProviderSettlementRecords,
   replaceProviderPayoutAccount,
   requestProviderPayoutAccountChange,
   approveProviderPayoutAccountChange,
@@ -24,6 +25,7 @@ const ADMIN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 function createProviderFinanceClient() {
   const accounts = [];
   const ledger = new Map();
+  const refundEvents = new Map();
   const classifications = new Map();
   const settlements = new Map([
     [
@@ -89,7 +91,46 @@ function createProviderFinanceClient() {
         updated_at: "2026-01-03T00:00:00.000Z",
       },
     ],
+    [
+      "settlement_refunded",
+      {
+        id: "settlement_refunded",
+        provider_id: PROVIDER_ID,
+        reservation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        payment_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        payment_session_id: "session_refunded",
+        settlement_allocation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        amount: 950,
+        commission_amount: 50,
+        currency: "INR",
+        status: "pending",
+        paid_at: null,
+        payment_reference: null,
+        notes: null,
+        processed_by: null,
+        created_at: "2026-01-04T00:00:00.000Z",
+        updated_at: "2026-01-04T00:00:00.000Z",
+      },
+    ],
   ]);
+  refundEvents.set("ledger:refund:session_refunded", {
+    id: "ledger_refund_1",
+    reservation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    payment_session_id: "session_refunded",
+    event_type: "refund_issued",
+    amount: 1000,
+    currency: "INR",
+    created_at: "2026-01-04T00:00:00.000Z",
+  });
+
+  function hasRefundEvent(settlement) {
+    return [...refundEvents.values(), ...ledger.values()].some(
+      (entry) =>
+        entry.event_type === "refund_issued" &&
+        entry.reservation_id === settlement.reservation_id &&
+        entry.payment_session_id === settlement.payment_session_id,
+    );
+  }
 
   return {
     accounts,
@@ -337,16 +378,24 @@ function createProviderFinanceClient() {
         return { rows: [{ ...row }] };
       }
 
-      if (text.includes("COALESCE(SUM(amount) FILTER")) {
+      if (text.includes("WITH settlement_projection AS")) {
         const providerId = params[0];
         const pendingStatuses = params[1];
         const paidStatuses = params[2];
         let pending = 0;
         let paid = 0;
+        let refunded = 0;
+        let refundCount = 0;
         for (const row of settlements.values()) {
           if (row.provider_id !== providerId) continue;
-          if (pendingStatuses.includes(row.status))
+          if (hasRefundEvent(row)) {
+            refunded += Number(row.amount);
+            refundCount++;
+            continue;
+          }
+          if (pendingStatuses.includes(row.status)) {
             pending += Number(row.amount);
+          }
           if (paidStatuses.includes(row.status)) paid += Number(row.amount);
         }
         return {
@@ -354,8 +403,36 @@ function createProviderFinanceClient() {
             {
               pending_earnings: pending,
               paid_earnings: paid,
+              user_refunds: refunded,
+              user_refund_count: refundCount,
             },
           ],
+        };
+      }
+
+      if (text.includes("WITH monthly_source AS")) {
+        const providerId = params[0];
+        const pendingStatuses = params[1];
+        const paidStatuses = params[2];
+        return {
+          rows: Array.from(settlements.values())
+            .filter((row) => row.provider_id === providerId)
+            .map((row) => {
+              const refunded = hasRefundEvent(row);
+              const amount = Number(row.amount);
+              return {
+                month_key: "2026-01",
+                month_label: "Jan 2026",
+                year: 2026,
+                month: 1,
+                earnings: refunded ? 0 : amount,
+                paid: !refunded && paidStatuses.includes(row.status) ? amount : 0,
+                pending:
+                  !refunded && pendingStatuses.includes(row.status) ? amount : 0,
+                refunded: refunded ? amount : 0,
+                count: 1,
+              };
+            }),
         };
       }
 
@@ -367,7 +444,10 @@ function createProviderFinanceClient() {
         return {
           rows: Array.from(settlements.values())
             .filter((row) => row.provider_id === providerId)
-            .map((row) => ({ ...row })),
+            .map((row) => ({
+              ...row,
+              status: hasRefundEvent(row) ? "refunded" : row.status,
+            })),
         };
       }
 
@@ -626,7 +706,25 @@ test("T-FIN-2 provider settlement earnings summary totals pending and paid", asy
 
   assert.equal(summary.earnings.pending, 1650);
   assert.equal(summary.earnings.paid, 8430);
-  assert.equal(summary.settlements.length, 3);
+  assert.equal(summary.refunds.total, 950);
+  assert.equal(summary.refunds.count, 1);
+  assert.equal(summary.settlements.length, 4);
+});
+
+test("T-FIN-2 provider records include refunded settlement rows", async () => {
+  const client = createProviderFinanceClient();
+
+  const records = await listProviderSettlementRecords({
+    client,
+    providerId: PROVIDER_ID,
+    year: 2026,
+    month: 1,
+    ensureSchema: false,
+  });
+
+  const refunded = records.records.find((row) => row.id === "settlement_refunded");
+  assert.equal(refunded?.status, "refunded");
+  assert.equal(refunded?.amount, 950);
 });
 
 test("T-FIN-2 failed settlement remains outstanding and does not reduce amount due or pending earnings", async () => {
@@ -658,11 +756,8 @@ test("T-FIN-2 failed settlement remains outstanding and does not reduce amount d
 
   assert.equal(after.earnings.pending, 1650);
   assert.equal(after.earnings.paid, 8430);
-  assert.equal(after.settlements.length, 3);
-  assert.equal(
-    after.settlements.find((row) => row.id === "settlement_pending").status,
-    "failed",
-  );
+  assert.equal(after.settlements.length, 4);
+  assert.equal(client.settlements.get("settlement_pending").status, "failed");
 });
 
 test("T-FIN-2 marking paid moves outstanding amount from pending to paid", async () => {
@@ -708,10 +803,7 @@ test("T-FIN-2 marking paid moves outstanding amount from pending to paid", async
 
   assert.equal(after.earnings.pending, 400);
   assert.equal(after.earnings.paid, 9680);
-  assert.equal(
-    after.settlements.find((row) => row.id === "settlement_pending").status,
-    "paid",
-  );
+  assert.equal(client.settlements.get("settlement_pending").status, "paid");
 });
 
 test("T-FIN-2 marking paid requires a verified payout account", async () => {
@@ -802,7 +894,7 @@ test("T-FIN-2 provider earnings reporting matches provider_settlements", async (
 
   assert.equal(summary.earnings.pending, 1650);
   assert.equal(summary.earnings.paid, 8430);
-  assert.equal(summary.settlements.length, 3);
+  assert.equal(summary.settlements.length, 4);
 });
 
 test("T-FIN-2 migration declares payout accounts and manual settlement fields", () => {

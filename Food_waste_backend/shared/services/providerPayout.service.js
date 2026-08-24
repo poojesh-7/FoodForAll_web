@@ -983,20 +983,36 @@ async function getProviderSettlementSummary({
     }),
     client.query(
       `
+      WITH settlement_projection AS (
+        SELECT
+          ps.amount,
+          ps.status,
+          EXISTS (
+            SELECT 1
+            FROM financial_ledger_entries fle
+            WHERE fle.reservation_id = ps.reservation_id
+              AND fle.payment_session_id = ps.payment_session_id
+              AND fle.event_type = 'refund_issued'
+          ) AS is_refunded
+        FROM provider_settlements ps
+        WHERE ps.provider_id=$1
+      )
       SELECT
-        COALESCE(SUM(ps.amount) FILTER (
-          WHERE ps.status = ANY($2::text[])
+        COALESCE(SUM(amount) FILTER (
+          WHERE status = ANY($2::text[])
+            AND NOT is_refunded
         ), 0)::numeric AS pending_earnings,
-        COALESCE(SUM(ps.amount) FILTER (
-          WHERE ps.status = ANY($3::text[])
-        ), 0)::numeric AS paid_earnings
-      FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.payment_session_id = ps.payment_session_id
-        AND fle.event_type = 'refund_issued'
-      WHERE ps.provider_id=$1
-        AND fle.reservation_id IS NULL
+        COALESCE(SUM(amount) FILTER (
+          WHERE status = ANY($3::text[])
+            AND NOT is_refunded
+        ), 0)::numeric AS paid_earnings,
+        COALESCE(SUM(amount) FILTER (
+          WHERE is_refunded
+        ), 0)::numeric AS user_refunds,
+        COUNT(*) FILTER (
+          WHERE is_refunded
+        )::int AS user_refund_count
+      FROM settlement_projection
       `,
       [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
@@ -1005,14 +1021,16 @@ async function getProviderSettlementSummary({
       WITH monthly_source AS (
         SELECT
           ps.*,
-          date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) AS month_start
+          date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) AS month_start,
+          EXISTS (
+            SELECT 1
+            FROM financial_ledger_entries fle
+            WHERE fle.reservation_id = ps.reservation_id
+              AND fle.payment_session_id = ps.payment_session_id
+              AND fle.event_type = 'refund_issued'
+          ) AS is_refunded
         FROM provider_settlements ps
-        LEFT JOIN financial_ledger_entries fle
-          ON fle.reservation_id = ps.reservation_id
-          AND fle.payment_session_id = ps.payment_session_id
-          AND fle.event_type = 'refund_issued'
         WHERE ps.provider_id = $1
-          AND fle.reservation_id IS NULL
           AND date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) >= date_trunc('month', NOW()) - INTERVAL '36 months'
       )
       SELECT
@@ -1020,9 +1038,10 @@ async function getProviderSettlementSummary({
         to_char(month_start, 'Mon YYYY') AS month_label,
         EXTRACT(YEAR FROM month_start)::int AS year,
         EXTRACT(MONTH FROM month_start)::int AS month,
-        COALESCE(SUM(amount), 0)::numeric AS earnings,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[])), 0)::numeric AS paid,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[])), 0)::numeric AS pending,
+        COALESCE(SUM(amount) FILTER (WHERE NOT is_refunded), 0)::numeric AS earnings,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[]) AND NOT is_refunded), 0)::numeric AS paid,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[]) AND NOT is_refunded), 0)::numeric AS pending,
+        COALESCE(SUM(amount) FILTER (WHERE is_refunded), 0)::numeric AS refunded,
         COUNT(*)::int AS count
       FROM monthly_source
       GROUP BY month_start
@@ -1038,8 +1057,10 @@ async function getProviderSettlementSummary({
     const total = Number(row.earnings || 0);
     const paid = Number(row.paid || 0);
     const pending = Number(row.pending || 0);
+    const refunded = Number(row.refunded || 0);
     let status = "Pending";
-    if (paid >= total && total > 0) status = "Paid";
+    if (total === 0 && refunded > 0) status = "Refunded";
+    else if (paid >= total && total > 0) status = "Paid";
     else if (paid === 0) status = "Pending";
     else status = "Partially Paid";
 
@@ -1051,6 +1072,7 @@ async function getProviderSettlementSummary({
       earnings: total,
       paid,
       pending,
+      refunded,
       count: Number(row.count || 0),
       status,
     };
@@ -1062,6 +1084,10 @@ async function getProviderSettlementSummary({
     earnings: {
       pending: Number(totals.rows[0]?.pending_earnings || 0),
       paid: Number(totals.rows[0]?.paid_earnings || 0),
+    },
+    refunds: {
+      total: Number(totals.rows[0]?.user_refunds || 0),
+      count: Number(totals.rows[0]?.user_refund_count || 0),
     },
     settlements: monthlyRows,
   };
@@ -1095,20 +1121,25 @@ async function listProviderSettlementRecords({
     paramIndex++;
   }
 
-  if (status && status !== 'all') {
+  const normalizedStatus = String(status || "").toLowerCase();
+  if (normalizedStatus && normalizedStatus !== 'all') {
     // Map friendly status to underlying status lists
     let statuses = [];
-    if (status === 'paid') statuses = PAID_SETTLEMENT_STATUSES;
-    else if (status === 'pending') statuses = PENDING_SETTLEMENT_STATUSES;
-    else if (status === 'failed') statuses = FAILED_SETTLEMENT_STATUSES;
-    else statuses = [status];
+    if (normalizedStatus === 'refunded') {
+      whereClauses.push("fle.id IS NOT NULL");
+    } else {
+      if (normalizedStatus === 'paid') statuses = PAID_SETTLEMENT_STATUSES;
+      else if (normalizedStatus === 'pending') statuses = PENDING_SETTLEMENT_STATUSES;
+      else if (normalizedStatus === 'failed') statuses = FAILED_SETTLEMENT_STATUSES;
+      else statuses = [normalizedStatus];
 
-    whereClauses.push(`ps.status = ANY($${paramIndex}::text[])`);
-    params.push(statuses);
-    paramIndex++;
+      whereClauses.push(`ps.status = ANY($${paramIndex}::text[])`);
+      whereClauses.push("fle.id IS NULL");
+      params.push(statuses);
+      paramIndex++;
+    }
   }
 
-  // Exclude refunded settlements via LEFT JOIN
   const baseQuery = `
     SELECT
       ps.id,
@@ -1132,12 +1163,16 @@ async function listProviderSettlementRecords({
       ${sqlTimestampUtc('ps.created_at')} AS created_at,
       ${sqlTimestampUtc('ps.updated_at')} AS updated_at
     FROM provider_settlements ps
-    LEFT JOIN financial_ledger_entries fle
-      ON fle.reservation_id = ps.reservation_id
-      AND fle.payment_session_id = ps.payment_session_id
-      AND fle.event_type = 'refund_issued'
+    LEFT JOIN LATERAL (
+      SELECT id, event_type
+      FROM financial_ledger_entries
+      WHERE reservation_id = ps.reservation_id
+        AND payment_session_id = ps.payment_session_id
+        AND event_type = 'refund_issued'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    ) fle ON true
     WHERE ${whereClauses.join(' AND ')}
-      AND fle.reservation_id IS NULL
     ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC, ps.id DESC
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `;

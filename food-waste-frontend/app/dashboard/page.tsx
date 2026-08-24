@@ -211,6 +211,9 @@ function settlementStatusChip(status: string) {
   if (normalized === "paid") {
     return <span className={`${base} bg-emerald-100 text-emerald-800`}>Paid</span>;
   }
+  if (normalized === "refunded") {
+    return <span className={`${base} bg-sky-100 text-sky-800`}>Refunded</span>;
+  }
   if (normalized === "failed" || normalized === "cancelled") {
     return <span className={`${base} bg-rose-100 text-rose-800`}>Failed</span>;
   }
@@ -848,7 +851,7 @@ export default function DashboardPage() {
                   <h2 className="text-base font-semibold text-zinc-950">
                     Earnings
                   </h2>
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Pending Earnings
@@ -863,6 +866,14 @@ export default function DashboardPage() {
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(financialSummary?.earnings.paid)}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                      <p className="text-sm font-medium text-zinc-600">
+                        User Refunds
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-950">
+                        {formatCurrency(financialSummary?.refunds?.total)}
                       </p>
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">

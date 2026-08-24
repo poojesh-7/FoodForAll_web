@@ -1328,6 +1328,20 @@ export interface ModerationAppealRow extends DbRow {
   attachment_count?: number | string;
 }
 
+export interface ModerationFinancialAction extends DbRow {
+  operation_id?: DbId | null;
+  operation_type?: string | null;
+  operation_source?: string | null;
+  status?: string | null;
+  amount?: number | string | null;
+  currency?: string | null;
+  refund_id?: string | null;
+  provider_settlement_id?: DbId | null;
+  provider_settlement_amount?: number | string | null;
+  provider_settlement_status?: string | null;
+  provider_settlement_adjustment_required?: boolean | null;
+}
+
 export interface ModerationCaseDetail extends DbRow {
   id: DbId;
   case_type: string;
@@ -1349,6 +1363,7 @@ export interface ModerationCaseDetail extends DbRow {
   provider_responses?: ProviderCaseResponseRow[];
   appeal?: ModerationAppealRow | null;
   appeals?: ModerationAppealRow[];
+  financial_action?: ModerationFinancialAction | null;
   events: ModerationCaseEventRow[];
 }
 

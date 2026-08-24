@@ -12,6 +12,7 @@ import {
   Eye,
   History,
   MessageSquare,
+  Receipt,
   Scale,
   ShieldAlert,
   X,
@@ -76,6 +77,12 @@ const TERMINAL_APPEAL_STATUSES = new Set(["ACCEPTED", "REJECTED", "WITHDRAWN"]);
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
+}
+
+function formatMoney(value: unknown, currency = "INR") {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "-";
+  return `${currency} ${amount.toFixed(2)}`;
 }
 
 function formatFileSize(value: unknown) {
@@ -188,6 +195,7 @@ export default function ModerationCaseDetailPage() {
   const terminal = TERMINAL_STATUSES.has(String(moderationCase?.status || ""));
   const appealTerminal = TERMINAL_APPEAL_STATUSES.has(String(appeal?.status || ""));
   const pendingReport = report?.status === "pending";
+  const financialAction = moderationCase?.financial_action || null;
 
   return (
     <AdminShell
@@ -278,6 +286,74 @@ export default function ModerationCaseDetailPage() {
                 </div>
               </dl>
             </article>
+
+            {financialAction && (
+              <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-xs font-medium uppercase text-zinc-500">
+                      Financial Action
+                    </p>
+                    <h2 className="mt-1 text-base font-semibold text-zinc-950">
+                      User food refund
+                    </h2>
+                    <p className="mt-1 text-sm text-zinc-600">
+                      {displayValue(financialAction.operation_source)}
+                    </p>
+                  </div>
+                  <span
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${governanceStatusBadge(
+                      financialAction.status
+                    )}`}
+                  >
+                    {formatGovernanceStatus(financialAction.status)}
+                  </span>
+                </div>
+
+                <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                    <dt className="text-xs font-medium uppercase text-zinc-500">
+                      Refund Amount
+                    </dt>
+                    <dd className="mt-1 font-semibold text-zinc-950">
+                      {formatMoney(financialAction.amount, financialAction.currency || "INR")}
+                    </dd>
+                  </div>
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                    <dt className="text-xs font-medium uppercase text-zinc-500">
+                      Refund ID
+                    </dt>
+                    <dd className="mt-1 break-all font-semibold text-zinc-950">
+                      {displayValue(financialAction.refund_id)}
+                    </dd>
+                  </div>
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                    <dt className="text-xs font-medium uppercase text-zinc-500">
+                      Provider Settlement
+                    </dt>
+                    <dd className="mt-1 font-semibold text-zinc-950">
+                      {financialAction.provider_settlement_id
+                        ? formatMoney(
+                            financialAction.provider_settlement_amount,
+                            financialAction.currency || "INR"
+                          )
+                        : "No settlement created"}
+                    </dd>
+                  </div>
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                    <dt className="text-xs font-medium uppercase text-zinc-500">
+                      Settlement Adjustment
+                    </dt>
+                    <dd className="mt-1 flex items-center gap-2 font-semibold text-zinc-950">
+                      <Receipt className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+                      {financialAction.provider_settlement_adjustment_required
+                        ? formatGovernanceStatus(financialAction.provider_settlement_status)
+                        : "Not required"}
+                    </dd>
+                  </div>
+                </dl>
+              </article>
+            )}
 
             <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

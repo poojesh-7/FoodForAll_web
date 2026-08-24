@@ -1809,6 +1809,23 @@ async function listProviderReports({ client = pool, status = "pending" } = {}) {
 }
 
 function buildModerationCaseDetail(row, events, providerResponses = [], appeals = []) {
+  const financialAction = row.operation_id
+    ? {
+        operation_id: row.operation_id,
+        operation_type: row.operation_type,
+        operation_source: row.operation_source,
+        status: row.financial_action_status,
+        amount: row.financial_action_amount,
+        currency: row.financial_action_currency,
+        refund_id: row.financial_action_refund_id,
+        provider_settlement_id: row.provider_settlement_id,
+        provider_settlement_amount: row.provider_settlement_amount,
+        provider_settlement_status: row.provider_settlement_status,
+        provider_settlement_adjustment_required:
+          row.provider_settlement_adjustment_required,
+      }
+    : null;
+
   return {
     id: row.case_id,
     case_type: row.case_type,
@@ -1829,6 +1846,7 @@ function buildModerationCaseDetail(row, events, providerResponses = [], appeals 
     provider_responses: providerResponses,
     appeal: appeals[0] || null,
     appeals,
+    financial_action: financialAction,
     events,
     report: row.report_id
       ? {
@@ -1881,6 +1899,17 @@ async function getModerationCaseDetail({ client = pool, caseId }) {
            pr.reason AS report_reason,
            pr.description AS report_description,
            pr.status AS report_status,
+           financial_action.operation_id,
+           financial_action.operation_type,
+           financial_action.operation_source,
+           financial_action.status AS financial_action_status,
+           financial_action.amount AS financial_action_amount,
+           financial_action.currency AS financial_action_currency,
+           financial_action.refund_id AS financial_action_refund_id,
+           financial_action.provider_settlement_id,
+           financial_action.provider_settlement_amount,
+           financial_action.provider_settlement_status,
+           financial_action.provider_settlement_adjustment_required,
            pr.created_at AS report_created_at,
            pr.resolved_at,
            pr.reviewed_by_admin,
@@ -1908,6 +1937,28 @@ async function getModerationCaseDetail({ client = pool, caseId }) {
     LEFT JOIN ngos reporter_ngo ON reporter_ngo.user_id = reporter.id
     LEFT JOIN reservations r ON r.id = pr.reservation_id
     LEFT JOIN food_listings f ON f.id = r.listing_id
+    LEFT JOIN LATERAL (
+      SELECT fo.id AS operation_id,
+             fo.operation_type,
+             fo.operation_source,
+             fo.status,
+             fo.amount,
+             fo.currency,
+             fo.metadata->>'refund_id' AS refund_id,
+             fo.metadata->>'provider_settlement_id' AS provider_settlement_id,
+             (fo.metadata->>'provider_settlement_amount')::numeric
+               AS provider_settlement_amount,
+             fo.metadata->>'provider_settlement_status'
+               AS provider_settlement_status,
+             COALESCE(
+               (fo.metadata->>'provider_settlement_adjustment_required')::boolean,
+               false
+             ) AS provider_settlement_adjustment_required
+      FROM financial_operations fo
+      WHERE fo.metadata->>'complaint_report_id' = pr.id::text
+      ORDER BY fo.created_at DESC, fo.id DESC
+      LIMIT 1
+    ) financial_action ON true
     LEFT JOIN LATERAL (
       SELECT json_agg(
         json_build_object(

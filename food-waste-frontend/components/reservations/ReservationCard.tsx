@@ -34,6 +34,12 @@ import type {
   ReservationDetails,
   ReservationHistoryRow,
 } from "@shared/contracts/api-contracts";
+import {
+  formatCancellationRemaining,
+  getCancellationGuidance,
+  getCancellationRemainingMs,
+  isPickupCodeVisible,
+} from "@/lib/reservationCardRules";
 import { useEffect, useState, type ReactNode } from "react";
 
 type ReservationLike =
@@ -159,7 +165,7 @@ function getStatusTone(status: OperationalStatus) {
 function getTaskProgress(reservation: ReservationLike, status: OperationalStatus) {
   if (status === "completed") return "Pickup complete";
   if (status === "payment_pending") return "Finish payment to keep this reservation";
-  if (status === "self_pickup") return "Bring pickup code to the provider";
+  if (status === "self_pickup") return "Give the code after receiving the food";
   if (status === "in_progress") return "Volunteer pickup is underway";
   if (status === "picked_from_provider") return "Volunteer is delivering to NGO";
   if (status === "pending") return "Waiting for volunteer assignment";
@@ -235,6 +241,25 @@ function usePaymentCountdown(reservation: ReservationLike, enabled: boolean) {
   return enabled ? remainingMs ?? getPaymentRemainingMs(reservation) : null;
 }
 
+function useCancellationCountdown(reservation: ReservationLike, enabled: boolean) {
+  const [remainingMs, setRemainingMs] = useState(() =>
+    enabled ? getCancellationRemainingMs(reservation) : null
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    const updateRemaining = () =>
+      setRemainingMs(getCancellationRemainingMs(reservation));
+    updateRemaining();
+    const timer = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled, reservation]);
+
+  return enabled
+    ? formatCancellationRemaining(remainingMs ?? getCancellationRemainingMs(reservation))
+    : null;
+}
+
 function PaymentPendingNotice({ remainingMs }: { remainingMs: number | null }) {
   const expired = remainingMs !== null && remainingMs <= 0;
 
@@ -300,6 +325,14 @@ export default function ReservationCard({
   const showDeposit = depositAmount > 0;
   const restaurantName = getRestaurantDisplayName(reservation);
   const distance = formatDistanceKm(reservation);
+  const pickupCodeVisible = !providerView && isPickupCodeVisible(reservation);
+  const cancellationGuidance = !providerView
+    ? getCancellationGuidance(reservation)
+    : null;
+  const cancellationRemaining = useCancellationCountdown(
+    reservation,
+    !providerView && cancellationGuidance !== null
+  );
 
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -347,12 +380,12 @@ export default function ReservationCard({
             detail={getTaskProgress(reservation, status)}
             tone={getStatusTone(status)}
           />
-          {!providerView && (
+          {pickupCodeVisible && (
             <SignalTile
               icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
               label="Pickup Code"
               value={displayValue(reservation.pickup_code)}
-              detail="Share this at pickup."
+              detail="Give this code only after receiving the food to avoid disputes."
               tone={reservation.pickup_code ? "amber" : "zinc"}
             />
           )}
@@ -381,6 +414,21 @@ export default function ReservationCard({
             value={formatFoodDate(reservation.pickup_end_time)}
             emphasis={pickupUrgent}
           />
+          {cancellationGuidance && (
+            <DetailItem
+              icon={<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Cancellation Window"
+              value={
+                <span>
+                  {cancellationRemaining}
+                  <span className="mt-1 block text-xs font-medium text-zinc-600">
+                    {cancellationGuidance}
+                  </span>
+                </span>
+              }
+              emphasis
+            />
+          )}
           {showDeposit && (
             <DetailItem
               icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />}

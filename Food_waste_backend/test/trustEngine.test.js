@@ -22,6 +22,7 @@ const {
 const {
   buildListingTrustEvents,
   buildPaymentTrustEvents,
+  buildProviderReportTrustEvents,
   buildReservationTrustEvents,
   emitBuiltEvents,
   findPaymentInitializationFailureTrustEvents,
@@ -442,6 +443,39 @@ test("validated provider reports remain significant and repeated reports trigger
     repeatedReports.projected_cooldown_until.toISOString(),
     "2026-01-02T02:00:00.000Z"
   );
+});
+
+test("provider fault reports use a lighter penalty and recover after two fulfillments", () => {
+  const events = buildProviderReportTrustEvents({
+    id: "report-provider-fault",
+    provider_id: PROVIDER_ID,
+    reservation_id: RESERVATION_ID,
+    reason: "food_not_received",
+    status: "validated",
+    food_amount: 100,
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, "provider_fault_report_validated");
+  assert.equal(
+    events[0].eventPayload.score_delta,
+    TRUST_EVENT_RULES.provider_fault_report_validated.score_delta
+  );
+
+  const projection = buildTrustProjectionFromEvents([
+    events[0],
+    createProviderFulfillmentEvent(2, "2026-01-02T00:00:00.000Z", {
+      provider_id: PROVIDER_ID,
+      food_amount: 100,
+    }),
+    createProviderFulfillmentEvent(3, "2026-01-03T00:00:00.000Z", {
+      provider_id: PROVIDER_ID,
+      food_amount: 100,
+    }),
+  ], "provider", PROVIDER_ID);
+
+  assert.equal(projection.penalty_level, 0);
+  assert.equal(projection.projected_cooldown_until, null);
 });
 
 test("recovery events do not refresh active cooldowns while restriction remains high", () => {

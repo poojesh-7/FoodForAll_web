@@ -34,6 +34,7 @@ const EVENT_LABELS = {
   admin_trust_review_flag: "Trust review flag added",
   verified_good_behavior: "Verified good behavior",
   provider_report_validated: "Validated provider report",
+  provider_fault_report_validated: "Validated provider fault report",
   provider_successful_fulfillment: "Provider fulfillment completed",
   provider_listing_expired: "Listing expiry observed",
   user_pickup_completed: "Pickup completed",

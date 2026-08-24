@@ -31,6 +31,7 @@ const TRUST_EVENT_RULES = {
 
   provider_listing_expired: { analytics_only: true, trust_impact: "neutral" },
   provider_report_validated: { score_delta: -15, failure_delta: 1 },
+  provider_fault_report_validated: { score_delta: -5, failure_delta: 1 },
   provider_successful_fulfillment: { score_delta: 3, fulfillment_delta: 1 },
   verified_good_behavior: { score_delta: 3, completion_delta: 1 },
 
@@ -456,15 +457,19 @@ function buildPaymentTrustEvents(row) {
 function buildProviderReportTrustEvents(row) {
   if (normalizeStatus(row.status) !== "validated") return [];
 
+  const eventType = normalizeStatus(row.reason) === "food_not_received"
+    ? "provider_fault_report_validated"
+    : "provider_report_validated";
+
   return [
     makeEvent({
-      eventKey: `provider_report:${row.id}:provider_report_validated:${row.provider_id}`,
+      eventKey: `provider_report:${row.id}:${eventType}:${row.provider_id}`,
       subjectType: "provider",
       subjectId: row.provider_id,
       sourceType: "provider_report",
       sourceId: row.id,
       reservationId: row.reservation_id || null,
-      eventType: "provider_report_validated",
+      eventType,
       row,
       extra: {
         sourceLineage: "provider_report.validated",

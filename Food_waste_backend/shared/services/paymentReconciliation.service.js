@@ -1157,7 +1157,11 @@ async function activatePendingReservation(client, reservation) {
         reservation.id,
         generatePickupCode(),
         generatePickupCode(),
-        JSON.stringify({ activated_at: new Date().toISOString() }),
+        JSON.stringify({
+          activated_at: new Date().toISOString(),
+          payment_initializing: false,
+          payment_retryable: false,
+        }),
       ]
     );
 
@@ -1284,7 +1288,12 @@ async function activatePendingReservation(client, reservation) {
       reservation.id,
       generatePickupCode(),
       generatePickupCode(),
-      JSON.stringify({ stock_reserved: true, activated_at: new Date().toISOString() }),
+      JSON.stringify({
+        stock_reserved: true,
+        activated_at: new Date().toISOString(),
+        payment_initializing: false,
+        payment_retryable: false,
+      }),
     ]
   );
 
@@ -2449,7 +2458,9 @@ async function restoreAttemptReservationsWithoutPaymentRows(attempt, reason) {
                 jsonb_build_object(
                   'payment_terminal_at', NOW(),
                   'payment_terminal_source', $2::text,
-                  'recovered_order_id', $3::text
+                  'recovered_order_id', $3::text,
+                  'payment_initializing', false,
+                  'payment_retryable', true
                 )
           WHERE id=$1
           AND status='payment_pending'
@@ -2672,18 +2683,17 @@ async function recoverPaymentOrderAttempt(attempt) {
   }
 
   if (!attempt.payment_session_id) {
-    if (attemptIsOlderThan(attempt, 10)) {
-      return restoreAttemptReservationsWithoutPaymentRows(
-        attempt,
-        "payment_order_creation_crash"
-      );
+    if (!attemptIsOlderThan(attempt, 10)) {
+      return {
+        orderId: attempt.order_id,
+        status: "creating",
+        recovered: false,
+      };
     }
 
-    return {
+    logger.info("Recovering stale payment order without local session", {
       orderId: attempt.order_id,
-      status: "creating",
-      recovered: false,
-    };
+    });
   }
 
   let gateway;
@@ -2780,6 +2790,125 @@ async function recoverPaymentOrderAttempts(options = {}) {
   }
 
   return results;
+}
+
+async function claimStalePaymentInitializations(options = {}) {
+  const limit = options.limit || PAYMENT_RECONCILIATION_LIMIT;
+  const staleMinutes = Number(
+    options.staleMinutes || Math.max(2, Math.min(10, operationalPolicy.payment.holdTimeoutMinutes))
+  );
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const reservationFilter =
+      Array.isArray(options.reservationIds) && options.reservationIds.length
+        ? "AND r.id = ANY($3::uuid[])"
+        : "";
+    const parameters = reservationFilter
+      ? [limit, staleMinutes, options.reservationIds]
+      : [limit, staleMinutes];
+    const result = await client.query(
+      `
+      SELECT r.id AS reservation_id, r.listing_id
+      FROM reservations r
+      WHERE r.status='payment_pending'
+      AND r.payment_status='pending'
+      AND (r.payment_context->>'payment_initializing')::boolean IS TRUE
+      AND COALESCE(
+        NULLIF(r.payment_context->>'payment_initializing_at', '')::timestamp,
+        r.reserved_at
+      ) <= NOW() - ($2::int * INTERVAL '1 minute')
+      AND NOT EXISTS (
+        SELECT 1 FROM payments p WHERE p.reservation_id=r.id
+      )
+      AND (
+        r.payment_context->>'payment_recovery_claimed_at' IS NULL
+        OR NULLIF(r.payment_context->>'payment_recovery_claimed_at', '')::timestamp
+          <= NOW() - ($2::int * INTERVAL '1 minute')
+      )
+      ${reservationFilter}
+      ORDER BY r.reserved_at ASC, r.id ASC
+      LIMIT $1
+      FOR UPDATE OF r SKIP LOCKED
+      `,
+      parameters
+    );
+
+    for (const row of result.rows) {
+      await client.query(
+        `
+        UPDATE reservations
+        SET payment_context=COALESCE(payment_context, '{}'::jsonb) ||
+          jsonb_build_object('payment_recovery_claimed_at', NOW())
+        WHERE id=$1
+        `,
+        [row.reservation_id]
+      );
+    }
+
+    await client.query("COMMIT");
+    return result.rows;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function recoverStalePaymentInitialization(row, source) {
+  const attemptResult = await pool.query(
+    `
+    SELECT *
+    FROM payment_order_attempts
+    WHERE reservation_ids @> ARRAY[$1]::uuid[]
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 1
+    `,
+    [row.reservation_id]
+  );
+
+  if (attemptResult.rows.length) {
+    return recoverPaymentOrderAttempt(attemptResult.rows[0]);
+  }
+
+  const sideEffects = createSideEffects();
+  await withTransaction(
+    pool,
+    async (client) => {
+      const release = await releasePendingPaymentReservation(
+        client,
+        row.reservation_id,
+        {
+          allowMissingPayment: true,
+          paymentStatus: "failed",
+          reservationStatus: "payment_failed",
+          reason: "payment_initialization_crash",
+          terminalReason: "payment_initialization_crash",
+          terminalSource: source,
+          paymentContext: {
+            payment_initializing: false,
+            payment_retryable: true,
+          },
+        }
+      );
+
+      if (release.released) {
+        sideEffects.changedReservationIds.add(row.reservation_id);
+        sideEffects.changedListingIds.add(row.listing_id);
+      }
+    },
+    {
+      name: "stale_payment_initialization",
+      maxAttempts: 4,
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 20000,
+    }
+  );
+
+  await publishSideEffects(sideEffects, "payment_recovery");
+  return { reservationId: row.reservation_id, recovered: true };
 }
 
 async function fetchCashfreeRefundState(orderId, refundId) {
@@ -3137,6 +3266,26 @@ async function reconcileStalePaymentSessions(options = {}) {
         err,
         orderId,
         reservationIds,
+      });
+    }
+  }
+
+  const staleInitializations = await claimStalePaymentInitializations({
+    reservationIds,
+    limit,
+  });
+  for (const row of staleInitializations) {
+    try {
+      results.push(
+        await recoverStalePaymentInitialization(
+          row,
+          "stale_initialization_recovery"
+        )
+      );
+    } catch (err) {
+      logger.error("Stale payment initialization recovery failed", {
+        err,
+        reservationId: row.reservation_id,
       });
     }
   }

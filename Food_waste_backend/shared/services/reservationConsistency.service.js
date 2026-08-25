@@ -291,6 +291,12 @@ async function releasePendingPaymentReservation(
     )
   );
 
+  if (!payments.length && !options.allowMissingPayment) {
+    throw new Error(
+      `Payment state machine violated: no payment exists for reservation ${reservation.id}`
+    );
+  }
+
   if (terminalPayment) {
     logger.payment("Skipped pending payment release because payment is terminal", {
       reservationId,
@@ -315,7 +321,8 @@ async function releasePendingPaymentReservation(
   // Both payment and reservation MUST transition together.
   // If either update fails to match its WHERE clause, the transaction fails.
 
-  const paymentUpdateResult = await client.query(
+  const paymentUpdateResult = payments.length
+    ? await client.query(
     `
     UPDATE payments
     SET status=$2,
@@ -333,7 +340,8 @@ async function releasePendingPaymentReservation(
       options.gatewayStatus || paymentStatus,
       options.reconciliationStatus || "terminal",
     ]
-  );
+      )
+    : { rows: [{ id: null, status: paymentStatus }] };
 
   // CRITICAL: Validate payment state transitioned
   if (!paymentUpdateResult.rows.length) {

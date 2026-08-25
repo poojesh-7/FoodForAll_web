@@ -1,5 +1,6 @@
 const cashfree = require("../config/cashfree");
 const paymentQueue = require("../../queues/payment.queue");
+const pool = require("../config/db");
 const crypto = require("crypto");
 const logger = require("../utils/logger");
 const { PaymentError } = require("../utils/errors");
@@ -95,7 +96,7 @@ async function createPayment({
 
   try {
     await recordPaymentOrderAttempt({
-      client,
+      client: pool,
       orderId,
       user,
       reservations: reservationsWithFinancialTerms,
@@ -125,7 +126,7 @@ async function createPayment({
 
     const paymentSessionId = response.data.payment_session_id;
     await markPaymentOrderAttemptGatewayCreated({
-      client,
+      client: pool,
       orderId,
       paymentSessionId,
       gatewayResponse: response.data,
@@ -273,7 +274,7 @@ async function createPayment({
       reliability_deposit_amount: roundMoney(reliabilityDepositAmount),
     };
   } catch (err) {
-    await markPaymentOrderAttemptFailed({ client, orderId, err }).catch((markErr) => {
+    await markPaymentOrderAttemptFailed({ client: pool, orderId, err }).catch((markErr) => {
       logger.warn("Payment order attempt failure mark failed", {
         err: markErr,
         orderId,

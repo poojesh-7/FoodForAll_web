@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const crypto = require("node:crypto");
 const pool = require("../shared/config/db");
 const logger = require("../shared/utils/logger");
 
@@ -15,6 +16,7 @@ const {
 } = require("../shared/services/paymentReconciliation.service");
 
 const { withTransaction } = require("../shared/utils/transaction");
+const { createFinancialOwnershipSnapshot } = require("../shared/services/financialOwnership.service");
 
 /**
  * Regression tests for the payment/reservation state machine bug:
@@ -30,15 +32,25 @@ const { withTransaction } = require("../shared/utils/transaction");
  */
 
 // Helper: Create a test reservation with payment_pending status
-async function createTestReservation(client) {
-  const userId = `test-user-${Date.now()}-${Math.random()}`;
-  const providerId = `test-provider-${Date.now()}-${Math.random()}`;
-  const listingId = `test-listing-${Date.now()}-${Math.random()}`;
+async function createTestReservation(client, options = {}) {
+  const userId = crypto.randomUUID();
+  const providerId = crypto.randomUUID();
+  const listingId = crypto.randomUUID();
+
+  await client.query(
+    `INSERT INTO users (id, name, email, role)
+     VALUES ($1, 'Test User', $2, 'user'), ($3, 'Test Provider', $4, 'provider')`,
+    [userId, `${userId}@example.test`, providerId, `${providerId}@example.test`]
+  );
 
   // Create listing
   await client.query(
-    `INSERT INTO food_listings (id, provider_id, title, quantity_available, price, status)
-     VALUES ($1, $2, 'Test Food', 10, 100, 'active')`,
+    `INSERT INTO food_listings (
+      id, provider_id, title, quantity, remaining_quantity, price,
+      pickup_start_time, pickup_end_time, latitude, longitude, is_free, status
+    )
+    VALUES ($1, $2, 'Test Food', 10, 9, 100,
+             NOW(), NOW() + INTERVAL '1 hour', 12.9716, 77.5946, false, 'active')`,
     [listingId, providerId]
   );
 
@@ -50,21 +62,36 @@ async function createTestReservation(client) {
     ) VALUES ($1, $2, $3, 'payment_pending', 'pending', 1, '{"stock_reserved": true}'::jsonb, 
               NOW(), NOW() + INTERVAL '10 minutes')
      RETURNING *`,
-    [`test-res-${Date.now()}-${Math.random()}`, listingId, userId]
+    [crypto.randomUUID(), listingId, userId]
   );
 
   const reservation = resResult.rows[0];
 
   // Create payment
   const payResult = await client.query(
-    `INSERT INTO payments (id, order_id, reservation_id, status, gateway_status, 
-                           amount, currency, created_at)
-     VALUES ($1, $2, $3, 'pending', 'PENDING', 100, 'INR', NOW())
+    `INSERT INTO payments (id, order_id, reservation_id, payment_session_id,
+                 status, gateway_status, amount, currency, created_at)
+     VALUES ($1, $2, $3, $4, 'pending', 'PENDING', 100, 'INR', NOW())
      RETURNING *`,
-    [`test-payment-${Date.now()}-${Math.random()}`, 
-     `order-${Date.now()}-${Math.random()}`,
-     reservation.id]
+    [crypto.randomUUID(),
+     `order-${crypto.randomUUID()}`,
+     reservation.id,
+     `session-${crypto.randomUUID()}`]
   );
+
+  if (options.createOwnership !== false) {
+    await createFinancialOwnershipSnapshot({
+      client,
+      user: { id: userId, role: "user" },
+      payer: { id: userId, role: "user" },
+      reservation,
+      payment: payResult.rows[0],
+      foodAmount: 100,
+      depositAmount: 0,
+      commissionAmount: 0,
+      currency: "INR",
+    });
+  }
 
   return {
     reservation,
@@ -288,7 +315,7 @@ test("Scenario 5: Inventory and listing quantity are restored when payment expir
 
     // Get initial quantity
     const initialListing = await client.query(
-      `SELECT quantity_available FROM food_listings WHERE id = $1`,
+      `SELECT remaining_quantity FROM food_listings WHERE id = $1`,
       [listingId]
     );
 
@@ -307,12 +334,12 @@ test("Scenario 5: Inventory and listing quantity are restored when payment expir
 
     // Verify quantity was restored
     const finalListing = await client.query(
-      `SELECT quantity_available FROM food_listings WHERE id = $1`,
+      `SELECT remaining_quantity FROM food_listings WHERE id = $1`,
       [listingId]
     );
 
     assert(
-      finalListing.rows[0].quantity_available > initialListing.rows[0].quantity_available,
+      finalListing.rows[0].remaining_quantity > initialListing.rows[0].remaining_quantity,
       "Listing quantity should be restored"
     );
 
@@ -334,7 +361,7 @@ test("Scenario 6: Resume Payment disappears when payment expires", async () => {
     const { reservation, payment, listingId } = await createTestReservation(client);
 
     // Before expiry, payment_status is 'pending' → user sees Resume Payment
-    let res = await client.query(`SELECT payment_status FROM reservations WHERE id = $1`, [reservation.id]);
+    let res = await client.query(`SELECT status, payment_status FROM reservations WHERE id = $1`, [reservation.id]);
     assert.equal(res.rows[0].payment_status, "pending", "Initially pending, should show Resume Payment");
 
     // After expiry
@@ -347,7 +374,7 @@ test("Scenario 6: Resume Payment disappears when payment expires", async () => {
     });
 
     // After expiry, status is 'expired_payment' → Resume Payment should NOT appear
-    res = await client.query(`SELECT payment_status FROM reservations WHERE id = $1`, [reservation.id]);
+    res = await client.query(`SELECT status, payment_status FROM reservations WHERE id = $1`, [reservation.id]);
     assert.equal(res.rows[0].payment_status, "expired", "After expiry, should be 'expired'");
     assert.equal(res.rows[0].status, "expired_payment", "Reservation should be expired_payment");
 
@@ -407,5 +434,52 @@ test("Scenario 8: Manual Cancel Hold is not required for payment expiry", async 
     assert.equal(res.rows[0].payment_status, "expired", "Should be marked expired");
 
     // No manual cancel needed
+  });
+});
+
+test("Scenario 11: Stale payment initialization without a payment row releases stock once", async () => {
+  const testData = await withTransaction(pool, async (client) => {
+    const { reservation, payment, listingId } = await createTestReservation(client, {
+      createOwnership: false,
+    });
+    await client.query(`DELETE FROM payments WHERE id=$1`, [payment.id]);
+    await client.query(
+      `UPDATE reservations
+       SET payment_expires_at=NULL,
+           payment_context=jsonb_build_object(
+             'source','user_reservation',
+             'stock_reserved',true,
+             'payment_initializing',true,
+             'payment_initializing_at',NOW() - INTERVAL '15 minutes'
+           )
+       WHERE id=$1`,
+      [reservation.id]
+    );
+    await client.query(`UPDATE food_listings SET status='expired' WHERE id=$1`, [listingId]);
+    return { reservationId: reservation.id, listingId };
+  });
+
+  await reconcileStalePaymentSessions({
+    reservationIds: [testData.reservationId],
+    limit: 10,
+  });
+  await reconcileStalePaymentSessions({
+    reservationIds: [testData.reservationId],
+    limit: 10,
+  });
+
+  await withTransaction(pool, async (client) => {
+    const reservationResult = await client.query(
+      `SELECT status, payment_status, payment_context FROM reservations WHERE id=$1`,
+      [testData.reservationId]
+    );
+    const listingResult = await client.query(
+      `SELECT remaining_quantity FROM food_listings WHERE id=$1`,
+      [testData.listingId]
+    );
+    assert.equal(reservationResult.rows[0].status, "payment_failed");
+    assert.equal(reservationResult.rows[0].payment_status, "failed");
+    assert.equal(reservationResult.rows[0].payment_context.payment_initializing, false);
+    assert.equal(listingResult.rows[0].remaining_quantity, 10);
   });
 });

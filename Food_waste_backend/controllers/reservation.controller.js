@@ -182,7 +182,11 @@ async function cancelPaymentInitializationHold(reservationId, reason) {
         SET status='payment_failed',
             payment_status='failed',
             payment_context=COALESCE(payment_context, '{}'::jsonb) ||
-              jsonb_build_object('payment_initialization_failed_at', NOW())
+              jsonb_build_object(
+                'payment_initialization_failed_at', NOW(),
+                'payment_initializing', false,
+                'payment_retryable', true
+              )
         WHERE id=$1
         AND status='payment_pending'
         AND payment_status='pending'
@@ -314,6 +318,7 @@ exports.createReservation = async (req, res) => {
               source: "user_reservation",
               stock_reserved: true,
               payment_initializing: true,
+              payment_initializing_at: new Date().toISOString(),
             }),
           ]
         );
@@ -398,7 +403,11 @@ exports.createReservation = async (req, res) => {
             `
             UPDATE reservations
             SET payment_context=COALESCE(payment_context, '{}'::jsonb) ||
-              jsonb_build_object('payment_initializing', false, 'payment_initialized_at', NOW())
+              jsonb_build_object(
+                'payment_initializing', false,
+                'payment_initialized_at', NOW(),
+                'payment_retryable', true
+              )
             WHERE id=$1
             AND status='payment_pending'
             AND payment_status='pending'

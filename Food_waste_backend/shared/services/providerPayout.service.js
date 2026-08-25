@@ -961,18 +961,27 @@ function serializeSettlement(row) {
 }
 
 function applyRefundCarryForward(records) {
-  let remainingRefund = records
-    .filter((record) => Number(record.refund_amount || 0) > 0)
-    .reduce((sum, record) => sum + Number(record.refund_amount || record.amount || 0), 0);
+  let remainingRefund = 0;
+  const orderedRecords = [...records].sort(
+    (left, right) => new Date(left.created_at || 0) - new Date(right.created_at || 0),
+  );
 
-  const outstanding = records
-    .filter((record) => PENDING_SETTLEMENT_STATUSES.includes(record.status))
-    .sort((left, right) => new Date(left.created_at || 0) - new Date(right.created_at || 0));
+  for (const record of orderedRecords) {
+    const refundAmount = Number(record.refund_amount || 0);
+    if (refundAmount > 0) {
+      remainingRefund += refundAmount;
+      continue;
+    }
 
-  for (const record of outstanding) {
-    const deduction = Math.min(remainingRefund, Number(record.amount || 0));
-    record.refund_deduction_amount = Math.round(deduction * 100) / 100;
-    remainingRefund = Math.max(0, remainingRefund - deduction);
+    if (
+      remainingRefund > 0 &&
+      (PENDING_SETTLEMENT_STATUSES.includes(record.status) ||
+        PAID_SETTLEMENT_STATUSES.includes(record.status))
+    ) {
+      const deduction = Math.min(remainingRefund, Number(record.amount || 0));
+      record.refund_deduction_amount = Math.round(deduction * 100) / 100;
+      remainingRefund = Math.max(0, remainingRefund - deduction);
+    }
   }
 
   return records.map((record) => ({
@@ -1017,6 +1026,7 @@ async function getProviderSettlementSummary({
         SELECT
           ps.amount,
           ps.status,
+          ps.created_at,
           LEAST(ps.amount, COALESCE((
             SELECT SUM(fle.amount)
             FROM financial_ledger_entries fle
@@ -1032,6 +1042,14 @@ async function getProviderSettlementSummary({
           COALESCE(SUM(amount) FILTER (
             WHERE status = ANY($2::text[])
           ), 0)::numeric AS outstanding_total
+          ,COALESCE(SUM(amount) FILTER (
+            WHERE refund_amount = 0
+              AND created_at > (
+                SELECT MIN(source.created_at)
+                FROM settlement_projection source
+                WHERE source.refund_amount > 0
+              )
+          ), 0)::numeric AS coverage_total
         FROM settlement_projection
       )
       SELECT
@@ -1045,13 +1063,21 @@ async function getProviderSettlementSummary({
             AND refund_amount = 0
         ), 0)::numeric AS paid_earnings,
         totals.refund_total AS user_refunds,
-        LEAST(totals.refund_total, totals.outstanding_total)::numeric AS refunded_deducted,
-        GREATEST(totals.refund_total - totals.outstanding_total, 0)::numeric AS pending_refunds,
+        LEAST(
+          totals.refund_total,
+          totals.outstanding_total + totals.coverage_total
+        )::numeric AS refunded_deducted,
+        GREATEST(
+          totals.refund_total
+            - totals.outstanding_total
+            - totals.coverage_total,
+          0
+        )::numeric AS pending_refunds,
         COUNT(*) FILTER (
           WHERE refund_amount > 0
         )::int AS user_refund_count
       FROM settlement_projection, totals
-      GROUP BY totals.refund_total, totals.outstanding_total
+      GROUP BY totals.refund_total, totals.outstanding_total, totals.coverage_total
       `,
       [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
     ),
@@ -1099,7 +1125,8 @@ async function getProviderSettlementSummary({
     const refunded = Number(row.refunded || 0);
     let status = "Pending";
     if (total === 0 && refunded > 0) status = "Refunded";
-    else if (paid + refunded >= total && total > 0) status = refunded > 0 ? "Paid - Refund Pending" : "Paid";
+    else if (pending === 0 && paid >= total - refunded && total > 0) status = "Paid";
+    else if (paid + refunded >= total && total > 0) status = "Paid - Refund Pending";
     else if (paid === 0) status = "Pending";
     else status = "Partially Paid";
 

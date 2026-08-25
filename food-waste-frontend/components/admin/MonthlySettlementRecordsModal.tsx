@@ -38,6 +38,13 @@ function effectiveSettlementAmount(record: AdminProviderSettlementRow) {
   );
 }
 
+function settlementAmountLabel(record: AdminProviderSettlementRow) {
+  const amount = Number(record.amount || 0);
+  const deduction = Number(record.refund_deduction_amount || 0);
+  if (deduction <= 0) return formatCurrency(amount);
+  return `${formatCurrency(amount)} - ${formatCurrency(deduction)} = ${formatCurrency(effectiveSettlementAmount(record))}`;
+}
+
 export function MonthlySettlementRecordsModal({
   providerId,
   month,
@@ -152,7 +159,7 @@ export function MonthlySettlementRecordsModal({
                         )}
                       </td>
                       <td className="px-4 py-3 font-medium text-zinc-950">
-                        {formatCurrency(effectiveSettlementAmount(record))}
+                        {settlementAmountLabel(record)}
                         {record.refund_note ? (
                           <p className="mt-1 max-w-64 text-xs font-normal text-amber-700">
                             {record.refund_note}

@@ -42,6 +42,20 @@ function formatCurrency(value: unknown) {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
+function effectiveSettlementAmount(record: { amount?: number | string; refund_deduction_amount?: number | string }) {
+  return Math.max(
+    0,
+    Number(record.amount || 0) - Number(record.refund_deduction_amount || 0),
+  );
+}
+
+function settlementAmountLabel(record: { amount?: number | string; refund_deduction_amount?: number | string }) {
+  const amount = Number(record.amount || 0);
+  const deduction = Number(record.refund_deduction_amount || 0);
+  if (deduction <= 0) return formatCurrency(amount);
+  return `${formatCurrency(amount)} - ${formatCurrency(deduction)} = ${formatCurrency(effectiveSettlementAmount(record))}`;
+}
+
 function displayAccount(account: ProviderPayoutAccount | null) {
   if (!account) return "No active payout account";
   if (account.account_type === "UPI") return account.upi_id || "UPI";
@@ -893,8 +907,12 @@ export default function DashboardPage() {
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(
-                          (Number(financialSummary?.earnings.pending || 0) || 0) +
-                            (Number(financialSummary?.earnings.paid || 0) || 0)
+                          Math.max(
+                            0,
+                            (Number(financialSummary?.earnings.pending || 0) || 0) +
+                              (Number(financialSummary?.earnings.paid || 0) || 0) -
+                              (Number(financialSummary?.refunds?.total || 0) || 0),
+                          )
                         )}
                       </p>
                       <p className="mt-1 text-xs text-zinc-800">
@@ -1017,7 +1035,7 @@ export default function DashboardPage() {
                                   <tr key={String(r.id)}>
                                     <td className="px-4 py-3 text-zinc-700">{r.paid_at ? formatDateTime(r.paid_at) : formatDateTime(r.updated_at || r.created_at || '')}</td>
                                     <td className="px-4 py-3 font-medium text-zinc-950">
-                                      {formatCurrency(r.amount)}
+                                      {settlementAmountLabel(r)}
                                       {r.refund_note ? (
                                         <p className="mt-1 max-w-56 text-xs font-normal text-amber-700">
                                           {r.refund_note}

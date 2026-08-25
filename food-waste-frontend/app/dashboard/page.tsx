@@ -910,8 +910,7 @@ export default function DashboardPage() {
                           Math.max(
                             0,
                             (Number(financialSummary?.earnings.pending || 0) || 0) +
-                              (Number(financialSummary?.earnings.paid || 0) || 0) -
-                              (Number(financialSummary?.refunds?.total || 0) || 0),
+                              (Number(financialSummary?.earnings.paid || 0) || 0),
                           )
                         )}
                       </p>

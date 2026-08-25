@@ -1041,9 +1041,11 @@ async function getProviderSettlementSummary({
           COALESCE(SUM(refund_amount), 0)::numeric AS refund_total,
           COALESCE(SUM(amount) FILTER (
             WHERE status = ANY($2::text[])
+              AND refund_amount = 0
           ), 0)::numeric AS outstanding_total
           ,COALESCE(SUM(amount) FILTER (
-            WHERE refund_amount = 0
+            WHERE status = ANY($3::text[])
+              AND refund_amount = 0
               AND created_at > (
                 SELECT MIN(source.created_at)
                 FROM settlement_projection source
@@ -1054,8 +1056,10 @@ async function getProviderSettlementSummary({
       )
       SELECT
         GREATEST(
-          totals.outstanding_total
-            - LEAST(totals.refund_total, totals.outstanding_total),
+          COALESCE(SUM(amount) FILTER (
+            WHERE status = ANY($2::text[])
+              AND refund_amount = 0
+          ), 0),
           0
         )::numeric AS pending_earnings,
         COALESCE(SUM(amount) FILTER (
@@ -1079,7 +1083,11 @@ async function getProviderSettlementSummary({
       FROM settlement_projection, totals
       GROUP BY totals.refund_total, totals.outstanding_total, totals.coverage_total
       `,
-      [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES],
+      [
+        providerId,
+        PENDING_SETTLEMENT_STATUSES,
+        PAID_SETTLEMENT_STATUSES,
+      ],
     ),
     client.query(
       `
@@ -1087,13 +1095,13 @@ async function getProviderSettlementSummary({
         SELECT
           ps.*,
           date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) AS month_start,
-          EXISTS (
-            SELECT 1
+          LEAST(ps.amount, COALESCE((
+            SELECT SUM(fle.amount)
             FROM financial_ledger_entries fle
             WHERE fle.reservation_id = ps.reservation_id
               AND fle.payment_session_id = ps.payment_session_id
               AND fle.event_type = 'refund_issued'
-          ) AS is_refunded
+          ), 0))::numeric AS refund_amount
         FROM provider_settlements ps
         WHERE ps.provider_id = $1
           AND date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) >= date_trunc('month', NOW()) - INTERVAL '36 months'
@@ -1103,17 +1111,22 @@ async function getProviderSettlementSummary({
         to_char(month_start, 'Mon YYYY') AS month_label,
         EXTRACT(YEAR FROM month_start)::int AS year,
         EXTRACT(MONTH FROM month_start)::int AS month,
-        COALESCE(SUM(amount), 0)::numeric AS earnings,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[])), 0)::numeric AS paid,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[])), 0)::numeric AS pending,
-        COALESCE(SUM(amount) FILTER (WHERE is_refunded), 0)::numeric AS refunded,
+        COALESCE(SUM(amount) FILTER (WHERE refund_amount = 0), 0)::numeric AS earnings,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[]) AND refund_amount = 0), 0)::numeric AS paid,
+        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[]) AND refund_amount = 0), 0)::numeric AS pending,
+        COALESCE(SUM(refund_amount), 0)::numeric AS refunded,
         COUNT(*)::int AS count
       FROM monthly_source
       GROUP BY month_start
       ORDER BY month_start DESC
       LIMIT $4
       `,
-      [providerId, OUTSTANDING_SETTLEMENT_STATUSES, PAID_SETTLEMENT_STATUSES, normalizeLimit(limit, 36)],
+      [
+        providerId,
+        PAID_SETTLEMENT_STATUSES,
+        PENDING_SETTLEMENT_STATUSES,
+        normalizeLimit(limit, 36),
+      ],
     ),
   ]);
 

@@ -54,18 +54,38 @@ function createMockClient() {
           if (['paid','settled'].includes(s.status)) paid += Number(s.amount || 0);
           if (['pending','processing','allocated','batched','failed','cancelled'].includes(s.status)) pending += Number(s.amount || 0);
         }
-        return { rows: [{ pending_earnings: pending, paid_earnings: paid }] };
+        const refunds = settlements.reduce((sum, settlement) => {
+          const entry = ledgerEntries.get(settlement.reservation_id);
+          return sum + (entry ? Number(entry.amount || 0) : 0);
+        }, 0);
+        return {
+          rows: [{
+            pending_earnings: pending,
+            paid_earnings: paid,
+            user_refunds: refunds,
+            refunded_deducted: refunds,
+            pending_refunds: 0,
+            user_refund_count: refunds > 0 ? 1 : 0,
+          }],
+        };
       }
 
       // monthly aggregate
-      if (text.includes('to_char(date_trunc') && text.includes('GROUP BY')) {
+      if (text.includes("date_trunc('month'") && text.includes('GROUP BY')) {
         const groups = new Map();
         for (const s of settlements) {
           if (s.provider_id !== params[0]) continue;
-          if (ledgerEntries.has(s.reservation_id)) continue;
           const dt = new Date(s.paid_at || s.updated_at || s.created_at);
           const key = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
           const label = dt.toLocaleString('en-US', { month: 'short' }) + ' ' + dt.getFullYear();
+          const refund = ledgerEntries.get(s.reservation_id);
+          if (refund) {
+            const g = groups.get(key) || { month_key: key, month_label: label, year: dt.getFullYear(), month: dt.getMonth()+1, earnings:0, paid:0, pending:0, refunded:0, count:0 };
+            g.refunded += Number(refund.amount || 0);
+            g.count += 1;
+            groups.set(key,g);
+            continue;
+          }
           const g = groups.get(key) || { month_key: key, month_label: label, year: dt.getFullYear(), month: dt.getMonth()+1, earnings:0, paid:0, pending:0, count:0 };
           g.earnings += Number(s.amount||0);
           if (['paid','settled'].includes(s.status)) g.paid += Number(s.amount||0);
@@ -116,4 +136,25 @@ test('Monthly aggregation and refund exclusion', async () => {
   const ids = records.records.map(r => r.id || r.reservation_id);
   assert.ok(ids.includes('s2') || ids.includes('r2'));
   assert.ok(!ids.includes('s3') && !ids.includes('r3'));
+});
+
+test('Provider accounting separates earnings from refund adjustments', async () => {
+  const client = createMockClient();
+  client.settlements.push(
+    { id: 'pending-1', provider_id: 'prov_1', reservation_id: 'p1', payment_session_id: 'p1', amount: 950, status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'pending-2', provider_id: 'prov_1', reservation_id: 'p2', payment_session_id: 'p2', amount: 475, status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'pending-3', provider_id: 'prov_1', reservation_id: 'p3', payment_session_id: 'p3', amount: 950, status: 'pending', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'paid-1', provider_id: 'prov_1', reservation_id: 'paid-1', payment_session_id: 'paid-1', amount: 2850, status: 'paid', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'refund-1', provider_id: 'prov_1', reservation_id: 'refund-1', payment_session_id: 'refund-1', amount: 1900, status: 'paid', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  );
+  client.ledgerEntries.set('refund-1', { amount: 1900 });
+
+  const summary = await getProviderSettlementSummary({ client, providerId: 'prov_1', ensureSchema: false });
+
+  assert.equal(summary.earnings.pending, 2375);
+  assert.equal(summary.earnings.paid, 2850);
+  assert.equal(summary.refunds.total, 1900);
+  assert.equal(summary.refunds.pending, 0);
+  assert.equal(summary.earnings.pending + summary.earnings.paid, 5225);
+  assert.notEqual(summary.earnings.paid, summary.earnings.paid + summary.refunds.total);
 });

@@ -704,7 +704,7 @@ test("T-FIN-2 provider settlement earnings summary totals pending and paid", asy
     ensureSchema: false,
   });
 
-  assert.equal(summary.earnings.pending, 1650);
+  assert.equal(summary.earnings.pending, 1250);
   assert.equal(summary.earnings.paid, 8430);
   assert.equal(summary.refunds.total, 950);
   assert.equal(summary.refunds.count, 1);
@@ -736,7 +736,7 @@ test("T-FIN-2 failed settlement remains outstanding and does not reduce amount d
     ensureSchema: false,
   });
 
-  assert.equal(before.earnings.pending, 1650);
+  assert.equal(before.earnings.pending, 1250);
   assert.equal(before.earnings.paid, 8430);
 
   await transitionProviderSettlementStatus({
@@ -754,7 +754,7 @@ test("T-FIN-2 failed settlement remains outstanding and does not reduce amount d
     ensureSchema: false,
   });
 
-  assert.equal(after.earnings.pending, 1650);
+  assert.equal(after.earnings.pending, 1250);
   assert.equal(after.earnings.paid, 8430);
   assert.equal(after.settlements.length, 4);
   assert.equal(client.settlements.get("settlement_pending").status, "failed");
@@ -783,7 +783,7 @@ test("T-FIN-2 marking paid moves outstanding amount from pending to paid", async
     ensureSchema: false,
   });
 
-  assert.equal(before.earnings.pending, 1650);
+  assert.equal(before.earnings.pending, 1250);
   assert.equal(before.earnings.paid, 8430);
 
   await transitionProviderSettlementStatus({

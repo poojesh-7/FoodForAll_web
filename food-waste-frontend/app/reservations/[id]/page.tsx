@@ -28,6 +28,7 @@ import type {
   ReservationDetails,
 } from "@shared/contracts/api-contracts";
 import { useParams, useRouter } from "next/navigation";
+import { Shield } from "lucide-react";
 
 function canCancel(reservation: ReservationDetails) {
   if (
@@ -492,8 +493,18 @@ export default function ReservationDetailPage() {
                   </h2>
                   <p className="mt-1 text-sm text-zinc-600">
                     Flag unsafe, fake, unavailable, or abusive pickup experiences.
+                    
                   </p>
                 </div>
+                <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 px-5 py-3 text-[17px] leading-6 text-slate-800">
+                  <Shield className="h-6 w-6 shrink-0 text-blue-600" />
+
+                  <p>
+                    Refunds are issued only for{" "}
+                    <strong>“Food not received”</strong> when you visited the{" "}
+                    <strong>outlet</strong> or <strong>can’t cancel</strong>.
+                  </p>
+              </div>
                 <ProviderReportForm
                   reservationId={reservation.id}
                   onError={setError}

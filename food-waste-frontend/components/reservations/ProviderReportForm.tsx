@@ -11,7 +11,7 @@ const reportReasonOptions: {
   value: ReportProviderRequest["reason"];
   label: string;
 }[] = [
-  { value: "food_received", label: "Food received" },
+  // { value: "food_received", label: "Food received" },
   { value: "food_not_received", label: "Food not received" },
   { value: "provider_unavailable", label: "Provider unavailable" },
   { value: "expired_food", label: "Expired food" },

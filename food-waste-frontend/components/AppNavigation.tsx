@@ -8,7 +8,10 @@ import { createPortal } from "react-dom";
 import IdentityAvatar from "@/components/identity/IdentityAvatar";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import { getRoleDashboard } from "@/lib/onboarding";
+import { getPaymentRemainingMs, getReservationPaymentState } from "@/lib/payment-flow";
+import { reservationService } from "@/services/reservation.service";
 import { useAuthStore } from "@/store/authStore";
+import { useRealtimeStore } from "@/store/realtimeStore";
 import type { UserRole } from "@shared/contracts/api-contracts";
 
 const roleLinks: Partial<Record<UserRole, { href: string; label: string }[]>> = {
@@ -54,6 +57,39 @@ export default function AppNavigation() {
   const logout = useAuthStore((state) => state.logout);
   const [loggingOut, setLoggingOut] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pendingReservationCount, setPendingReservationCount] = useState(0);
+  const reservationVersion = useRealtimeStore((state) => state.reservationVersion);
+
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== "user") {
+      return;
+    }
+
+    let active = true;
+    const refreshPendingCount = async () => {
+      try {
+        const reservations = await reservationService.getMyReservations();
+        if (!active) return;
+        setPendingReservationCount(
+          reservations.filter(
+            (reservation) =>
+              getReservationPaymentState(reservation) === "payment_pending" &&
+              (getPaymentRemainingMs(reservation) ?? 0) > 0
+          ).length
+        );
+      } catch {
+        if (active) setPendingReservationCount(0);
+      }
+    };
+
+    void refreshPendingCount();
+    const refreshTimer = window.setInterval(refreshPendingCount, 30_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [isAuthenticated, reservationVersion, user?.role]);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -170,6 +206,16 @@ export default function AppNavigation() {
               </Link>
             );
           })}
+          {currentRole === "user" && pendingReservationCount > 0 && (
+            <Link
+              href="/reservations"
+              onClick={() => setDrawerOpen(false)}
+              tabIndex={drawerTabIndex}
+              className="block rounded-md bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+            >
+              Pending {pendingReservationCount}
+            </Link>
+          )}
         </nav>
 
         <div className="border-t border-zinc-100 p-3">
@@ -230,6 +276,14 @@ export default function AppNavigation() {
                 </Link>
               );
             })}
+            {currentRole === "user" && pendingReservationCount > 0 && (
+              <Link
+                href="/reservations"
+                className="whitespace-nowrap rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+              >
+                Pending {pendingReservationCount}
+              </Link>
+            )}
           </nav>
 
           <div className="flex items-center gap-2">

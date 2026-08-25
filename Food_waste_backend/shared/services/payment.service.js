@@ -1,5 +1,6 @@
 const cashfree = require("../config/cashfree");
 const paymentQueue = require("../../queues/payment.queue");
+const notificationQueue = require("../../queues/notification.queue");
 const pool = require("../config/db");
 const crypto = require("crypto");
 const logger = require("../utils/logger");
@@ -33,6 +34,7 @@ const {
 } = require("./financialLedger.service");
 
 const PROCESSING_FEE = 2;
+const PAYMENT_PENDING_REMINDER_DELAY_MS = 7 * 60 * 1000;
 
 function roundMoney(value) {
   const number = Number(value);
@@ -212,6 +214,33 @@ async function createPayment({
         `UPDATE reservations SET payment_expires_at=$1 WHERE id=$2`,
         [expiryTime, reservation.id]
       );
+
+      await notificationQueue
+        .add(
+          "payment-pending-reminder",
+          {
+            userId: user.id,
+            reservationId: reservation.id,
+            type: "payment_pending",
+            title: "Payment pending",
+            message: "Complete payment soon. Your reservation expires in 3 minutes.",
+            data: {
+              href: `/reservations/${reservation.id}`,
+              reservation_id: reservation.id,
+              listing_id: reservation.listing_id,
+            },
+          },
+          jobOptions("notification", {
+            delay: PAYMENT_PENDING_REMINDER_DELAY_MS,
+            jobId: `payment-pending-reminder-${reservation.id}`,
+          })
+        )
+        .catch((err) => {
+          logger.error("Payment pending reminder enqueue failed", {
+            err,
+            reservationId: reservation.id,
+          });
+        });
     }
 
     await paymentQueue

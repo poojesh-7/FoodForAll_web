@@ -1337,7 +1337,10 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
           fac.accounting_category,
           fac.amount,
           fac.currency,
-          fac.created_at
+          fac.created_at,
+          fle.reservation_id,
+          fle.payment_session_id,
+          fle.event_type
         FROM financial_accounting_classifications fac
         LEFT JOIN financial_ledger_entries fle
           ON fle.id = fac.financial_ledger_entry_id
@@ -1358,7 +1361,10 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
           COALESCE(fle.accounting_category, ${categoryCase}) AS accounting_category,
           fle.amount,
           fle.currency,
-          fle.created_at
+          fle.created_at,
+          fle.reservation_id,
+          fle.payment_session_id,
+          fle.event_type
         FROM financial_ledger_entries fle
         WHERE COALESCE(fle.accounting_category, ${categoryCase}) IS NOT NULL
         AND NOT EXISTS (
@@ -1384,6 +1390,64 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
               AND r.event_type = 'refund_issued'
           )
         )
+      ), deposit_rows AS (
+        SELECT c.*
+        FROM categorized c
+        WHERE c.accounting_category <> 'reliability_deposit_held'
+          OR NOT EXISTS (
+            SELECT 1
+            FROM categorized terminal
+            WHERE terminal.reservation_id = c.reservation_id
+              AND terminal.payment_session_id = c.payment_session_id
+              AND terminal.accounting_category IN (
+                'reliability_deposit_refunded',
+                'reliability_deposit_retained'
+              )
+          )
+      ), current_projection AS (
+        SELECT
+          CASE
+            WHEN c.accounting_category IN (
+              'reliability_deposit_held',
+              'reliability_deposit_refunded',
+              'reliability_deposit_retained'
+            )
+              AND EXISTS (
+                SELECT 1
+                FROM payments p
+                LEFT JOIN reservations r ON r.id = p.reservation_id
+                WHERE p.reservation_id = c.reservation_id
+                  AND p.payment_session_id = c.payment_session_id
+                  AND (p.status = 'refunded' OR r.payment_status = 'refunded')
+              ) THEN 'reliability_deposit_refunded'
+            WHEN c.accounting_category IN (
+              'reliability_deposit_held',
+              'reliability_deposit_refunded',
+              'reliability_deposit_retained'
+            )
+              AND EXISTS (
+                SELECT 1 FROM payments p
+                WHERE p.reservation_id = c.reservation_id
+                  AND p.payment_session_id = c.payment_session_id
+                  AND p.reliability_deposit_status = 'retained'
+              ) THEN 'reliability_deposit_retained'
+            WHEN c.accounting_category IN (
+              'reliability_deposit_held',
+              'reliability_deposit_refunded',
+              'reliability_deposit_retained'
+            )
+              AND EXISTS (
+                SELECT 1 FROM payments p
+                WHERE p.reservation_id = c.reservation_id
+                  AND p.payment_session_id = c.payment_session_id
+                  AND p.reliability_deposit_status = 'refunded'
+              ) THEN 'reliability_deposit_refunded'
+            ELSE c.accounting_category
+          END AS accounting_category,
+          c.amount,
+          c.currency,
+          c.created_at
+        FROM deposit_rows c
       )
       SELECT
         accounting_category,
@@ -1394,7 +1458,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
           WHEN MAX(created_at) IS NULL THEN NULL
           ELSE to_char(MAX(created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_recorded_at
-      FROM categorized
+      FROM current_projection
       GROUP BY accounting_category
       ORDER BY accounting_category
     `),

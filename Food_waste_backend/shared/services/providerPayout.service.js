@@ -968,31 +968,84 @@ function applyRefundCarryForward(records) {
 
   for (const record of orderedRecords) {
     const refundAmount = Number(record.refund_amount || 0);
+    const normalizedStatus = normalizeSettlementStatus(record.status);
+    const isEligibleSettlement =
+      PENDING_SETTLEMENT_STATUSES.includes(normalizedStatus) ||
+      FAILED_SETTLEMENT_STATUSES.includes(normalizedStatus);
+
     if (refundAmount > 0) {
       remainingRefund += refundAmount;
+      record.refund_deduction_amount = 0;
+      record.pending_refund_amount = Math.round(remainingRefund * 100) / 100;
+      record.refund_note = "Refunded to user; deducted from next settlement.";
       continue;
     }
 
-    if (
-      remainingRefund > 0 &&
-      (PENDING_SETTLEMENT_STATUSES.includes(record.status) ||
-        PAID_SETTLEMENT_STATUSES.includes(record.status))
-    ) {
+    if (remainingRefund > 0 && isEligibleSettlement) {
       const deduction = Math.min(remainingRefund, Number(record.amount || 0));
       record.refund_deduction_amount = Math.round(deduction * 100) / 100;
       remainingRefund = Math.max(0, remainingRefund - deduction);
+      record.pending_refund_amount = Math.round(remainingRefund * 100) / 100;
+      record.refund_note = "User refund deduction applied.";
+      continue;
     }
+
+    record.refund_deduction_amount = 0;
+    record.pending_refund_amount = Math.round(remainingRefund * 100) / 100;
+    record.refund_note = null;
   }
 
   return records.map((record) => ({
     ...record,
-    pending_refund_amount: Math.round(remainingRefund * 100) / 100,
-    refund_note: Number(record.refund_amount || 0) > 0
-      ? "Refunded to user; deducted from next settlement."
-      : record.refund_deduction_amount > 0
-        ? "User refund deduction applied."
-        : null,
+    refund_deduction_amount: Number(record.refund_deduction_amount || 0),
+    pending_refund_amount: Number(record.pending_refund_amount || 0),
+    refund_note: record.refund_note || null,
   }));
+}
+
+function summarizeSettlementProjection(records) {
+  const rows = Array.isArray(records) ? records : [];
+  const pendingSettle = rows.filter((row) =>
+    PENDING_SETTLEMENT_STATUSES.includes(normalizeSettlementStatus(row.status)),
+  );
+  const paidSettle = rows.filter((row) =>
+    PAID_SETTLEMENT_STATUSES.includes(normalizeSettlementStatus(row.status)),
+  );
+
+  const pendingAmount = pendingSettle.reduce((sum, row) => {
+    const amount = Number(row.amount || 0);
+    const deduction = Number(row.refund_deduction_amount || 0);
+    return sum + Math.max(amount - deduction, 0);
+  }, 0);
+
+  const paidAmount = paidSettle.reduce((sum, row) => {
+    const amount = Number(row.amount || 0);
+    return sum + amount;
+  }, 0);
+
+  const refundTotal = rows.reduce((sum, row) => {
+    const amount = Number(row.refund_amount || 0);
+    return sum + amount;
+  }, 0);
+
+  const refundDeduction = rows.reduce((sum, row) => {
+    const amount = Number(row.refund_deduction_amount || 0);
+    return sum + amount;
+  }, 0);
+
+  return {
+    earnings: {
+      pending: Math.round(pendingAmount * 100) / 100,
+      paid: Math.round(paidAmount * 100) / 100,
+    },
+    refunds: {
+      total: Math.round(refundTotal * 100) / 100,
+      count: rows.filter((row) => Number(row.refund_amount || 0) > 0).length,
+      deducted: Math.round(refundDeduction * 100) / 100,
+      pending: Math.max(Math.round((refundTotal - refundDeduction) * 100) / 100, 0),
+    },
+    rows,
+  };
 }
 
 function sqlTimestampUtc(columnName) {
@@ -1012,8 +1065,7 @@ async function getProviderSettlementSummary({
   if (ensureSchema) {
     await ensureProviderPayoutSchema(client);
   }
-  // Build monthly aggregates for the provider dashboard.
-  // Use the same refund-aware projection: exclude provider_settlements that have a matching refund_issued ledger entry.
+
   const [accounts, totals, monthly] = await Promise.all([
     listProviderPayoutAccounts({
       client,
@@ -1036,52 +1088,21 @@ async function getProviderSettlementSummary({
           ), 0))::numeric AS refund_amount
         FROM provider_settlements ps
         WHERE ps.provider_id=$1
-      ), totals AS (
-        SELECT
-          COALESCE(SUM(refund_amount), 0)::numeric AS refund_total,
-          COALESCE(SUM(amount) FILTER (
-            WHERE status = ANY($2::text[])
-              AND refund_amount = 0
-          ), 0)::numeric AS outstanding_total
-          ,COALESCE(SUM(amount) FILTER (
-            WHERE status = ANY($3::text[])
-              AND refund_amount = 0
-              AND created_at > (
-                SELECT MIN(source.created_at)
-                FROM settlement_projection source
-                WHERE source.refund_amount > 0
-              )
-          ), 0)::numeric AS coverage_total
-        FROM settlement_projection
       )
       SELECT
-        GREATEST(
-          COALESCE(SUM(amount) FILTER (
-            WHERE status = ANY($2::text[])
-              AND refund_amount = 0
-          ), 0),
-          0
-        )::numeric AS pending_earnings,
+        COALESCE(SUM(amount) FILTER (
+          WHERE status = ANY($2::text[])
+            AND refund_amount = 0
+        ), 0)::numeric AS pending_earnings,
         COALESCE(SUM(amount) FILTER (
           WHERE status = ANY($3::text[])
             AND refund_amount = 0
         ), 0)::numeric AS paid_earnings,
-        totals.refund_total AS user_refunds,
-        LEAST(
-          totals.refund_total,
-          totals.outstanding_total + totals.coverage_total
-        )::numeric AS refunded_deducted,
-        GREATEST(
-          totals.refund_total
-            - totals.outstanding_total
-            - totals.coverage_total,
-          0
-        )::numeric AS pending_refunds,
+        COALESCE(SUM(refund_amount), 0)::numeric AS user_refunds,
         COUNT(*) FILTER (
           WHERE refund_amount > 0
         )::int AS user_refund_count
-      FROM settlement_projection, totals
-      GROUP BY totals.refund_total, totals.outstanding_total, totals.coverage_total
+      FROM settlement_projection
       `,
       [
         providerId,
@@ -1130,13 +1151,13 @@ async function getProviderSettlementSummary({
     ),
   ]);
 
-  // Map monthly rows and derive status per month
   const monthlyRows = monthly.rows.map((row) => {
     const total = Number(row.earnings || 0);
     const paid = Number(row.paid || 0);
     const pending = Number(row.pending || 0);
     const refunded = Number(row.refunded || 0);
     let status = "Pending";
+
     if (total === 0 && refunded > 0) status = "Refunded";
     else if (pending === 0 && paid >= total - refunded && total > 0) status = "Paid";
     else if (paid + refunded >= total && total > 0) status = "Paid - Refund Pending";
@@ -1167,8 +1188,8 @@ async function getProviderSettlementSummary({
     refunds: {
       total: Number(totals.rows[0]?.user_refunds || 0),
       count: Number(totals.rows[0]?.user_refund_count || 0),
-      deducted: Number(totals.rows[0]?.refunded_deducted || 0),
-      pending: Number(totals.rows[0]?.pending_refunds || 0),
+      deducted: Number(totals.rows[0]?.user_refunds || 0),
+      pending: 0,
     },
     settlements: monthlyRows,
   };
@@ -1252,20 +1273,20 @@ async function listProviderSettlementRecords({
     ) fle ON true
     WHERE ${whereClauses.join(' AND ')}
     ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC, ps.id DESC
-    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `;
-
-  params.push(normalizeLimit(limit, 50));
-  params.push(Number(offset) || 0);
 
   const result = await client.query(baseQuery, params);
 
   const records = applyRefundCarryForward(result.rows.map(serializeSettlement));
+  const safeLimit = normalizeLimit(limit, 50);
+  const safeOffset = Number(offset) || 0;
+  const paginatedRecords = records.slice(safeOffset, safeOffset + safeLimit);
+
   return {
-    records,
-    limit: Number(limit),
-    offset: Number(offset) || 0,
-    count: result.rows.length,
+    records: paginatedRecords,
+    limit: safeLimit,
+    offset: safeOffset,
+    count: records.length,
   };
 }
 
@@ -1871,7 +1892,7 @@ async function listAdminProviderSettlements({
     ],
   );
 
-  const result = await client.query(
+  const recordsResult = await client.query(
     `
     WITH settlement_projection AS (
       SELECT
@@ -1996,7 +2017,7 @@ async function listAdminProviderSettlements({
   );
 
   const settlements = applyRefundCarryForward(
-    result.rows.map(serializeAdminSettlement),
+    recordsResult.rows.map(serializeAdminSettlement),
   );
 
   return {

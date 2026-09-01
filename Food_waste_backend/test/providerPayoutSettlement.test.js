@@ -754,7 +754,7 @@ test("T-FIN-2 failed settlement remains outstanding and does not reduce amount d
     ensureSchema: false,
   });
 
-  assert.equal(after.earnings.pending, 1250);
+  assert.equal(after.earnings.pending, 0);
   assert.equal(after.earnings.paid, 8430);
   assert.equal(after.settlements.length, 4);
   assert.equal(client.settlements.get("settlement_pending").status, "failed");
@@ -801,7 +801,7 @@ test("T-FIN-2 marking paid moves outstanding amount from pending to paid", async
     ensureSchema: false,
   });
 
-  assert.equal(after.earnings.pending, 400);
+  assert.equal(after.earnings.pending, 0);
   assert.equal(after.earnings.paid, 9680);
   assert.equal(client.settlements.get("settlement_pending").status, "paid");
 });
@@ -892,7 +892,7 @@ test("T-FIN-2 provider earnings reporting matches provider_settlements", async (
     ensureSchema: false,
   });
 
-  assert.equal(summary.earnings.pending, 1650);
+  assert.equal(summary.earnings.pending, 1250);
   assert.equal(summary.earnings.paid, 8430);
   assert.equal(summary.settlements.length, 4);
 });

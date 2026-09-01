@@ -136,6 +136,14 @@ export default function AdminFinancialsPage() {
             />
           </section>
 
+          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
+            <AdminMetricCard
+              label="Outstanding Provider Refund Liability"
+              value={formatCurrency(summary.provider_refund_liability.outstanding, currency)}
+              detail="Amount remaining to recover from future provider settlements"
+            />
+          </section>
+
           <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
               <div className="border-b border-zinc-200 px-4 py-3">

@@ -499,11 +499,15 @@ test("F4 user cancellation emits one terminal payment refund across duplicate re
     refundId: "refund_cancel",
   });
 
-  assert.equal(client.ledger.size, 1);
-  assert.equal(Array.from(client.ledger.values())[0].event_type, "refund_issued");
-  assert.deepEqual(classificationCategories(client), [
+  // Now creates 2 ledger entries: refund_issued (REFUND_EXPENSE) and provider_refund_liability_issued (PROVIDER_REFUND_LIABILITY)
+  // Both use different idempotency keys, so they are distinct entries
+  assert.equal(client.ledger.size, 2);
+  const eventTypes = Array.from(client.ledger.values()).map(e => e.event_type).sort();
+  assert.deepEqual(eventTypes, ["provider_refund_liability_issued", "refund_issued"]);
+  assert.deepEqual(classificationCategories(client).sort(), [
     ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
-  ]);
+    ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+  ].sort());
   assert.equal(client.terminal.size, 1);
 });
 

@@ -2986,7 +2986,8 @@ export type FinancialAccountingCategory =
   | "reliability_deposit_retained"
   | "provider_settlement_liability"
   | "provider_settlement_paid"
-  | "refund_expense";
+  | "refund_expense"
+  | "provider_refund_liability";
 export interface AdminFinancialSummaryQuery {
   limit?: number | string;
 }
@@ -3050,6 +3051,15 @@ export interface AdminFinancialSummaryData {
   };
   refunds: {
     total_refund_amount: number | string;
+  };
+  provider_refund_liability: {
+    outstanding: number | string;
+    issued_total: number | string;
+    released_total: number | string;
+    issued_count?: number | string;
+    released_count?: number | string;
+    last_recorded_at?: ISODateString | null;
+    description?: string;
   };
   gateway_fees: {
     classified_expense: number | string;

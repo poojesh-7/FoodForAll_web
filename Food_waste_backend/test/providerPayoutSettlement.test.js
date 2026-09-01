@@ -444,10 +444,38 @@ function createProviderFinanceClient() {
         return {
           rows: Array.from(settlements.values())
             .filter((row) => row.provider_id === providerId)
-            .map((row) => ({
-              ...row,
-              status: hasRefundEvent(row) ? "refunded" : row.status,
-            })),
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+            .map((row) => {
+              // Calculate refund_amount like the real database query
+              let totalRefund = 0;
+              for (const refund of refundEvents.values()) {
+                if (
+                  refund.reservation_id === row.reservation_id &&
+                  refund.payment_session_id === row.payment_session_id &&
+                  refund.event_type === "refund_issued"
+                ) {
+                  totalRefund += Number(refund.amount || 0);
+                }
+              }
+              for (const ledgerEntry of ledger.values()) {
+                if (
+                  ledgerEntry.reservation_id === row.reservation_id &&
+                  ledgerEntry.payment_session_id === row.payment_session_id &&
+                  ledgerEntry.event_type === "refund_issued"
+                ) {
+                  totalRefund += Number(ledgerEntry.amount || 0);
+                }
+              }
+              // LEAST(settlement.amount, total_refund)
+              const refundAmount = Math.min(Number(row.amount || 0), totalRefund);
+              // Classify as "refunded" if refund_amount equals settlement amount
+              const status = refundAmount >= Number(row.amount || 0) && Number(row.amount || 0) > 0 ? "refunded" : row.status;
+              return {
+                ...row,
+                status,
+                refund_amount: refundAmount,
+              };
+            }),
         };
       }
 
@@ -710,6 +738,7 @@ test("T-FIN-2 provider settlement earnings summary totals pending and paid", asy
   assert.equal(summary.refunds.count, 1);
   assert.equal(summary.settlements.length, 4);
 });
+
 
 test("T-FIN-2 provider records include refunded settlement rows", async () => {
   const client = createProviderFinanceClient();

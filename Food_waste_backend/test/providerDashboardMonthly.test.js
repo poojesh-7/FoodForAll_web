@@ -138,6 +138,46 @@ test('Monthly aggregation and refund exclusion', async () => {
   assert.ok(!ids.includes('s3') && !ids.includes('r3'));
 });
 
+test('Provider summary exposes outstanding refund liability after a post-settlement refund', async () => {
+  const client = createMockClient();
+  const now = new Date();
+  const paidAt = new Date(now.getFullYear(), now.getMonth(), 2).toISOString();
+  const pendingAt = new Date(now.getFullYear(), now.getMonth(), 3).toISOString();
+
+  client.settlements.push(
+    { id: 'paid-1', provider_id: 'prov_1', reservation_id: 'paid-1', payment_session_id: 'paid-1', amount: 1200, status: 'paid', paid_at: paidAt, created_at: paidAt, updated_at: paidAt },
+    { id: 'pending-1', provider_id: 'prov_1', reservation_id: 'pending-1', payment_session_id: 'pending-1', amount: 1800, status: 'pending', created_at: pendingAt, updated_at: pendingAt },
+  );
+  client.ledgerEntries.set('paid-1', { amount: 450 });
+
+  const summary = await getProviderSettlementSummary({ client, providerId: 'prov_1', ensureSchema: false });
+
+  assert.equal(summary.earnings.pending, 1800);
+  assert.equal(summary.earnings.paid, 1200);
+  assert.equal(summary.refunds.total, 450);
+  assert.equal(summary.refunds.pending, 450);
+});
+
+test('Provider summary keeps refund liability after a future settlement partially absorbs it', async () => {
+  const client = createMockClient();
+  const now = new Date();
+  const firstDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const secondDate = new Date(now.getFullYear(), now.getMonth(), 2).toISOString();
+
+  client.settlements.push(
+    { id: 'paid-1', provider_id: 'prov_1', reservation_id: 'paid-1', payment_session_id: 'paid-1', amount: 1000, status: 'paid', paid_at: firstDate, created_at: firstDate, updated_at: firstDate },
+    { id: 'pending-1', provider_id: 'prov_1', reservation_id: 'pending-1', payment_session_id: 'pending-1', amount: 900, status: 'pending', created_at: secondDate, updated_at: secondDate },
+  );
+  client.ledgerEntries.set('paid-1', { amount: 700 });
+
+  const summary = await getProviderSettlementSummary({ client, providerId: 'prov_1', ensureSchema: false });
+
+  assert.equal(summary.earnings.pending, 900);
+  assert.equal(summary.earnings.paid, 1000);
+  assert.equal(summary.refunds.total, 700);
+  assert.equal(summary.refunds.pending, 200);
+});
+
 test('Provider accounting separates earnings from refund adjustments', async () => {
   const client = createMockClient();
   client.settlements.push(

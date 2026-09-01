@@ -1014,8 +1014,9 @@ function summarizeSettlementProjection(records) {
 
   const pendingAmount = pendingSettle.reduce((sum, row) => {
     const amount = Number(row.amount || 0);
+    const refund = Number(row.refund_amount || 0);
     const deduction = Number(row.refund_deduction_amount || 0);
-    return sum + Math.max(amount - deduction, 0);
+    return sum + Math.max(amount - refund - deduction, 0);
   }, 0);
 
   const paidAmount = paidSettle.reduce((sum, row) => {
@@ -1066,7 +1067,7 @@ async function getProviderSettlementSummary({
     await ensureProviderPayoutSchema(client);
   }
 
-  const [accounts, totals, monthly] = await Promise.all([
+  const [accounts, settlementRows] = await Promise.all([
     listProviderPayoutAccounts({
       client,
       providerId,
@@ -1074,124 +1075,66 @@ async function getProviderSettlementSummary({
     }),
     client.query(
       `
-      WITH settlement_projection AS (
-        SELECT
-          ps.amount,
-          ps.status,
-          ps.created_at,
-          LEAST(ps.amount, COALESCE((
-            SELECT SUM(fle.amount)
-            FROM financial_ledger_entries fle
-            WHERE fle.reservation_id = ps.reservation_id
-              AND fle.payment_session_id = ps.payment_session_id
-              AND fle.event_type = 'refund_issued'
-          ), 0))::numeric AS refund_amount
-        FROM provider_settlements ps
-        WHERE ps.provider_id=$1
-      )
       SELECT
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($2::text[])
-            AND refund_amount = 0
-        ), 0)::numeric AS pending_earnings,
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($3::text[])
-            AND refund_amount = 0
-        ), 0)::numeric AS paid_earnings,
-        COALESCE(SUM(refund_amount), 0)::numeric AS user_refunds,
-        COUNT(*) FILTER (
-          WHERE refund_amount > 0
-        )::int AS user_refund_count
-      FROM settlement_projection
+        ps.id,
+        ps.provider_id,
+        ps.reservation_id,
+        ps.payment_id,
+        ps.payment_session_id,
+        ps.settlement_allocation_id,
+        ps.settlement_batch_id,
+        ps.amount,
+        ps.commission_amount,
+        ps.currency,
+        ps.status AS status,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount,
+        ${sqlNullableTimestampUtc('ps.paid_at')} AS paid_at,
+        ps.payment_reference,
+        ps.notes,
+        ps.processed_by,
+        ${sqlTimestampUtc('ps.created_at')} AS created_at,
+        ${sqlTimestampUtc('ps.updated_at')} AS updated_at
+      FROM provider_settlements ps
+      WHERE ps.provider_id = $1
+      ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) ASC, ps.id ASC
       `,
-      [
-        providerId,
-        PENDING_SETTLEMENT_STATUSES,
-        PAID_SETTLEMENT_STATUSES,
-      ],
-    ),
-    client.query(
-      `
-      WITH monthly_source AS (
-        SELECT
-          ps.*,
-          date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) AS month_start,
-          LEAST(ps.amount, COALESCE((
-            SELECT SUM(fle.amount)
-            FROM financial_ledger_entries fle
-            WHERE fle.reservation_id = ps.reservation_id
-              AND fle.payment_session_id = ps.payment_session_id
-              AND fle.event_type = 'refund_issued'
-          ), 0))::numeric AS refund_amount
-        FROM provider_settlements ps
-        WHERE ps.provider_id = $1
-          AND date_trunc('month', COALESCE(ps.paid_at, ps.updated_at, ps.created_at)) >= date_trunc('month', NOW()) - INTERVAL '36 months'
-      )
-      SELECT
-        to_char(month_start, 'YYYY-MM') AS month_key,
-        to_char(month_start, 'Mon YYYY') AS month_label,
-        EXTRACT(YEAR FROM month_start)::int AS year,
-        EXTRACT(MONTH FROM month_start)::int AS month,
-        COALESCE(SUM(amount) FILTER (WHERE refund_amount = 0), 0)::numeric AS earnings,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[]) AND refund_amount = 0), 0)::numeric AS paid,
-        COALESCE(SUM(amount) FILTER (WHERE status = ANY($3::text[]) AND refund_amount = 0), 0)::numeric AS pending,
-        COALESCE(SUM(refund_amount), 0)::numeric AS refunded,
-        COUNT(*)::int AS count
-      FROM monthly_source
-      GROUP BY month_start
-      ORDER BY month_start DESC
-      LIMIT $4
-      `,
-      [
-        providerId,
-        PAID_SETTLEMENT_STATUSES,
-        PENDING_SETTLEMENT_STATUSES,
-        normalizeLimit(limit, 36),
-      ],
+      [providerId],
     ),
   ]);
 
-  const monthlyRows = monthly.rows.map((row) => {
-    const total = Number(row.earnings || 0);
-    const paid = Number(row.paid || 0);
-    const pending = Number(row.pending || 0);
-    const refunded = Number(row.refunded || 0);
-    let status = "Pending";
+  const projectedRows = applyRefundCarryForward(
+    settlementRows.rows.map(serializeSettlement),
+  );
+  const projectedSummary = summarizeSettlementProjection(projectedRows);
 
-    if (total === 0 && refunded > 0) status = "Refunded";
-    else if (pending === 0 && paid >= total - refunded && total > 0) status = "Paid";
-    else if (paid + refunded >= total && total > 0) status = "Paid - Refund Pending";
-    else if (paid === 0) status = "Pending";
-    else status = "Partially Paid";
-
-    return {
-      month_key: row.month_key,
-      month_label: row.month_label,
-      year: Number(row.year || 0),
-      month: Number(row.month || 0),
-      earnings: total,
-      paid,
-      pending,
-      refunded,
-      count: Number(row.count || 0),
-      status,
-    };
-  });
+  // Return individual settlement rows as-is, limited by the limit parameter
+  const safeLimit = normalizeLimit(limit, 50);
+  const settlementRows_ = projectedRows
+    .slice(0, safeLimit)
+    .map((row) => ({
+      id: row.id,
+      status: row.status,
+      amount: Number(row.amount || 0),
+      refund_amount: Number(row.refund_amount || 0),
+      refund_deduction_amount: Number(row.refund_deduction_amount || 0),
+      pending_refund_amount: Number(row.pending_refund_amount || 0),
+      paid_at: row.paid_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
 
   return {
     payout_account: accounts.active_account,
     payout_accounts: accounts.accounts,
-    earnings: {
-      pending: Number(totals.rows[0]?.pending_earnings || 0),
-      paid: Number(totals.rows[0]?.paid_earnings || 0),
-    },
-    refunds: {
-      total: Number(totals.rows[0]?.user_refunds || 0),
-      count: Number(totals.rows[0]?.user_refund_count || 0),
-      deducted: Number(totals.rows[0]?.user_refunds || 0),
-      pending: 0,
-    },
-    settlements: monthlyRows,
+    earnings: projectedSummary.earnings,
+    refunds: projectedSummary.refunds,
+    settlements: settlementRows_,
   };
 }
 

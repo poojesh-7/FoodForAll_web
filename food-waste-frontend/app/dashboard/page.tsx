@@ -873,6 +873,9 @@ export default function DashboardPage() {
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(financialSummary?.earnings.pending)}
                       </p>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        Current pending payable provider earnings
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
@@ -881,24 +884,30 @@ export default function DashboardPage() {
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(financialSummary?.earnings.paid)}
                       </p>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        Historical provider settlements already paid
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
-                        User Refunds
+                        Refunds
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(financialSummary?.refunds?.total)}
                       </p>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        Customer refunds attributable to provider transactions
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
                       <p className="text-sm font-medium text-amber-800">
-                        Refund Carry-Forward
+                        Refund Liability / Carry-Forward
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-amber-950">
                         {formatCurrency(financialSummary?.refunds?.pending)}
                       </p>
                       <p className="mt-1 text-xs text-amber-800">
-                        To be deducted from next settlement
+                        Outstanding liability to recover from future eligible settlements
                       </p>
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -907,15 +916,12 @@ export default function DashboardPage() {
                       </p>
                       <p className="mt-2 text-2xl font-semibold text-zinc-950">
                         {formatCurrency(
-                          Math.max(
-                            0,
-                            (Number(financialSummary?.earnings.pending || 0) || 0) +
-                              (Number(financialSummary?.earnings.paid || 0) || 0),
-                          )
+                          Number(financialSummary?.earnings.pending || 0) +
+                            Number(financialSummary?.earnings.paid || 0),
                         )}
                       </p>
                       <p className="mt-1 text-xs text-zinc-800">
-                        Pending + Paid Earnings
+                        Backend pending + paid earnings summary
                       </p>
                     </div>
                   </div>

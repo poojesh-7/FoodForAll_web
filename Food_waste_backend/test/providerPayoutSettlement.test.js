@@ -479,6 +479,69 @@ function createProviderFinanceClient() {
         };
       }
 
+      // Handle refund liability queries
+      if (text.includes("SELECT DISTINCT") && text.includes("fle.refund_id") && text.includes("GROUP BY fle.refund_id")) {
+        // Query for refund_issued ledger entries
+        const refundIds = new Set();
+        for (const entry of ledger.values()) {
+          if (
+            entry.event_type === "refund_issued" &&
+            entry.reservation_id === params[0] &&
+            entry.payment_session_id === params[1] &&
+            entry.refund_id
+          ) {
+            refundIds.add(entry.refund_id);
+          }
+        }
+        return {
+          rows: Array.from(refundIds).map((refundId) => {
+            const amount = Array.from(ledger.values())
+              .filter(
+                (e) =>
+                  e.event_type === "refund_issued" &&
+                  e.refund_id === refundId &&
+                  e.reservation_id === params[0] &&
+                  e.payment_session_id === params[1],
+              )
+              .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+            return {
+              refund_id: refundId,
+              total_refund_amount: amount,
+            };
+          }),
+        };
+      }
+
+      if (
+        text.includes("SELECT") &&
+        text.includes("CASE WHEN event_type = 'provider_refund_liability_issued'") &&
+        text.includes("WHERE refund_id")
+      ) {
+        // Outstanding liability query
+        const refundId = params[0];
+        let issued = 0;
+        let released = 0;
+        for (const entry of ledger.values()) {
+          if (entry.refund_id === refundId && entry.accounting_category === 'provider_refund_liability') {
+            if (entry.event_type === "provider_refund_liability_issued") {
+              issued += Number(entry.amount || 0);
+            } else if (
+              entry.event_type === "provider_refund_liability_released"
+            ) {
+              released += Number(entry.amount || 0);
+            }
+          }
+        }
+        return {
+          rows: [
+            {
+              issued,
+              released,
+            },
+          ],
+        };
+      }
+
       throw new Error(`Unexpected query: ${sql}`);
     },
   };

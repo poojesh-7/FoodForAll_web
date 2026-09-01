@@ -284,9 +284,10 @@ test("refund execution is idempotent across retries and terminal duplicates", as
   assert.equal(replay.duplicatePrevented, true);
   assert.equal(replay.shouldExecute, false);
   assert.equal(client.operations.size, 1);
+  // When a payment refund is issued, both REFUND_EXPENSE and PROVIDER_REFUND_LIABILITY are recorded
   assert.deepEqual(
-    Array.from(client.classifications.values()).map((row) => row.accounting_category),
-    [ACCOUNTING_CATEGORIES.REFUND_EXPENSE]
+    Array.from(client.classifications.values()).map((row) => row.accounting_category).sort(),
+    [ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY, ACCOUNTING_CATEGORIES.REFUND_EXPENSE].sort()
   );
 });
 

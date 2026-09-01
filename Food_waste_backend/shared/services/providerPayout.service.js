@@ -1,9 +1,11 @@
 const pool = require("../config/db");
 const { shouldSkipRuntimeSchemaMutation } = require("../config/runtimeSchema");
 const { withTransaction } = require("../utils/transaction");
+const logger = require("../utils/logger");
 const {
   ensureSettlementAccountingSchema,
   recordProviderSettlementPaidLedger,
+  recordRefundLiabilityReleased,
 } = require("./financialLedger.service");
 const { recordOperationalEvent } = require("./observability.service");
 
@@ -2023,6 +2025,108 @@ async function loadActiveProviderPayoutAccount(client, providerId) {
   return result.rows[0] || null;
 }
 
+async function recordSettlementRefundLiabilityReleases({
+  client,
+  settlement,
+  metadata = {},
+} = {}) {
+  if (
+    !client ||
+    !settlement?.id ||
+    !settlement?.reservation_id ||
+    !settlement?.payment_session_id
+  ) {
+    return null;
+  }
+
+  // Query for refund_issued ledger entries for this settlement's reservation/session
+  const refundResult = await client.query(
+    `
+    SELECT DISTINCT
+      fle.refund_id,
+      SUM(fle.amount) as total_refund_amount
+    FROM financial_ledger_entries fle
+    WHERE fle.reservation_id = $1
+      AND fle.payment_session_id = $2
+      AND fle.event_type = 'refund_issued'
+      AND fle.refund_id IS NOT NULL
+    GROUP BY fle.refund_id
+    `,
+    [settlement.reservation_id, settlement.payment_session_id],
+  );
+
+  if (!refundResult.rows || refundResult.rows.length === 0) {
+    return null;
+  }
+
+  // For each refund, check if there's an outstanding liability and release up to the settlement amount
+  let totalReleased = 0;
+
+  for (const refundRow of refundResult.rows) {
+    const refundId = refundRow.refund_id;
+    const totalRefundAmount = Number(refundRow.total_refund_amount || 0);
+
+    if (!refundId || totalRefundAmount <= 0) continue;
+
+    // Query for outstanding liability for this specific refund
+    const liabilityResult = await client.query(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_issued' THEN amount ELSE 0 END), 0)::numeric as issued,
+        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_released' THEN amount ELSE 0 END), 0)::numeric as released
+      FROM financial_ledger_entries
+      WHERE refund_id = $1
+        AND accounting_category = 'provider_refund_liability'
+      `,
+      [refundId],
+    );
+
+    const liability = liabilityResult.rows[0] || {};
+    const issuedAmount = Number(liability.issued || 0);
+    const releasedAmount = Number(liability.released || 0);
+    const outstandingLiability = Math.max(0, issuedAmount - releasedAmount);
+
+    if (outstandingLiability <= 0) continue;
+
+    // Release amount is capped at outstanding liability and settlement amount
+    const remainingInSettlement = Math.max(
+      0,
+      Number(settlement.amount || 0) - totalReleased,
+    );
+    const releaseAmount = Math.min(
+      outstandingLiability,
+      remainingInSettlement,
+      totalRefundAmount,
+    );
+
+    if (releaseAmount > 0) {
+      await recordRefundLiabilityReleased({
+        client,
+        settlement,
+        refundAmount: releaseAmount,
+        refundId,
+        metadata: {
+          ...metadata,
+          refund_batch: `settlement_${settlement.id}`,
+          total_refund_amount: totalRefundAmount,
+          outstanding_liability: outstandingLiability,
+        },
+      }).catch((err) => {
+        logger.warn("Failed to record individual refund liability release", {
+          err,
+          settlementId: settlement.id,
+          refundId,
+          releaseAmount,
+        });
+      });
+
+      totalReleased += releaseAmount;
+    }
+  }
+
+  return totalReleased > 0 ? { totalReleased } : null;
+}
+
 async function transitionProviderSettlementStatus({
   client,
   settlementId,
@@ -2165,6 +2269,22 @@ async function transitionProviderSettlementStatus({
           source: "manual_provider_settlement_transition",
           admin_id: adminId || null,
         },
+      });
+
+      // Record refund liability release for any refunds associated with this settlement
+      await recordSettlementRefundLiabilityReleases({
+        client: db,
+        settlement: updated,
+        metadata: {
+          source: "settlement_paid_transition",
+          admin_id: adminId || null,
+        },
+      }).catch((err) => {
+        logger.warn("Failed to record settlement refund liability releases", {
+          err,
+          settlementId: updated.id,
+          reservationId: updated.reservation_id,
+        });
       });
     }
 

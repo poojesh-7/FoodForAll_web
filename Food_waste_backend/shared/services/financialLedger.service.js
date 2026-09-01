@@ -19,6 +19,7 @@ const ACCOUNTING_CATEGORIES = Object.freeze({
   PROVIDER_SETTLEMENT_LIABILITY: "provider_settlement_liability",
   PROVIDER_SETTLEMENT_PAID: "provider_settlement_paid",
   REFUND_EXPENSE: "refund_expense",
+  PROVIDER_REFUND_LIABILITY: "provider_refund_liability",
 });
 const ACCOUNTING_CATEGORY_VALUES = Object.freeze(
   Object.values(ACCOUNTING_CATEGORIES),
@@ -43,6 +44,7 @@ const ACCOUNTING_CATEGORY_LABELS = Object.freeze({
   [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_LIABILITY]: "Provider Liability",
   [ACCOUNTING_CATEGORIES.PROVIDER_SETTLEMENT_PAID]: "Provider Paid",
   [ACCOUNTING_CATEGORIES.REFUND_EXPENSE]: "Refund",
+  [ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY]: "Outstanding Provider Refund Liability",
 });
 const PENDING_SETTLEMENT_STATUSES = [
   "pending",
@@ -414,7 +416,8 @@ async function ensureSettlementAccountingSchema(client = pool) {
             'reliability_deposit_retained',
             'provider_settlement_liability',
             'provider_settlement_paid',
-            'refund_expense'
+            'refund_expense',
+            'provider_refund_liability'
           )
         )
     `);
@@ -434,7 +437,9 @@ async function ensureSettlementAccountingSchema(client = pool) {
           'refund_retried',
           'settlement_allocated',
           'provider_settlement_paid',
-          'gateway_fee_recorded'
+          'gateway_fee_recorded',
+          'provider_refund_liability_issued',
+          'provider_refund_liability_released'
         ))
     `);
     await db.query(`
@@ -449,7 +454,8 @@ async function ensureSettlementAccountingSchema(client = pool) {
           'reliability_deposit_retained',
           'provider_settlement_liability',
           'provider_settlement_paid',
-          'refund_expense'
+          'refund_expense',
+          'provider_refund_liability'
         ))
     `);
     await db.query(`
@@ -1138,6 +1144,29 @@ async function recordFinancialOperationLedgerStatus({
     });
   }
 
+  // Record provider refund liability when a refund (not deposit) is issued
+  if (
+    eventType === "refund_issued" &&
+    operation.operation_type === "payment_refund" &&
+    resolvedRefundId
+  ) {
+    await recordRefundLiabilityIssued({
+      client,
+      operation,
+      refundId: resolvedRefundId,
+      metadata: {
+        source: "financial_operation_ledger_status",
+        operation_status: status,
+      },
+    }).catch((err) => {
+      logger.warn("Failed to record refund liability issued", {
+        err,
+        operationId: operation.id,
+        refundId: resolvedRefundId,
+      });
+    });
+  }
+
   return row;
 }
 
@@ -1218,6 +1247,105 @@ async function recordGatewayFeeExpense({
         gateway_provider: payment.gateway_provider || "cashfree",
         gateway_order_id: payment.gateway_order_id || payment.order_id || null,
         gateway_tax_amount: roundMoney(gatewayTaxAmount),
+        ...metadata,
+      },
+    },
+  });
+}
+
+async function recordRefundLiabilityIssued({
+  client = pool,
+  operation,
+  refundId = null,
+  metadata = {},
+} = {}) {
+  if (
+    !operation?.reservation_id ||
+    !operation?.payment_session_id ||
+    roundMoney(operation.amount) <= 0 ||
+    !refundId
+  ) {
+    return null;
+  }
+
+  return recordLedgerEntry({
+    client,
+    entry: {
+      reservation_id: operation.reservation_id,
+      payment_session_id: operation.payment_session_id,
+      payment_ownership_id: operation.payment_ownership_id || null,
+      event_type: "provider_refund_liability_issued",
+      amount: roundMoney(operation.amount),
+      currency: operation.currency || "INR",
+      actor_user_id: operation.actor_user_id || null,
+      actor_role: operation.actor_role || null,
+      refund_id: refundId,
+      source_type: "refund_operation",
+      source_id: operation.id || operation.idempotency_key,
+      accounting_category: ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+      idempotency_key: [
+        "ledger",
+        "provider_refund_liability_issued",
+        operation.reservation_id,
+        operation.payment_session_id,
+        refundId,
+      ].join(":"),
+      metadata: {
+        operation_id: operation.id || null,
+        operation_type: operation.operation_type,
+        refund_id: refundId,
+        ...metadata,
+      },
+    },
+  });
+}
+
+async function recordRefundLiabilityReleased({
+  client = pool,
+  settlement,
+  refundAmount = 0,
+  refundId = null,
+  metadata = {},
+} = {}) {
+  const releaseAmount = roundMoney(refundAmount);
+  if (
+    !settlement?.id ||
+    !settlement?.reservation_id ||
+    !settlement?.payment_session_id ||
+    releaseAmount <= 0 ||
+    !refundId
+  ) {
+    return null;
+  }
+
+  return recordLedgerEntry({
+    client,
+    entry: {
+      reservation_id: settlement.reservation_id,
+      payment_id: settlement.payment_id || null,
+      payment_session_id: settlement.payment_session_id,
+      settlement_allocation_id: settlement.settlement_allocation_id || null,
+      provider_settlement_id: settlement.id,
+      event_type: "provider_refund_liability_released",
+      amount: releaseAmount,
+      currency: settlement.currency || "INR",
+      counterparty_user_id: settlement.provider_id || null,
+      counterparty_role: "provider",
+      refund_id: refundId,
+      source_type: "provider_settlement",
+      source_id: settlement.id,
+      accounting_category: ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+      idempotency_key: [
+        "ledger",
+        "provider_refund_liability_released",
+        settlement.id,
+        refundId,
+      ].join(":"),
+      metadata: {
+        status: settlement.status,
+        paid_at: settlement.paid_at || null,
+        settlement_amount: settlement.amount || null,
+        refund_amount: refundAmount,
         ...metadata,
       },
     },
@@ -1330,7 +1458,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
 
   const categoryCase = accountingCategoryCaseSql("fle");
   const normalizedLimit = normalizeSummaryLimit(limit);
-  const [categories, settlements, gatewayFees, recent] = await Promise.all([
+  const [categories, settlements, gatewayFees, refundLiability, recent] = await Promise.all([
     client.query(`
       WITH categorized AS (
         SELECT
@@ -1512,6 +1640,19 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         END AS last_recorded_at
       FROM payments
     `),
+    client.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_issued' THEN amount ELSE 0 END), 0)::numeric AS issued_total,
+        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_released' THEN amount ELSE 0 END), 0)::numeric AS released_total,
+        COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_issued')::int AS issued_count,
+        COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_released')::int AS released_count,
+        CASE
+          WHEN MAX(created_at) IS NULL THEN NULL
+          ELSE to_char(MAX(created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        END AS last_recorded_at
+      FROM financial_ledger_entries
+      WHERE accounting_category = 'provider_refund_liability'
+    `),
     client.query(
       `
       SELECT
@@ -1547,6 +1688,7 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
   const totals = categoryTotalMap(categories.rows);
   const settlementRow = settlements.rows[0] || {};
   const gatewayRow = gatewayFees.rows[0] || {};
+  const refundLiabilityRow = refundLiability.rows[0] || {};
   const commissionRevenue = amountForCategory(
     totals,
     ACCOUNTING_CATEGORIES.PLATFORM_COMMISSION_REVENUE,
@@ -1579,6 +1721,9 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
     totals,
     ACCOUNTING_CATEGORIES.GATEWAY_FEE_EXPENSE,
   );
+  const refundLiabilityIssued = Number(refundLiabilityRow.issued_total || 0);
+  const refundLiabilityReleased = Number(refundLiabilityRow.released_total || 0);
+  const refundLiabilityOutstanding = Math.max(0, refundLiabilityIssued - refundLiabilityReleased);
 
   return {
     generated_at: new Date().toISOString(),
@@ -1616,6 +1761,15 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
     },
     refunds: {
       total_refund_amount: refundExpense,
+    },
+    provider_refund_liability: {
+      outstanding: refundLiabilityOutstanding,
+      issued_total: refundLiabilityIssued,
+      released_total: refundLiabilityReleased,
+      issued_count: Number(refundLiabilityRow.issued_count || 0),
+      released_count: Number(refundLiabilityRow.released_count || 0),
+      last_recorded_at: refundLiabilityRow.last_recorded_at || null,
+      description: "Amount remaining to recover from future provider settlements",
     },
     gateway_fees: {
       classified_expense: gatewayFeeExpense,
@@ -1710,6 +1864,8 @@ module.exports = {
   recordGatewayFeeExpense,
   recordLedgerEntry,
   recordProviderSettlementPaidLedger,
+  recordRefundLiabilityIssued,
+  recordRefundLiabilityReleased,
   recordSettlementAllocation,
   repairMissingAccountingClassificationsForPayment,
 };

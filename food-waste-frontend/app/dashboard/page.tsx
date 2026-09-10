@@ -42,18 +42,17 @@ function formatCurrency(value: unknown) {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
-function effectiveSettlementAmount(record: { amount?: number | string; refund_deduction_amount?: number | string }) {
+function effectiveSettlementAmount(record: { amount?: number | string; net_payable?: number | string; refund_deduction_amount?: number | string }) {
+  if (record.net_payable !== undefined) return Number(record.net_payable || 0);
   return Math.max(
     0,
     Number(record.amount || 0) - Number(record.refund_deduction_amount || 0),
   );
 }
 
-function settlementAmountLabel(record: { amount?: number | string; refund_deduction_amount?: number | string }) {
+function settlementAmountLabel(record: { amount?: number | string; net_payable?: number | string; refund_deduction_amount?: number | string }) {
   const amount = Number(record.amount || 0);
-  const deduction = Number(record.refund_deduction_amount || 0);
-  if (deduction <= 0) return formatCurrency(amount);
-  return `${formatCurrency(amount)} - ${formatCurrency(deduction)} = ${formatCurrency(effectiveSettlementAmount(record))}`;
+  return formatCurrency(amount);
 }
 
 function displayAccount(account: ProviderPayoutAccount | null) {
@@ -228,6 +227,15 @@ function settlementStatusChip(status: string) {
   if (normalized === "refunded") {
     return <span className={`${base} bg-sky-100 text-sky-800`}>Refunded</span>;
   }
+  if (normalized === "refund pending") {
+    return <span className={`${base} bg-sky-100 text-sky-800`}>Refund Pending</span>;
+  }
+  if (normalized === "refund recovery applied") {
+    return <span className={`${base} bg-amber-100 text-amber-800`}>Refund Recovery Applied</span>;
+  }
+  if (normalized === "settled") {
+    return <span className={`${base} bg-sky-100 text-sky-800`}>Settled</span>;
+  }
   if (normalized === "failed" || normalized === "cancelled") {
     return <span className={`${base} bg-rose-100 text-rose-800`}>Failed</span>;
   }
@@ -252,6 +260,7 @@ export default function DashboardPage() {
   const [recordRows, setRecordRows] = useState<ProviderSettlementHistoryRow[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordMeta, setRecordMeta] = useState({ limit: 0, offset: 0, count: 0 });
+  const [recordStatus, setRecordStatus] = useState("all");
   const [accountType, setAccountType] =
     useState<ProviderPayoutAccountType>("UPI");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -267,6 +276,13 @@ export default function DashboardPage() {
   const [changeRequestReason, setChangeRequestReason] = useState<ChangeRequestReason>(
     "Changed bank account"
   );
+
+  const visibleRecordRows = recordRows.filter((record) => {
+    if (recordStatus === "all") return true;
+    if (recordStatus === "settled") return Boolean(record.settlement_run);
+    if (recordStatus === "refunded") return Number(record.refund_amount || 0) > 0;
+    return String(record.status || "").toLowerCase() === recordStatus;
+  });
   const [changeRequestOtherReason, setChangeRequestOtherReason] = useState("");
   const [changeRequestSubmitting, setChangeRequestSubmitting] = useState(false);
   const [changeRequestError, setChangeRequestError] = useState("");
@@ -865,7 +881,7 @@ export default function DashboardPage() {
                   <h2 className="text-base font-semibold text-zinc-950">
                     Earnings
                   </h2>
-                  <div className="grid gap-3 md:grid-cols-5">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-medium text-zinc-600">
                         Pending Earnings
@@ -874,7 +890,7 @@ export default function DashboardPage() {
                         {formatCurrency(financialSummary?.earnings.pending)}
                       </p>
                       <p className="mt-1 text-xs text-zinc-600">
-                        Current pending payable provider earnings
+                        Pending payable earnings after refund and carry-forward deductions
                       </p>
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -910,20 +926,6 @@ export default function DashboardPage() {
                         Outstanding liability to recover from future eligible settlements
                       </p>
                     </div>
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-                      <p className="text-sm font-medium text-zinc-600">
-                        Lifetime Earnings
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-950">
-                        {formatCurrency(
-                          Number(financialSummary?.earnings.pending || 0) +
-                            Number(financialSummary?.earnings.paid || 0),
-                        )}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-800">
-                        Backend pending + paid earnings summary
-                      </p>
-                    </div>
                   </div>
 
                   <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -947,6 +949,20 @@ export default function DashboardPage() {
                       {selectedYear ? (
                         <div className="inline-block ml-4 text-sm">Year Total: <strong>{formatCurrency((financialSummary?.settlements || []).filter(s => s.year === selectedYear).reduce((sum, r) => sum + Number(r.earnings || 0), 0))}</strong></div>
                       ) : null}
+                      <label className="ml-4 inline-flex items-center gap-2 text-sm">
+                        Status:
+                        <select
+                          value={recordStatus}
+                          onChange={(event) => setRecordStatus(event.target.value)}
+                          className="rounded-md border px-2 py-1 text-sm"
+                        >
+                          <option value="all">All</option>
+                          <option value="pending">Pending</option>
+                          <option value="paid">Paid</option>
+                          <option value="settled">Settled</option>
+                          <option value="refunded">Refunded</option>
+                        </select>
+                      </label>
                     </div>
                     {!financialSummary?.settlements.length ? (
                       <p className="p-4 text-sm text-zinc-600">
@@ -994,6 +1010,7 @@ export default function DashboardPage() {
                                         const res = await providerFinancialService.getSettlementRecords({
                                           year: m.year,
                                           month: m.month,
+                                          status: recordStatus,
                                           limit: 50,
                                         });
                                         setRecordRows(res.records || []);
@@ -1022,7 +1039,7 @@ export default function DashboardPage() {
                         </div>
                         {recordsLoading ? (
                           <p>Loading...</p>
-                        ) : recordRows.length === 0 ? (
+                        ) : visibleRecordRows.length === 0 ? (
                           <p className="text-sm text-zinc-600">No records for this month.</p>
                         ) : (
                           <div className="overflow-x-auto">
@@ -1036,11 +1053,16 @@ export default function DashboardPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-zinc-100">
-                                {recordRows.map((r) => (
+                                {visibleRecordRows.map((r) => (
                                   <tr key={String(r.id)}>
                                     <td className="px-4 py-3 text-zinc-700">{r.paid_at ? formatDateTime(r.paid_at) : formatDateTime(r.updated_at || r.created_at || '')}</td>
                                     <td className="px-4 py-3 font-medium text-zinc-950">
                                       {settlementAmountLabel(r)}
+                                      {r.settlement_run ? (
+                                        <p className="mt-1 text-xs font-normal text-zinc-500">
+                                          Paid {formatCurrency(r.amount)} | Reduced {formatCurrency(r.carry_forward_reduced_amount)} | Pending before {formatCurrency(r.pending_amount_before)}
+                                        </p>
+                                      ) : null}
                                       {r.refund_note ? (
                                         <p className="mt-1 max-w-56 text-xs font-normal text-amber-700">
                                           {r.refund_note}
@@ -1048,7 +1070,13 @@ export default function DashboardPage() {
                                       ) : null}
                                     </td>
                                     <td className="px-4 py-3 text-zinc-700">{r.payment_reference || '-'}</td>
-                                    <td className="px-4 py-3">{settlementStatusChip(r.status)}</td>
+                                      <td className="px-4 py-3">
+                                        {settlementStatusChip(
+                                          Number(r.refund_amount || 0) > 0
+                                            ? r.display_status || r.status
+                                            : r.status,
+                                        )}
+                                      </td>
                                   </tr>
                                 ))}
                               </tbody>

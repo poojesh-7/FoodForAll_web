@@ -644,8 +644,9 @@ async function notifyProviderSettlementProcessed({
         : null,
       queue,
     });
+    const adminIds = await getAdminUserIds();
     await publishProviderFinancialUpdated({
-      userIds: [settlement.provider_id],
+      userIds: [settlement.provider_id, ...adminIds],
       action: "provider_settlement_paid",
       providerId: settlement.provider_id,
       settlementId: settlement.id,

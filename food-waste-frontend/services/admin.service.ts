@@ -8,9 +8,11 @@ import type {
   AdminProviderSettlementConsoleData,
   AdminProviderSettlementConsoleQuery,
   AdminProviderSettlementConsoleResponse,
+  AdminProviderSettlementRow,
   AdminMonthlySettlementConsoleData,
   AdminMonthlySettlementQuery,
   AdminMonthlySettlementConsoleResponse,
+  ProviderSettlementRunRow,
   AdminOperationalAlert,
   AdminOperationalAlertsResponse,
   AdminFinancialSummaryData,
@@ -155,6 +157,13 @@ export type AdminIncidentCenter = IncidentCenterData;
 export type AdminIncidentDetail = IncidentDetailData;
 export type AdminActiveIncidentConflict = ActiveIncidentConflict;
 export type AdminSettlementConsole = AdminProviderSettlementConsoleData;
+
+export type RefundCarryForwardResult = {
+  refundSettlement: Partial<AdminProviderSettlementRow> & { id: DbId };
+  targetSettlement: Partial<AdminProviderSettlementRow> & { id: DbId };
+  carryForwardAmount: number;
+  remainingToCarryForward: number;
+};
 
 export type GovernanceIntelligenceParams = {
   windowDays?: number | string;
@@ -384,6 +393,18 @@ export async function getMonthlySettlementConsole(
     .settlements;
 }
 
+export async function getSettlementRuns(params: {
+  providerId: DbId;
+  year?: number;
+  month?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ records: ProviderSettlementRunRow[]; limit: number; offset: number; count: number }> {
+  const { data } = await api.get("/admin/settlements/runs", { params });
+  return getEnvelopeData<{ runs: { records: ProviderSettlementRunRow[]; limit: number; offset: number; count: number } }>(data).runs;
+}
+
 async function patchProviderSettlement(
   id: DbId,
   action: "paid" | "failed" | "notes",
@@ -413,7 +434,7 @@ export async function settleMonth(
   providerId: DbId,
   year: number,
   month: number,
-  payload: { payment_reference?: string; notes?: string } = {}
+  payload: { paid_amount?: number | string; payment_reference?: string; notes?: string } = {}
 ): Promise<{ settled_count: number; total_amount: number | string }> {
   const { data } = await api.patch<
     BatchSettleMonthResponse | { settled_count: number; total_amount: number | string }
@@ -424,6 +445,25 @@ export async function settleMonth(
   });
 
   return getEnvelopeData<{ settled_count: number; total_amount: number | string }>(data);
+}
+
+export async function applyRefundCarryForward(
+  settlementId: DbId,
+  payload: { notes?: string } = {}
+): Promise<RefundCarryForwardResult> {
+  const { data } = await api.patch<
+    { 
+      message: string;
+      refundSettlement: RefundCarryForwardResult["refundSettlement"];
+      targetSettlement: RefundCarryForwardResult["targetSettlement"];
+      carryForwardAmount: number;
+      remainingToCarryForward: number;
+    } | { 
+      data: RefundCarryForwardResult;
+    }
+  >(`/admin/settlements/${String(settlementId)}/carry-forward`, payload);
+
+  return getEnvelopeData<RefundCarryForwardResult>(data);
 }
 
 export async function verifyProviderPayoutAccount(
@@ -922,9 +962,11 @@ export const adminService = {
   dismissProviderReport,
   getProviderSettlementConsole,
   getMonthlySettlementConsole,
+  getSettlementRuns,
   markProviderSettlementPaid,
   markProviderSettlementFailed,
   settleMonth,
+  applyRefundCarryForward,
   verifyProviderPayoutAccount,
   approveProviderPayoutAccountChange,
   rejectProviderPayoutAccountChange,

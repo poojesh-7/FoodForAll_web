@@ -141,6 +141,12 @@ function createOperationClient() {
       }
 
       if (
+        text.includes("SELECT COALESCE(SUM(amount), 0)::numeric AS provider_exposure")
+      ) {
+        return { rows: [{ provider_exposure: 120 }] };
+      }
+
+      if (
         text.includes("FROM financial_ledger_entries") &&
         text.includes("WHERE idempotency_key=$1")
       ) {
@@ -287,7 +293,11 @@ test("refund execution is idempotent across retries and terminal duplicates", as
   // When a payment refund is issued, both REFUND_EXPENSE and PROVIDER_REFUND_LIABILITY are recorded
   assert.deepEqual(
     Array.from(client.classifications.values()).map((row) => row.accounting_category).sort(),
-    [ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY, ACCOUNTING_CATEGORIES.REFUND_EXPENSE].sort()
+    [
+      ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+      ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
+      ACCOUNTING_CATEGORIES.RELIABILITY_DEPOSIT_REFUNDED,
+    ].sort()
   );
 });
 

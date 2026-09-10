@@ -13,6 +13,7 @@ interface SettleMonthModalProps {
   monthLabel: string;
   recordCount: number;
   totalAmount: number | string;
+  uncarriedRefundAmount?: number | string;
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
@@ -35,6 +36,7 @@ export function SettleMonthModal({
   monthLabel,
   recordCount,
   totalAmount,
+  uncarriedRefundAmount = 0,
   isOpen,
   onClose,
   onSuccess,
@@ -50,11 +52,19 @@ export function SettleMonthModal({
       return;
     }
 
+    if (Number(uncarriedRefundAmount || 0) > 0) {
+      setError(
+        "Pending refunded records must be carried forward before settling this month.",
+      );
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
 
       await adminService.settleMonth(providerId, year, month, {
+        paid_amount: Number(totalAmount),
         payment_reference: reference.trim(),
         notes: notes.trim(),
       });

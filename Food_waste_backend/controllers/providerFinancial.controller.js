@@ -3,10 +3,12 @@ const {
   deactivateProviderPayoutAccount,
   getProviderSettlementSummary,
   listProviderSettlementRecords,
+  listProviderSettlementRuns,
   listProviderPayoutAccounts,
   replaceProviderPayoutAccount,
   requestProviderPayoutAccountChange,
 } = require("../shared/services/providerPayout.service");
+const providerPayoutService = require("../shared/services/providerPayout.service");
 const {
   recordOperationalEvent,
 } = require("../shared/services/observability.service");
@@ -167,7 +169,7 @@ exports.getMySettlementRecords = async (req, res) => {
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
     const offset = req.query.offset ? Number(req.query.offset) : 0;
 
-    const records = await listProviderSettlementRecords({
+    const records = await providerPayoutService.listProviderSettlementRecords({
       providerId: req.user.id,
       year,
       month,

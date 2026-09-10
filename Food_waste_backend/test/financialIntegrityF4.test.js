@@ -534,6 +534,31 @@ test("F4 provider-fault refund preserves affected settlement attribution", async
   assert.equal(entry.amount, 100);
 });
 
+test("F4 payment refund liability excludes reliability deposit", async () => {
+  const client = createLedgerClient();
+  await recordFinancialOperationLedgerStatus({
+    client,
+    operation: operation({
+      operation_type: "payment_refund",
+      amount: 120,
+      metadata: {
+        refunds: [
+          { refundType: "food", amount: 100 },
+          { refundType: "deposit", amount: 20 },
+        ],
+        provider_refund_amount: 100,
+      },
+    }),
+    status: "succeeded",
+    refundId: "refund_food_and_deposit",
+  });
+
+  const liability = Array.from(client.ledger.values()).find(
+    (entry) => entry.event_type === "provider_refund_liability_issued",
+  );
+  assert.equal(liability.amount, 100);
+});
+
 test("F4 user failed pickup and NGO deposit retention emit deposit_retained", async () => {
   for (const actor of [
     { role: "user", userId: USER_ID, source: "user_failed_pickup" },

@@ -220,6 +220,11 @@ function buildFinancialOperationDraft({
       snapshot_hash: plan.metadata.snapshotHash,
       refund_id: refundId || null,
       refunds: plan.refunds || [],
+      provider_refund_amount: roundMoney(
+        (plan.refunds || [])
+          .filter((refund) => refund.refundType === "food")
+          .reduce((sum, refund) => sum + roundMoney(refund.amount), 0),
+      ),
       retained_amounts: plan.retainedAmounts || [],
       ...metadata,
     },

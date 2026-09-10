@@ -10,6 +10,7 @@ import {
   adminService,
   type AdminFinancialSummary,
 } from "@/services/admin.service";
+import { useRealtimeStore } from "@/store/realtimeStore";
 
 function toNumber(value: unknown) {
   const number = Number(value ?? 0);
@@ -30,6 +31,9 @@ function displayValue(value: unknown) {
 }
 
 export default function AdminFinancialsPage() {
+  const providerFinancialVersion = useRealtimeStore(
+    (state) => state.providerFinancialVersion,
+  );
   const [summary, setSummary] = useState<AdminFinancialSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -58,6 +62,13 @@ export default function AdminFinancialsPage() {
       active = false;
     };
   }, [loadSummary]);
+
+  useEffect(() => {
+    if (providerFinancialVersion === 0) return;
+    queueMicrotask(() => {
+      void loadSummary();
+    });
+  }, [loadSummary, providerFinancialVersion]);
 
   const currency = summary?.currency || "INR";
 

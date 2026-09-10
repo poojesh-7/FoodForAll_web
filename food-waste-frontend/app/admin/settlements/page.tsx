@@ -317,7 +317,7 @@ export default function AdminSettlementsPage() {
           limit: 500,
         }),
         adminService.getMonthlySettlementConsole({
-          status: filter,
+          status: "all",
           verificationStatus: verificationFilter,
           search: searchQuery.trim() || undefined,
           providerId: selectedProviderId || undefined,
@@ -582,6 +582,47 @@ export default function AdminSettlementsPage() {
     (sum, row) => sum + Number(row.pending_settlements || 0),
     0
   );
+  const selectedProviderPendingRows = selectedProvider
+    ? (consoleData?.settlements || []).filter((settlement) => {
+        const settlementProviderId = String(settlement.provider_id);
+        const status = String(settlement.status || "").toLowerCase();
+        return (
+          settlementProviderId === selectedProviderId &&
+          ["pending", "processing", "allocated", "batched"].includes(status) &&
+          !(
+            Number(settlement.refund_amount || 0) > 0 &&
+            Number(settlement.recorded_carry_forward_amount || 0) > 0
+          ) &&
+            Number(settlement.net_payable ?? settlement.amount ?? 0) >
+              Number(settlement.paid_amount || 0) +
+              (Number(settlement.paid_amount || 0) > 0
+                ? Number(settlement.refund_deduction_amount || 0)
+                : 0)
+        );
+      })
+    : [];
+  const selectedProviderPendingAmount = selectedProviderPendingRows.reduce(
+      (sum, settlement) =>
+        sum +
+        Math.max(
+                          Number(settlement.refund_amount || 0) > 0 &&
+                            Number(settlement.recorded_carry_forward_amount || 0) > 0
+                            ? 0
+                            : Number(settlement.net_payable ?? settlement.amount ?? 0) -
+            Number(settlement.paid_amount || 0) -
+            (Number(settlement.paid_amount || 0) > 0
+              ? Number(settlement.refund_deduction_amount || 0)
+              : 0),
+          0,
+        ),
+    0
+  );
+  const effectiveTotalAmountDue = selectedProvider
+    ? selectedProviderPendingAmount
+    : totalAmountDue;
+  const effectivePendingSettlementCount = selectedProvider
+    ? selectedProviderPendingRows.length
+    : pendingSettlementCount;
 
   return (
     <AdminShell
@@ -656,12 +697,12 @@ export default function AdminSettlementsPage() {
         />
         <AdminMetricCard
           label="Amount Due"
-          value={formatCurrency(totalAmountDue)}
+          value={formatCurrency(effectiveTotalAmountDue)}
           detail="Pending provider settlements"
         />
         <AdminMetricCard
           label="Pending Settlements"
-          value={pendingSettlementCount}
+          value={effectivePendingSettlementCount}
           detail="Awaiting manual payout"
         />
         <AdminMetricCard
@@ -680,11 +721,23 @@ export default function AdminSettlementsPage() {
           detail="Rejected payout accounts"
         />
         {selectedProvider ? (
-          <AdminMetricCard
-            label="Refund Carry-Forward"
-            value={formatCurrency(selectedProvider.pending_refund_amount)}
-            detail="Deduct from next settlement"
-          />
+          <>
+            <AdminMetricCard
+              label="Paid Earnings"
+              value={formatCurrency(selectedProvider.paid_earnings)}
+              detail="Paid provider earnings after recovered carry-forward"
+            />
+            <AdminMetricCard
+              label="Refunds"
+              value={formatCurrency(selectedProvider.refund_amount)}
+              detail="Carry-forward recovered from settlements"
+            />
+            <AdminMetricCard
+              label="Refund Liability / Carry-Forward"
+              value={formatCurrency(selectedProvider.pending_refund_amount)}
+              detail="Outstanding refund liability"
+            />
+          </>
         ) : null}
       </section>
 
@@ -727,6 +780,41 @@ export default function AdminSettlementsPage() {
                 {providerSummary.map((row) => {
                   const rowProviderId = String(row.provider_id);
                   const selected = rowProviderId === selectedProviderId;
+                  const rowPendingRows =
+                    selected && selectedProviderId
+                      ? (consoleData?.settlements || []).filter(
+                          (settlement) =>
+                            String(settlement.provider_id) === selectedProviderId &&
+                            ["pending", "processing", "allocated", "batched"].includes(
+                              String(settlement.status || "").toLowerCase(),
+                            ),
+                        )
+                      : [];
+                  const rowPendingAmount = selected
+                    ? rowPendingRows.reduce(
+                        (sum, settlement) =>
+                          sum +
+                          Math.max(
+                            Number(settlement.refund_amount || 0) > 0 &&
+                              Number(settlement.recorded_carry_forward_amount || 0) > 0
+                              ? 0
+                              : Number(settlement.net_payable ?? settlement.amount ?? 0) -
+                              Number(settlement.paid_amount || 0),
+                            0,
+                          ),
+                        0,
+                      )
+                    : Number(row.amount_due || 0);
+                  const rowPendingCount = selected
+                    ? rowPendingRows.filter(
+                        (settlement) =>
+                          Math.max(
+                            Number(settlement.net_payable ?? settlement.amount ?? 0) -
+                              Number(settlement.paid_amount || 0),
+                            0,
+                          ) > 0,
+                      ).length
+                    : Number(row.pending_settlements || 0);
                   return (
                     <tr
                       key={rowProviderId}
@@ -750,10 +838,10 @@ export default function AdminSettlementsPage() {
                           )}
                       </td>
                       <td className="px-4 py-3 text-zinc-700">
-                        {formatCurrency(row.amount_due)}
+                        {formatCurrency(rowPendingAmount)}
                       </td>
                       <td className="px-4 py-3 text-zinc-700">
-                        {row.pending_settlements} pending
+                        {rowPendingCount} pending
                       </td>
                       <td className="px-4 py-3 text-zinc-700">
                         {formatDateTimeOrFallback(row.last_settlement_at ?? null)}
@@ -1048,26 +1136,28 @@ export default function AdminSettlementsPage() {
                           >
                             View Records
                           </button>
-                          {Number(monthly.pending_amount) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSettleModalState({
-                                  isOpen: true,
-                                  providerId: monthly.provider_id,
-                                  providerName: monthly.provider_name || "Provider",
-                                  month: monthly.month,
-                                  year: monthly.year,
-                                  monthLabel: monthly.month_label,
-                                  recordCount: monthly.record_count,
-                                  totalAmount: monthly.pending_amount,
-                                })
-                              }
-                              className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800"
-                            >
-                              Settle Month
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSettleModalState({
+                                isOpen: true,
+                                providerId: monthly.provider_id,
+                                providerName: monthly.provider_name || "Provider",
+                                month: monthly.month,
+                                year: monthly.year,
+                                monthLabel: monthly.month_label,
+                                recordCount: monthly.record_count,
+                                totalAmount: Math.max(
+                                  Number(effectiveTotalAmountDue || 0) -
+                                    Number(selectedProvider?.pending_refund_amount || 0),
+                                  0,
+                                ),
+                              })
+                            }
+                            className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800"
+                          >
+                            Settle Month
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1228,6 +1318,16 @@ export default function AdminSettlementsPage() {
       monthLabel={settleModalState.monthLabel}
       recordCount={settleModalState.recordCount}
       totalAmount={settleModalState.totalAmount}
+      uncarriedRefundAmount={
+        selectedProvider
+          ? monthlySettlements.find(
+              (monthly) =>
+                monthly.provider_id === settleModalState.providerId &&
+                monthly.year === settleModalState.year &&
+                monthly.month === settleModalState.month,
+            )?.uncarried_refund_amount || 0
+          : 0
+      }
       isOpen={settleModalState.isOpen}
       onClose={() => setSettleModalState({ ...settleModalState, isOpen: false })}
       onSuccess={() => void loadSettlements()}

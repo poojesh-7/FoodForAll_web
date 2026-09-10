@@ -1131,6 +1131,46 @@ async function recordFinancialOperationLedgerStatus({
 
   const row = await recordLedgerEntry({ client, entry });
 
+  if (eventType === "refund_issued" && operation.operation_type === "payment_refund") {
+    const depositRefundAmount = roundMoney(
+      (operation.metadata?.refunds || [])
+        .filter((refund) => refund.refundType === "deposit")
+        .reduce((sum, refund) => sum + roundMoney(refund.amount), 0),
+    );
+    if (depositRefundAmount > 0) {
+      await recordLedgerEntry({
+        client,
+        entry: {
+          reservation_id: operation.reservation_id,
+          payment_session_id: operation.payment_session_id,
+          payment_ownership_id: operation.payment_ownership_id || null,
+          event_type: "deposit_refunded",
+          amount: depositRefundAmount,
+          currency: operation.currency || "INR",
+          actor_user_id: operation.actor_user_id || null,
+          actor_role: operation.actor_role || null,
+          refund_id: resolvedRefundId,
+          source_type: "financial_operation",
+          source_id: sourceId,
+          idempotency_key: [
+            "ledger",
+            "deposit_refunded",
+            operation.reservation_id,
+            operation.payment_session_id,
+            resolvedRefundId || "no_refund_id",
+          ].join(":"),
+          metadata: {
+            operation_id: operation.id || null,
+            operation_type: operation.operation_type,
+            operation_source: operation.operation_source,
+            status,
+            source_refund_event: row.id,
+          },
+        },
+      });
+    }
+  }
+
   if (
     eventType === "deposit_retained" ||
     eventType === "deposit_refunded" ||
@@ -1150,9 +1190,15 @@ async function recordFinancialOperationLedgerStatus({
     operation.operation_type === "payment_refund" &&
     resolvedRefundId
   ) {
+    const providerRefundAmount = roundMoney(
+      operation.metadata?.provider_refund_amount ?? operation.amount,
+    );
     await recordRefundLiabilityIssued({
       client,
-      operation,
+      operation: {
+        ...operation,
+        amount: providerRefundAmount,
+      },
       refundId: resolvedRefundId,
       metadata: {
         source: "financial_operation_ledger_status",
@@ -1175,7 +1221,10 @@ async function recordProviderSettlementPaidLedger({
   settlement,
   metadata = {},
 } = {}) {
-  if (!settlement?.id || roundMoney(settlement.amount) <= 0) return null;
+  const paidAmount = roundMoney(
+    settlement?.paid_amount ?? settlement?.amount,
+  );
+  if (!settlement?.id || paidAmount <= 0) return null;
 
   return recordLedgerEntry({
     client,
@@ -1186,7 +1235,7 @@ async function recordProviderSettlementPaidLedger({
       settlement_allocation_id: settlement.settlement_allocation_id || null,
       provider_settlement_id: settlement.id,
       event_type: "provider_settlement_paid",
-      amount: settlement.amount,
+      amount: paidAmount,
       currency: settlement.currency || "INR",
       counterparty_user_id: settlement.provider_id || null,
       counterparty_role: "provider",
@@ -1268,6 +1317,24 @@ async function recordRefundLiabilityIssued({
     return null;
   }
 
+  const exposureResult = await client.query(
+    `
+    SELECT COALESCE(SUM(amount), 0)::numeric AS provider_exposure
+    FROM provider_settlements
+    WHERE reservation_id=$1
+      AND payment_session_id=$2
+    `,
+    [operation.reservation_id, operation.payment_session_id],
+  );
+  const providerExposure = Number(
+    exposureResult.rows[0]?.provider_exposure || 0,
+  );
+  const liabilityAmount = Math.min(
+    roundMoney(operation.amount),
+    providerExposure > 0 ? providerExposure : roundMoney(operation.amount),
+  );
+  if (liabilityAmount <= 0) return null;
+
   return recordLedgerEntry({
     client,
     entry: {
@@ -1275,7 +1342,7 @@ async function recordRefundLiabilityIssued({
       payment_session_id: operation.payment_session_id,
       payment_ownership_id: operation.payment_ownership_id || null,
       event_type: "provider_refund_liability_issued",
-      amount: roundMoney(operation.amount),
+      amount: liabilityAmount,
       currency: operation.currency || "INR",
       actor_user_id: operation.actor_user_id || null,
       actor_role: operation.actor_role || null,
@@ -1463,7 +1530,18 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       WITH categorized AS (
         SELECT
           fac.accounting_category,
-          fac.amount,
+          CASE
+            WHEN fac.accounting_category = 'provider_settlement_liability'
+              THEN GREATEST(
+                fac.amount - COALESCE((
+                  SELECT ps.manual_carry_forward_amount
+                  FROM provider_settlements ps
+                  WHERE ps.id = fac.provider_settlement_id
+                ), 0),
+                0
+              )
+            ELSE fac.amount
+          END AS amount,
           fac.currency,
           fac.created_at,
           fle.reservation_id,
@@ -1487,7 +1565,18 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         UNION ALL
         SELECT
           COALESCE(fle.accounting_category, ${categoryCase}) AS accounting_category,
-          fle.amount,
+          CASE
+            WHEN COALESCE(fle.accounting_category, ${categoryCase}) = 'provider_settlement_liability'
+              THEN GREATEST(
+                fle.amount - COALESCE((
+                  SELECT ps.manual_carry_forward_amount
+                  FROM provider_settlements ps
+                  WHERE ps.id = fle.provider_settlement_id
+                ), 0),
+                0
+              )
+            ELSE fle.amount
+          END AS amount,
           fle.currency,
           fle.created_at,
           fle.reservation_id,
@@ -1596,7 +1685,22 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         SELECT
           ps.id,
           ps.amount,
+          ps.paid_amount,
           ps.status,
+          ps.manual_carry_forward_amount,
+          COALESCE((
+            SELECT SUM(release_entry.amount)
+            FROM financial_ledger_entries release_entry
+            WHERE release_entry.provider_settlement_id = ps.id
+              AND release_entry.event_type = 'provider_refund_liability_released'
+          ), 0) AS recorded_refund_deduction_amount,
+          LEAST(ps.amount, COALESCE((
+            SELECT SUM(fle.amount)
+            FROM financial_ledger_entries fle
+            WHERE fle.reservation_id = ps.reservation_id
+              AND fle.payment_session_id = ps.payment_session_id
+              AND fle.event_type = 'refund_issued'
+          ), 0)) AS refund_amount,
           EXISTS (
             SELECT 1
             FROM financial_ledger_entries fle
@@ -1607,19 +1711,34 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
         FROM provider_settlements ps
       )
       SELECT
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($1::text[])
-            AND NOT is_refunded
+        COALESCE(SUM(
+          CASE
+            WHEN status = ANY($1::text[])
+              THEN GREATEST(amount - COALESCE(paid_amount, 0) - recorded_refund_deduction_amount, 0)
+            ELSE 0
+          END
         ), 0)::numeric AS pending,
-        COALESCE(SUM(amount) FILTER (
-          WHERE status = ANY($2::text[])
+        COALESCE(SUM(
+          CASE
+            WHEN status = ANY($2::text[])
+              THEN GREATEST(
+                CASE
+                  WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount
+                  ELSE amount
+                END,
+                0
+              )
+            WHEN status = ANY($1::text[])
+              THEN GREATEST(COALESCE(paid_amount, 0), 0)
+            ELSE 0
+          END
         ), 0)::numeric AS paid,
         COUNT(*) FILTER (
           WHERE status = ANY($1::text[])
-            AND NOT is_refunded
         )::int AS pending_count,
         COUNT(*) FILTER (
           WHERE status = ANY($2::text[])
+            AND NOT is_refunded
         )::int AS paid_count
       FROM settlement_projection
       `,
@@ -1641,17 +1760,43 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       FROM payments
     `),
     client.query(`
+      WITH liability_by_refund AS (
+        SELECT
+          COALESCE(fle.refund_id, source_refund.refund_id) AS refund_id,
+          SUM(amount) FILTER (WHERE event_type = 'provider_refund_liability_issued') AS issued,
+          SUM(amount) FILTER (WHERE event_type = 'provider_refund_liability_released') AS released,
+          COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_issued') AS issued_count,
+          COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_released') AS released_count,
+          MAX(created_at) AS last_recorded_at
+        FROM financial_ledger_entries fle
+        LEFT JOIN LATERAL (
+          SELECT issued_entry.refund_id
+          FROM provider_settlements source_settlement
+          JOIN financial_ledger_entries issued_entry
+            ON issued_entry.reservation_id = source_settlement.reservation_id
+            AND issued_entry.payment_session_id = source_settlement.payment_session_id
+            AND issued_entry.event_type = 'provider_refund_liability_issued'
+          WHERE source_settlement.id = CASE
+            WHEN fle.metadata->>'refund_settlement_id' ~ '^[0-9a-fA-F-]{36}$'
+              THEN (fle.metadata->>'refund_settlement_id')::uuid
+            ELSE NULL
+          END
+          ORDER BY issued_entry.created_at DESC, issued_entry.id DESC
+          LIMIT 1
+        ) source_refund ON true
+        WHERE fle.accounting_category = 'provider_refund_liability'
+        GROUP BY COALESCE(fle.refund_id, source_refund.refund_id)
+      )
       SELECT
-        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_issued' THEN amount ELSE 0 END), 0)::numeric AS issued_total,
-        COALESCE(SUM(CASE WHEN event_type = 'provider_refund_liability_released' THEN amount ELSE 0 END), 0)::numeric AS released_total,
-        COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_issued')::int AS issued_count,
-        COUNT(*) FILTER (WHERE event_type = 'provider_refund_liability_released')::int AS released_count,
+        COALESCE(SUM(COALESCE(l.issued, 0)), 0)::numeric AS issued_total,
+        COALESCE(SUM(LEAST(COALESCE(l.released, 0), COALESCE(l.issued, 0))), 0)::numeric AS released_total,
+        COALESCE(SUM(l.issued_count), 0)::int AS issued_count,
+        COALESCE(SUM(l.released_count), 0)::int AS released_count,
         CASE
-          WHEN MAX(created_at) IS NULL THEN NULL
-          ELSE to_char(MAX(created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          WHEN MAX(l.last_recorded_at) IS NULL THEN NULL
+          ELSE to_char(MAX(l.last_recorded_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         END AS last_recorded_at
-      FROM financial_ledger_entries
-      WHERE accounting_category = 'provider_refund_liability'
+      FROM liability_by_refund l
     `),
     client.query(
       `
@@ -1723,7 +1868,73 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
   );
   const refundLiabilityIssued = Number(refundLiabilityRow.issued_total || 0);
   const refundLiabilityReleased = Number(refundLiabilityRow.released_total || 0);
-  const refundLiabilityOutstanding = Math.max(0, refundLiabilityIssued - refundLiabilityReleased);
+  let refundLiabilityOutstanding = Math.max(
+    0,
+    refundLiabilityIssued - refundLiabilityReleased,
+  );
+  let projectedProviderPending = Number(settlementRow.pending || 0);
+  let projectedProviderPaid = Number(settlementRow.paid || 0);
+
+  if (refundLiabilityIssued > 0) {
+    const projectionRows = await client.query(`
+      SELECT
+        ps.id,
+        ps.amount,
+        ps.paid_amount,
+        ps.status,
+        ps.manual_carry_forward_amount,
+        COALESCE((
+          SELECT SUM(release_entry.amount)
+          FROM financial_ledger_entries release_entry
+          WHERE release_entry.provider_settlement_id = ps.id
+            AND release_entry.event_type = 'provider_refund_liability_released'
+        ), 0)::numeric AS recorded_refund_deduction_amount,
+        ps.created_at,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
+      FROM provider_settlements ps
+      ORDER BY ps.created_at ASC, ps.id ASC
+    `);
+    const { applyRefundCarryForward } = require("./providerPayout.service");
+    const projectedRows = applyRefundCarryForward(projectionRows.rows);
+    projectedProviderPending = projectedRows.reduce((total, row) => {
+      if (!PENDING_SETTLEMENT_STATUSES.includes(row.status)) return total;
+      return total + Math.max(
+        Number(row.net_payable || 0) - Number(row.paid_amount || 0),
+        0,
+      );
+    }, 0);
+    projectedProviderPaid = projectedRows.reduce((total, row) => {
+      if (PAID_SETTLEMENT_STATUSES.includes(row.status)) {
+        if (Number(row.refund_amount || 0) > 0 && Number(row.paid_amount || 0) <= 0) {
+          return total;
+        }
+        return total + Math.max(
+          Number(row.amount || 0) - Number(row.refund_deduction_amount || 0),
+          0,
+        );
+      }
+      if (PENDING_SETTLEMENT_STATUSES.includes(row.status) && Number(row.refund_amount || 0) <= 0) {
+        return total + Math.max(Number(row.paid_amount || 0), 0);
+      }
+      return total;
+    }, 0);
+    const explicitCarryForward = projectedRows.reduce(
+      (total, row) => Number(row.refund_amount || 0) > 0
+        ? total + Number(row.manual_carry_forward_amount || 0)
+        : total,
+      0,
+    );
+    refundLiabilityOutstanding = Math.max(
+      0,
+      explicitCarryForward,
+    );
+  }
 
   return {
     generated_at: new Date().toISOString(),
@@ -1735,8 +1946,8 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       total_deposits_held: depositsHeld,
       total_deposits_refunded: depositsRefunded,
       total_deposits_retained: depositsRetained,
-      total_provider_liabilities: Number(settlementRow.pending || 0),
-      total_provider_paid: Number(settlementRow.paid || 0),
+      total_provider_liabilities: projectedProviderPending,
+      total_provider_paid: projectedProviderPaid,
       total_refund_volume: refundExpense,
       total_gateway_fee_expense: gatewayFeeExpense,
     },
@@ -1751,8 +1962,8 @@ async function getFinancialSummary({ client = pool, limit = 25 } = {}) {
       separated_from_provider_settlements: true,
     },
     provider_settlements: {
-      pending: Number(settlementRow.pending || 0),
-      paid: Number(settlementRow.paid || 0),
+      pending: projectedProviderPending,
+      paid: projectedProviderPaid,
       pending_count: Number(settlementRow.pending_count || 0),
       paid_count: Number(settlementRow.paid_count || 0),
       liability_recognized: providerLiabilityRecognized,

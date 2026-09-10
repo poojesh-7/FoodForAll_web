@@ -64,6 +64,10 @@ function createRefundLiabilityTestClient() {
         };
       }
 
+      if (text.includes("AS provider_exposure")) {
+        return { rows: [{ provider_exposure: 999999 }] };
+      }
+
       if (text.includes("INSERT INTO financial_accounting_classifications")) {
         const key = params[12];
         if (classifications.has(key)) return { rows: [] };

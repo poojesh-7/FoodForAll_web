@@ -797,9 +797,9 @@ test("T-FIN-2 provider settlement earnings summary totals pending and paid", asy
 
   assert.equal(summary.earnings.pending, 1250);
   assert.equal(summary.earnings.paid, 8430);
-  assert.equal(summary.refunds.total, 950);
-  assert.equal(summary.refunds.count, 1);
-  assert.equal(summary.settlements.length, 4);
+  assert.equal(summary.refunds.total, 0);
+  assert.equal(summary.refunds.count, 0);
+  assert.equal(summary.settlements.length, 1);
 });
 
 
@@ -848,7 +848,7 @@ test("T-FIN-2 failed settlement remains outstanding and does not reduce amount d
 
   assert.equal(after.earnings.pending, 0);
   assert.equal(after.earnings.paid, 8430);
-  assert.equal(after.settlements.length, 4);
+  assert.equal(after.settlements.length, 1);
   assert.equal(client.settlements.get("settlement_pending").status, "failed");
 });
 
@@ -986,7 +986,7 @@ test("T-FIN-2 provider earnings reporting matches provider_settlements", async (
 
   assert.equal(summary.earnings.pending, 1250);
   assert.equal(summary.earnings.paid, 8430);
-  assert.equal(summary.settlements.length, 4);
+  assert.equal(summary.settlements.length, 1);
 });
 
 test("T-FIN-2 migration declares payout accounts and manual settlement fields", () => {

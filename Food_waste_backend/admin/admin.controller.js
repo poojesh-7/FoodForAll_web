@@ -21,9 +21,12 @@ const {
   getFinancialSummary,
 } = require("../shared/services/financialLedger.service");
 const {
+  calculateMonthSettlementCarryForwardReduction,
   listAdminProviderSettlements,
   listAdminMonthlySettlements,
+  listProviderSettlementRuns,
   listAdminProviderPayoutChangeRequests,
+  reduceSettlementCarryForwardUsage,
   transitionProviderSettlementStatus,
   updateProviderSettlementNotes,
   verifyProviderPayoutAccount,
@@ -1334,6 +1337,7 @@ async function transitionProviderSettlementFromAdmin(req, res, status) {
       paymentReference:
         req.body?.payment_reference || req.body?.paymentReference,
       paidAt: req.body?.paid_at || req.body?.paidAt,
+      paidAmount: req.body?.paid_amount || req.body?.paidAmount,
       notes: req.body?.notes,
     });
 
@@ -1361,7 +1365,9 @@ async function transitionProviderSettlementFromAdmin(req, res, status) {
     }
 
     res.json({
-      message: `Settlement marked ${status}`,
+      message: settlement.status === "paid"
+        ? "Settlement marked paid"
+        : "Partial settlement recorded",
       settlement,
     });
   } catch (err) {
@@ -1423,13 +1429,79 @@ exports.updateProviderSettlementNotes = async (req, res) => {
   }
 };
 
+exports.applyRefundCarryForward = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) {
+    return res.status(400).json({ error: "Settlement id is required" });
+  }
+
+  try {
+    const { applyManualRefundCarryForward } = require("../shared/services/providerPayout.service");
+
+    const result = await applyManualRefundCarryForward({
+      refundSettlementId: id,
+      adminId: req.user?.id,
+      notes: req.body?.notes || "",
+      ensureSchema: true,
+    });
+
+    if (!result || !result.success) {
+      return res.status(409).json({ 
+        error: "Failed to apply carry forward",
+        code: "CARRY_FORWARD_FAILED"
+      });
+    }
+
+    await recordSettlementAdminEvent(
+      req,
+      "provider_settlement_refund_carry_forward_applied",
+      result.refundSettlement,
+      {
+        targetSettlementId: result.targetSettlement?.id,
+        carryForwardAmount: result.carryForwardAmount,
+        remainingToCarryForward: result.remainingToCarryForward,
+      },
+    );
+
+    logger.security("Admin applied refund carry forward", {
+      adminId: req.user?.id,
+      refundSettlementId: id,
+      targetSettlementId: result.targetSettlement?.id,
+      amount: result.carryForwardAmount,
+    });
+
+    res.json({
+      message: "Refund carry forward applied successfully",
+      refundSettlement: result.refundSettlement,
+      targetSettlement: result.targetSettlement,
+      carryForwardAmount: result.carryForwardAmount,
+      remainingToCarryForward: result.remainingToCarryForward,
+    });
+  } catch (err) {
+    logger.error("Provider settlement refund carry forward failed", {
+      err,
+      adminId: req.user?.id,
+      settlementId: id,
+      errorCode: err.code,
+    });
+
+    const statusCode = err.statusCode || 500;
+    const errorCode = err.code || "UNKNOWN_ERROR";
+    
+    res.status(statusCode).json({
+      error: err.message || "Failed to apply refund carry forward",
+      code: errorCode,
+    });
+  }
+};
+
 exports.settleMonthly = async (req, res) => {
   const { providerId } = req.params;
   if (!isValidId(providerId)) {
     return res.status(400).json({ error: "Provider id is invalid" });
   }
 
-  const { year, month, payment_reference, notes } = req.body;
+  const { year, month, paid_amount, payment_reference, notes } = req.body;
   if (!year || !month || month < 1 || month > 12) {
     return res
       .status(400)
@@ -1442,15 +1514,36 @@ exports.settleMonthly = async (req, res) => {
       `
       SELECT
         ps.id,
-        ps.status
+        ps.provider_id,
+        ps.reservation_id,
+        ps.payment_session_id,
+        ps.status,
+        ps.amount,
+        ps.paid_amount,
+        COALESCE(ps.manual_carry_forward_amount, 0) AS manual_carry_forward_amount,
+        COALESCE((
+          SELECT SUM(release_entry.amount)
+          FROM financial_ledger_entries release_entry
+          WHERE release_entry.event_type = 'provider_refund_liability_released'
+            AND release_entry.refund_id IN (
+              SELECT refund_entry.refund_id
+              FROM financial_ledger_entries refund_entry
+              WHERE refund_entry.reservation_id = ps.reservation_id
+                AND refund_entry.payment_session_id = ps.payment_session_id
+                AND refund_entry.event_type = 'refund_issued'
+                AND refund_entry.refund_id IS NOT NULL
+            )
+        ), 0) AS recorded_carry_forward_amount,
+        LEAST(ps.amount, COALESCE((
+          SELECT SUM(refund_entry.amount)
+          FROM financial_ledger_entries refund_entry
+          WHERE refund_entry.reservation_id = ps.reservation_id
+            AND refund_entry.payment_session_id = ps.payment_session_id
+            AND refund_entry.event_type = 'refund_issued'
+        ), 0))::numeric AS refund_amount
       FROM provider_settlements ps
-      LEFT JOIN financial_ledger_entries fle
-        ON fle.reservation_id = ps.reservation_id
-        AND fle.payment_session_id = ps.payment_session_id
-        AND fle.event_type = 'refund_issued'
       WHERE ps.provider_id = $1
         AND ps.status = ANY($2::text[])
-        AND fle.id IS NULL
         AND EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $3
         AND EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $4
       ORDER BY ps.created_at ASC
@@ -1464,10 +1557,137 @@ exports.settleMonthly = async (req, res) => {
     );
 
     const settlements = settlementsResult.rows;
-    if (settlements.length === 0) {
-      return res.status(404).json({
-        error: "No pending settlements found for this provider and month",
+
+    const pendingRefundsAwaitingCarryForward = settlements.filter(
+      (settlement) =>
+        Number(settlement.refund_amount || 0) >
+        Number(settlement.manual_carry_forward_amount || 0) +
+          Number(settlement.recorded_carry_forward_amount || 0),
+    );
+    if (pendingRefundsAwaitingCarryForward.length > 0) {
+      return res.status(409).json({
+        error: "Pending refunded records must be carried forward before settling this month.",
+        code: "PENDING_REFUND_MUST_CARRY_FORWARD",
+        pending_refund_count: pendingRefundsAwaitingCarryForward.length,
+        pending_refund_amount: pendingRefundsAwaitingCarryForward.reduce(
+          (sum, settlement) =>
+            sum +
+            Math.max(
+              Number(settlement.refund_amount || 0) -
+                Number(settlement.manual_carry_forward_amount || 0) -
+                Number(settlement.recorded_carry_forward_amount || 0),
+              0,
+            ),
+          0,
+        ),
       });
+    }
+
+    const sourceCarryForwardResult = await pool.query(
+      `
+      SELECT
+        ps.id,
+        COALESCE(ps.manual_carry_forward_amount, 0)::numeric AS manual_carry_forward_amount
+      FROM provider_settlements ps
+      WHERE ps.provider_id = $1
+        AND COALESCE(ps.manual_carry_forward_amount, 0) > 0
+        AND COALESCE(ps.paid_at, ps.updated_at, ps.created_at) <
+          (make_date($2, $3, 1) + INTERVAL '1 month')
+        AND EXISTS (
+          SELECT 1
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        )
+      ORDER BY ps.created_at ASC, ps.id ASC
+      `,
+        [
+          providerId,
+          Number(year),
+          Number(month),
+        ],
+    );
+
+    const sourceCarryForwardRows = sourceCarryForwardResult.rows;
+    const totalManualCarryForward = settlements.reduce(
+      (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
+      0,
+    ) + sourceCarryForwardRows.reduce(
+      (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
+      0,
+    );
+    const monthCarryForward = calculateMonthSettlementCarryForwardReduction({
+      settlements,
+      totalCarryForwardAmount: totalManualCarryForward,
+    });
+
+    if (
+      settlements.length > 0 &&
+      monthCarryForward.totalPendingAmount > 0 &&
+      monthCarryForward.settlementAmount <= 0
+    ) {
+      return res.status(409).json({
+        error: "Pending amount does not exceed the refund carry-forward. Postpone settlement until a larger pending pool is available.",
+        code: "SETTLEMENT_MUST_POSTPONE_FOR_CARRY_FORWARD",
+        pending_amount: monthCarryForward.totalPendingAmount,
+        carry_forward_amount: monthCarryForward.carryForwardAmount,
+        settlement_amount: monthCarryForward.settlementAmount,
+      });
+    }
+
+    if (settlements.length === 0) {
+      return res.status(200).json({
+        message: "No pending amount remains; no settlement run was created",
+        settled_count: 0,
+        total_amount: 0,
+        carry_forward_amount: 0,
+        remaining_carry_forward: 0,
+      });
+    }
+
+    let sourceCarryForwardRemaining = sourceCarryForwardRows.reduce(
+      (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
+      0,
+    );
+    let pendingCarryForwardToAllocate = sourceCarryForwardRemaining;
+
+    for (const settlement of settlements) {
+      if (pendingCarryForwardToAllocate <= 0) break;
+      if (Number(settlement.refund_amount || 0) > 0) continue;
+
+      const existingCarryForward = Number(settlement.manual_carry_forward_amount || 0);
+      const availablePending = Math.max(
+        Number(settlement.amount || 0) - Number(settlement.paid_amount || 0) - existingCarryForward,
+        0,
+      );
+      const allocation = Math.min(pendingCarryForwardToAllocate, availablePending);
+      if (allocation <= 0) continue;
+
+      await pool.query(
+        `
+        UPDATE provider_settlements
+        SET manual_carry_forward_amount = manual_carry_forward_amount + $2,
+          manual_carry_forward_applied_at = COALESCE(manual_carry_forward_applied_at, NOW()),
+          manual_carry_forward_applied_by = COALESCE(manual_carry_forward_applied_by, $3),
+            updated_at = NOW()
+        WHERE id = $1
+        `,
+        [settlement.id, allocation, req.user?.id || null],
+      );
+      settlement.manual_carry_forward_amount = existingCarryForward + allocation;
+      pendingCarryForwardToAllocate -= allocation;
+    }
+
+    const requestedSettlementAmount = paid_amount === undefined || paid_amount === null || paid_amount === ""
+      ? null
+      : Number(paid_amount);
+    let remainingPayment = requestedSettlementAmount === null
+      ? null
+      : requestedSettlementAmount;
+
+    if (remainingPayment !== null && (!Number.isFinite(remainingPayment) || remainingPayment <= 0)) {
+      return res.status(400).json({ error: "Paid amount must be greater than zero" });
     }
 
     // Mark each settlement as paid
@@ -1475,18 +1695,44 @@ exports.settleMonthly = async (req, res) => {
     let totalAmount = 0;
 
     for (const settlement of settlements) {
+      if (
+        remainingPayment !== null &&
+        remainingPayment <= 0 &&
+        Number(settlement.manual_carry_forward_amount || 0) <= 0
+      ) {
+        break;
+      }
+
+      const netRemainingSettlement = Math.max(
+        Number(settlement.amount || 0) - Number(settlement.paid_amount || 0) - Number(settlement.manual_carry_forward_amount || 0),
+        0,
+      );
+      if (netRemainingSettlement <= 0) continue;
+
+      const paidAmountBeforeSettlement = Number(settlement.paid_amount || 0);
+      const paymentForSettlement = remainingPayment === null
+        ? undefined
+        : Math.min(remainingPayment, netRemainingSettlement);
       try {
         const updated = await transitionProviderSettlementStatus({
           settlementId: settlement.id,
           status: "paid",
           adminId: req.user.id,
           paymentReference: payment_reference || `batch-${year}-${month}`,
+          paidAmount: paymentForSettlement,
           notes: notes || `Batch settlement for ${year}-${String(month).padStart(2, "0")}`,
         });
 
         if (updated) {
+          const actualPayment = Math.max(
+            Number(updated.paid_amount || 0) - paidAmountBeforeSettlement,
+            0,
+          );
           settledCount++;
-          totalAmount += Number(updated.amount || 0);
+          totalAmount += actualPayment;
+          if (remainingPayment !== null) remainingPayment -= actualPayment;
+          void notifyProviderSettlementProcessed({ settlement: updated });
+
         }
       } catch (err) {
         logger.warn("Failed to settle individual settlement in batch", {
@@ -1500,6 +1746,107 @@ exports.settleMonthly = async (req, res) => {
       }
     }
 
+    if (settledCount === 0) {
+      return res.status(409).json({
+        error: "No settlement records were updated. Verify the provider payout account and try again.",
+        code: "NO_SETTLEMENTS_UPDATED",
+      });
+    }
+
+    if (totalAmount <= 0) {
+      return res.status(409).json({
+        error: "No payable amount remains for this settlement month.",
+        code: "NO_PAYABLE_AMOUNT_REMAINING",
+      });
+    }
+
+    // If there's remaining carry-forward, move it to next month's first settlement
+    if (monthCarryForward.remainingCarryForward > 0) {
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextYear = month === 12 ? year + 1 : year;
+      
+      const nextMonthResult = await pool.query(
+        `
+        SELECT ps.id
+        FROM provider_settlements ps
+        WHERE ps.provider_id = $1
+          AND ps.status = ANY($2::text[])
+          AND EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $3
+          AND EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $4
+        ORDER BY ps.created_at ASC
+        LIMIT 1
+        `,
+        [providerId, ['pending', 'processing', 'allocated', 'batched'], nextYear, nextMonth]
+      );
+      
+      if (nextMonthResult.rows.length > 0) {
+        const nextMonthFirstSettlement = nextMonthResult.rows[0];
+        const carryForwardNote = `Carried from ${year}-${String(month).padStart(2, '0')}: ₹${monthCarryForward.remainingCarryForward.toFixed(2)}`;
+        await pool.query(
+          `
+          UPDATE provider_settlements
+          SET manual_carry_forward_amount = manual_carry_forward_amount + $2,
+              manual_carry_forward_notes = $3 || COALESCE(manual_carry_forward_notes, ''),
+              updated_at = NOW()
+          WHERE id = $1
+          `,
+          [
+            nextMonthFirstSettlement.id,
+            monthCarryForward.remainingCarryForward,
+            carryForwardNote + '. '
+          ]
+        );
+        
+        await recordOperationalEvent({
+          category: "financial",
+          severity: "info",
+          eventName: "admin_carry_forward_to_next_month",
+          metadata: {
+            adminId: req.user?.id,
+            providerId,
+            currentYear: year,
+            currentMonth: month,
+            nextYear,
+            nextMonth,
+            carryForwardAmount: monthCarryForward.remainingCarryForward,
+            targetSettlementId: nextMonthFirstSettlement.id,
+          },
+        });
+      }
+    }
+
+    await pool.query(
+      `
+      INSERT INTO provider_settlement_runs (
+        provider_id,
+        settlement_year,
+        settlement_month,
+        settled_by,
+        paid_amount,
+        pending_amount_before,
+        pending_amount_after,
+        carry_forward_reduced_amount,
+        payment_reference,
+        notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `,
+      [
+        providerId,
+        Number(year),
+        Number(month),
+        req.user?.id || null,
+        requestedSettlementAmount === null ? totalAmount : requestedSettlementAmount,
+        monthCarryForward.totalPendingAmount,
+        Math.max(monthCarryForward.settlementAmount - totalAmount, 0),
+        Math.max(
+          monthCarryForward.carryForwardAmount - monthCarryForward.remainingCarryForward,
+          0,
+        ),
+        payment_reference || null,
+        notes || null,
+      ],
+    );
+
     await recordOperationalEvent({
       category: "financial",
       severity: "info",
@@ -1511,6 +1858,8 @@ exports.settleMonthly = async (req, res) => {
         month,
         settled_count: settledCount,
         total_amount: totalAmount,
+        carry_forward_amount: monthCarryForward.carryForwardAmount,
+        remaining_carry_forward: monthCarryForward.remainingCarryForward,
         payment_reference: payment_reference || null,
       },
     });
@@ -1519,6 +1868,8 @@ exports.settleMonthly = async (req, res) => {
       message: `Settled ${settledCount} records`,
       settled_count: settledCount,
       total_amount: totalAmount,
+      carry_forward_amount: monthCarryForward.carryForwardAmount,
+      remaining_carry_forward: monthCarryForward.remainingCarryForward,
     });
   } catch (err) {
     logger.error("Batch settlement failed", {
@@ -1530,6 +1881,34 @@ exports.settleMonthly = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to settle month",
+    });
+  }
+};
+
+exports.getSettlementRuns = async (req, res) => {
+  const providerId = req.query.providerId || req.query.provider_id;
+  if (!providerId || !isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is required" });
+  }
+
+  try {
+    const runs = await listProviderSettlementRuns({
+      providerId,
+      year: req.query.year ? Number(req.query.year) : undefined,
+      month: req.query.month ? Number(req.query.month) : undefined,
+      status: req.query.status || "settled",
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+    });
+    res.json({ runs });
+  } catch (err) {
+    logger.error("Failed to fetch provider settlement runs", {
+      err,
+      adminId: req.user?.id,
+      providerId,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch settlement runs",
     });
   }
 };

@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_provider_settlement_runs_status;
+DROP INDEX IF EXISTS idx_provider_settlement_runs_provider_month;
+DROP TABLE IF EXISTS provider_settlement_runs;

@@ -36,6 +36,7 @@ router.get(
 );
 router.get("/settlements", adminCtrl.getProviderSettlementConsole);
 router.get("/settlements/monthly", adminCtrl.getMonthlySettlementConsole);
+router.get("/settlements/runs", adminCtrl.getSettlementRuns);
 router.patch(
   "/settlements/:id/paid",
   adminActionLimiter,
@@ -50,6 +51,11 @@ router.patch(
   "/settlements/:id/notes",
   adminActionLimiter,
   adminCtrl.updateProviderSettlementNotes,
+);
+router.patch(
+  "/settlements/:id/carry-forward",
+  adminActionLimiter,
+  adminCtrl.applyRefundCarryForward,
 );
 router.patch(
   "/settlements/:providerId/settle-month",

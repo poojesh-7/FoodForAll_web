@@ -736,12 +736,26 @@ export interface ProviderSettlementHistoryRow extends DbRow {
   payment_reference?: string | null;
   notes?: string | null;
   refund_amount?: number | string;
+  manual_carry_forward_amount?: number | string;
+  manual_carry_forward_applied_at?: ISODateString | null;
+  recorded_carry_forward_amount?: number | string;
+  carry_forward_applied_amount?: number | string;
   refund_deduction_amount?: number | string;
+  net_payable?: number | string;
   pending_refund_amount?: number | string;
   refund_note?: string | null;
+  payment_status?: string | null;
+  refund_status?: string | null;
+  display_status?: string | null;
   processed_by?: DbId | null;
   created_at?: ISODateString | null;
   updated_at?: ISODateString | null;
+  settlement_run?: boolean;
+  settlement_year?: number;
+  settlement_month?: number;
+  pending_amount_before?: number | string;
+  pending_amount_after?: number | string;
+  carry_forward_reduced_amount?: number | string;
 }
 
 export interface ProviderSettlementSummaryData {
@@ -771,7 +785,7 @@ export interface ProviderMonthlySettlementRow {
   pending: number | string;
   refunded?: number | string;
   count: number;
-  status: "Pending" | "Partially Paid" | "Paid" | "Paid - Refund Pending" | "Refunded";
+  status: "Pending" | "Partially Paid" | "Paid" | "Paid - Refund Pending" | "Refunded" | string;
 }
 
 export type ProviderSettlementSummaryResponse =
@@ -785,6 +799,8 @@ export interface AdminProviderSettlementRow extends ProviderSettlementHistoryRow
   pending_settlements: number | string;
   pending_refund_amount?: number | string;
   refund_deduction_amount?: number | string;
+  paid_earnings?: number | string;
+  refund_amount?: number | string;
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;
 }
@@ -798,6 +814,8 @@ export interface AdminProviderSettlementSummaryRow {
   pending_settlements: number | string;
   pending_refund_amount?: number | string;
   refund_deduction_amount?: number | string;
+  paid_earnings?: number | string;
+  refund_amount?: number | string;
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;
 }
@@ -806,6 +824,21 @@ export interface AdminProviderSettlementConsoleData {
   filter: "pending" | "paid" | "failed" | "all" | string;
   summary: AdminProviderSettlementSummaryRow[];
   settlements: AdminProviderSettlementRow[];
+}
+
+export interface ProviderSettlementRunRow {
+  id: DbId;
+  provider_id: DbId;
+  settlement_year: number;
+  settlement_month: number;
+  settled_at: ISODateString;
+  paid_amount: number | string;
+  pending_amount_before: number | string;
+  pending_amount_after: number | string;
+  carry_forward_reduced_amount: number | string;
+  payment_reference?: string | null;
+  notes?: string | null;
+  status: "settled" | string;
 }
 
 export interface AdminProviderSettlementConsoleQuery {
@@ -819,6 +852,8 @@ export interface AdminProviderSettlementConsoleQuery {
 }
 
 export interface UpdateProviderSettlementStatusRequest {
+  paid_amount?: number | string | null;
+  paidAmount?: number | string | null;
   payment_reference?: string | null;
   paymentReference?: string | null;
   paid_at?: ISODateString | null;
@@ -848,6 +883,8 @@ export interface AdminMonthlySettlementRow {
   total_amount: number | string;
   paid_amount: number | string;
   pending_amount: number | string;
+  carry_forward_amount?: number | string;
+  uncarried_refund_amount?: number | string;
   status: "Paid" | "Pending" | "Partially Paid" | "Failed";
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;

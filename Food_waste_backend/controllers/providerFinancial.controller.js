@@ -167,6 +167,7 @@ exports.getMySettlementRecords = async (req, res) => {
     const month = req.query.month ? Number(req.query.month) : undefined;
     const status = req.query.status || undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const page = req.query.page ? Number(req.query.page) : undefined;
     const offset = req.query.offset ? Number(req.query.offset) : 0;
 
     const records = await providerPayoutService.listProviderSettlementRecords({
@@ -175,6 +176,7 @@ exports.getMySettlementRecords = async (req, res) => {
       month,
       status,
       limit,
+      page,
       offset,
     });
 
@@ -186,6 +188,26 @@ exports.getMySettlementRecords = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch settlement records",
+    });
+  }
+};
+
+exports.getMySettledRecordsTotal = async (req, res) => {
+  try {
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    const total = await providerPayoutService.getProviderSettledRecordsTotal({
+      providerId: req.user.id,
+      year,
+    });
+
+    res.json({ total });
+  } catch (err) {
+    logger.error("Failed to calculate provider settled records total", {
+      err,
+      providerId: req.user?.id,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to calculate settled records total",
     });
   }
 };

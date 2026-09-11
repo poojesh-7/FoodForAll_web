@@ -259,11 +259,19 @@ export default function DashboardPage() {
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [recordRows, setRecordRows] = useState<ProviderSettlementHistoryRow[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
-  const [recordMeta, setRecordMeta] = useState({ limit: 0, offset: 0, count: 0 });
-  const [recordStatus, setRecordStatus] = useState("all");
+  const [recordMeta, setRecordMeta] = useState({
+    limit: 10,
+    offset: 0,
+    page: 1,
+    pageCount: 0,
+    count: 0,
+  });
+  const [recordQuery, setRecordQuery] = useState<{ year: number; month: number } | null>(null);
   const [accountType, setAccountType] =
     useState<ProviderPayoutAccountType>("UPI");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [settledYearTotal, setSettledYearTotal] = useState<number | null>(null);
+  const [settlementPage, setSettlementPage] = useState(0);
   const [upiId, setUpiId] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
@@ -277,12 +285,40 @@ export default function DashboardPage() {
     "Changed bank account"
   );
 
-  const visibleRecordRows = recordRows.filter((record) => {
-    if (recordStatus === "all") return true;
-    if (recordStatus === "settled") return Boolean(record.settlement_run);
-    if (recordStatus === "refunded") return Number(record.refund_amount || 0) > 0;
-    return String(record.status || "").toLowerCase() === recordStatus;
-  });
+  const visibleRecordRows = recordRows;
+  const visibleSettlementRows = (financialSummary?.settlements || [])
+    .filter((settlement) => !selectedYear || settlement.year === selectedYear)
+    .slice(settlementPage * 10, settlementPage * 10 + 10);
+  const settlementPageCount = Math.ceil(
+    (financialSummary?.settlements || []).filter(
+      (settlement) => !selectedYear || settlement.year === selectedYear,
+    ).length / 10,
+  );
+
+  async function loadSettlementRecords(year: number, month: number, page: number) {
+    try {
+      setRecordsLoading(true);
+      setRecordsOpen(true);
+      const response = await providerFinancialService.getSettlementRecords({
+        year,
+        month,
+        page,
+        limit: 10,
+      });
+      setRecordRows(response.records || []);
+      setRecordMeta({
+        limit: response.limit || 10,
+        offset: response.offset || 0,
+        page: response.page || page,
+        pageCount: response.pageCount || 0,
+        count: response.count || 0,
+      });
+    } catch {
+      setRecordRows([]);
+    } finally {
+      setRecordsLoading(false);
+    }
+  }
   const [changeRequestOtherReason, setChangeRequestOtherReason] = useState("");
   const [changeRequestSubmitting, setChangeRequestSubmitting] = useState(false);
   const [changeRequestError, setChangeRequestError] = useState("");
@@ -387,6 +423,26 @@ export default function DashboardPage() {
       active = false;
     };
   }, [hydratePayoutForm, providerFinancialVersion, user?.role]);
+
+  useEffect(() => {
+    if (!selectedYear) {
+      return;
+    }
+
+    let active = true;
+    void providerFinancialService
+      .getSettledRecordsTotal(selectedYear)
+      .then((total) => {
+        if (active) setSettledYearTotal(total);
+      })
+      .catch(() => {
+        if (active) setSettledYearTotal(0);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedYear]);
 
   const isVerifiedAccount = Boolean(
     payoutAccount &&
@@ -938,7 +994,11 @@ export default function DashboardPage() {
                       <label className="text-sm mr-2">Year:</label>
                       <select
                         value={selectedYear ?? ''}
-                        onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                        onChange={(e) => {
+                          setSelectedYear(e.target.value ? Number(e.target.value) : null);
+                          setSettledYearTotal(null);
+                          setSettlementPage(0);
+                        }}
                         className="rounded-md border px-2 py-1 text-sm"
                       >
                         <option value="">All</option>
@@ -947,22 +1007,8 @@ export default function DashboardPage() {
                         ))}
                       </select>
                       {selectedYear ? (
-                        <div className="inline-block ml-4 text-sm">Year Total: <strong>{formatCurrency((financialSummary?.settlements || []).filter(s => s.year === selectedYear).reduce((sum, r) => sum + Number(r.earnings || 0), 0))}</strong></div>
+                        <div className="inline-block ml-4 text-sm">Settled Total: <strong>{formatCurrency(settledYearTotal)}</strong></div>
                       ) : null}
-                      <label className="ml-4 inline-flex items-center gap-2 text-sm">
-                        Status:
-                        <select
-                          value={recordStatus}
-                          onChange={(event) => setRecordStatus(event.target.value)}
-                          className="rounded-md border px-2 py-1 text-sm"
-                        >
-                          <option value="all">All</option>
-                          <option value="pending">Pending</option>
-                          <option value="paid">Paid</option>
-                          <option value="settled">Settled</option>
-                          <option value="refunded">Refunded</option>
-                        </select>
-                      </label>
                     </div>
                     {!financialSummary?.settlements.length ? (
                       <p className="p-4 text-sm text-zinc-600">
@@ -973,53 +1019,19 @@ export default function DashboardPage() {
                         <table className="min-w-full divide-y divide-zinc-100 text-sm">
                           <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
                             <tr>
-                              <th className="px-4 py-3">Month</th>
-                              <th className="px-4 py-3">Earnings</th>
-                              <th className="px-4 py-3">Paid</th>
-                              <th className="px-4 py-3">Pending</th>
-                              <th className="px-4 py-3">Status</th>
                               <th className="px-4 py-3">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-100">
-                            {(financialSummary.settlements || []).filter((m) => !selectedYear || m.year === selectedYear).map((m, index) => (
+                            {visibleSettlementRows.map((m, index) => (
                               <tr key={`${String(m.month_key)}-${index}`}>
-                                <td className="px-4 py-3 text-zinc-700">
-                                  {m.month_label}
-                                </td>
-                                <td className="px-4 py-3 font-medium text-zinc-950">
-                                  {formatCurrency(m.earnings)}
-                                </td>
-                                <td className="px-4 py-3 text-zinc-700">
-                                  {formatCurrency(m.paid)}
-                                </td>
-                                <td className="px-4 py-3 text-zinc-700">
-                                  {formatCurrency(m.pending)}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide ${m.status === "Paid - Refund Pending" ? "bg-sky-100 text-sky-800" : m.status === "Paid" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{m.status}</span>
-                                </td>
                                 <td className="px-4 py-3">
                                   <button
                                     type="button"
                                     className="rounded-md bg-zinc-100 px-3 py-1 text-sm"
-                                    onClick={async () => {
-                                      try {
-                                        setRecordsLoading(true);
-                                        setRecordsOpen(true);
-                                        const res = await providerFinancialService.getSettlementRecords({
-                                          year: m.year,
-                                          month: m.month,
-                                          status: recordStatus,
-                                          limit: 50,
-                                        });
-                                        setRecordRows(res.records || []);
-                                        setRecordMeta({ limit: res.limit || 0, offset: res.offset || 0, count: res.count || 0 });
-                                      } catch (err) {
-                                        setRecordRows([]);
-                                      } finally {
-                                        setRecordsLoading(false);
-                                      }
+                                    onClick={() => {
+                                      setRecordQuery({ year: m.year, month: m.month });
+                                      void loadSettlementRecords(m.year, m.month, 1);
                                     }}
                                   >
                                     View Records
@@ -1031,11 +1043,34 @@ export default function DashboardPage() {
                         </table>
                       </div>
                     )}
+                    {settlementPageCount > 1 ? (
+                      <div className="flex items-center justify-between border-t border-zinc-200 px-4 py-3 text-sm text-zinc-600">
+                        <span>Page {settlementPage + 1} of {settlementPageCount}</span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSettlementPage((page) => Math.max(page - 1, 0))}
+                            disabled={settlementPage === 0}
+                            className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettlementPage((page) => Math.min(page + 1, settlementPageCount - 1))}
+                            disabled={settlementPage >= settlementPageCount - 1}
+                            className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                     {recordsOpen ? (
                       <div className="p-4">
                         <div className="mb-2 flex items-center justify-between">
                           <h4 className="text-sm font-semibold">Records</h4>
-                          <button onClick={() => { setRecordsOpen(false); setRecordRows([]); }} className="text-sm text-zinc-600">Close</button>
+                          <button onClick={() => { setRecordsOpen(false); setRecordRows([]); setRecordQuery(null); }} className="text-sm text-zinc-600">Close</button>
                         </div>
                         {recordsLoading ? (
                           <p>Loading...</p>
@@ -1083,6 +1118,29 @@ export default function DashboardPage() {
                             </table>
                           </div>
                         )}
+                        {recordMeta.pageCount > 1 ? (
+                          <div className="mt-3 flex items-center justify-between text-sm text-zinc-600">
+                            <span>Page {recordMeta.page} of {recordMeta.pageCount}</span>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page - 1)}
+                                disabled={recordMeta.page <= 1 || recordsLoading}
+                                className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
+                              >
+                                Previous
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page + 1)}
+                                disabled={recordMeta.page >= recordMeta.pageCount || recordsLoading}
+                                className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

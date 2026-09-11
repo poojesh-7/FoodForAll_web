@@ -33,6 +33,7 @@ const OUTSTANDING_SETTLEMENT_STATUSES = [
 const FINAL_SETTLEMENT_STATUSES = [
   "pending",
   "processing",
+  "settled",
   "paid",
   "failed",
   "cancelled",
@@ -236,17 +237,16 @@ async function ensureProviderPayoutSchema(client = pool) {
       UPDATE provider_settlements
       SET status = CASE
         WHEN status IN ('allocated','batched') THEN 'pending'
-        WHEN status='settled' THEN 'paid'
         ELSE status
       END
-      WHERE status IN ('allocated','batched','settled')
+      WHERE status IN ('allocated','batched')
     `);
     await db.query(`
       ALTER TABLE provider_settlements
       ALTER COLUMN status SET DEFAULT 'pending',
       DROP CONSTRAINT IF EXISTS provider_settlements_status_valid,
       ADD CONSTRAINT provider_settlements_status_valid
-        CHECK (status IN ('pending','processing','paid','failed','cancelled'))
+        CHECK (status IN ('pending','processing','settled','paid','failed','cancelled'))
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_provider_settlements_status_created_tfin2
@@ -943,7 +943,6 @@ async function deactivateProviderPayoutAccount({
 function normalizeSettlementStatus(status) {
   const value = String(status || "").toLowerCase();
   if (value === "allocated" || value === "batched") return "pending";
-  if (value === "settled") return "paid";
   return value || "pending";
 }
 
@@ -1652,6 +1651,7 @@ async function listProviderSettlementRecords({
   month,
   status,
   limit = 50,
+  page = 1,
   offset = 0,
   ensureSchema = true,
 } = {}) {
@@ -1761,20 +1761,19 @@ async function listProviderSettlementRecords({
       LIMIT 1
     ) fle ON true
     WHERE ${whereClauses.join(' AND ')}
-    ORDER BY COALESCE(ps.paid_at, ps.updated_at, ps.created_at) DESC, ps.id DESC
   `;
 
-  const result = normalizedStatus === "settled"
-    ? { rows: [] }
-    : await client.query(baseQuery, params);
-
-  const records = preserveSettlementRecordDisplay(
-    applyRefundCarryForward(result.rows.map(serializeSettlement)),
-  );
+  const safeLimit = normalizeLimit(limit, 50);
+  const parsedPage = Number(page);
+  const safePage = Number.isFinite(parsedPage) && parsedPage > 0
+    ? Math.floor(parsedPage)
+    : Math.max(Math.floor(Number(offset) / safeLimit) + 1, 1);
+  const safeOffset = (safePage - 1) * safeLimit;
+  const runParams = [...params];
+  const runWhere = [`provider_id = $${runParams.length + 1}`];
+  runParams.push(providerId);
+  let runIndex = runParams.length + 1;
   if (includeSettlementRuns) {
-    const runParams = [providerId];
-    const runWhere = ["provider_id = $1"];
-    let runIndex = 2;
     if (year && month) {
       runWhere.push(`settlement_year = $${runIndex}`, `settlement_month = $${runIndex + 1}`);
       runParams.push(Number(year), Number(month));
@@ -1783,65 +1782,108 @@ async function listProviderSettlementRecords({
       runWhere.push(`settlement_year = $${runIndex}`);
       runParams.push(Number(year));
     }
-    let runs = { rows: [] };
-    try {
-      runs = await client.query(
-        `
-        SELECT id, provider_id, settlement_year, settlement_month, settled_at,
-               settled_by, paid_amount, pending_amount_before, pending_amount_after,
-               carry_forward_reduced_amount, payment_reference, notes, status
-        FROM provider_settlement_runs
-        WHERE ${runWhere.join(" AND ")}
-          AND COALESCE(paid_amount, 0) > 0
-        ORDER BY settled_at DESC, id DESC
-        `,
-        runParams,
-      );
-    } catch (error) {
-      if (
-        error?.code !== "42P01" &&
-        !String(error?.message || "").startsWith("Unexpected SQL in mock") &&
-        !String(error?.message || "").startsWith("Unexpected query")
-      ) {
-        throw error;
-      }
-    }
-    records.push(...runs.rows.map((run) => ({
-      id: run.id,
-      provider_id: run.provider_id,
-      reservation_id: run.id,
-      payment_session_id: `settlement-run:${run.id}`,
-      amount: Number(run.paid_amount || 0),
-      paid_amount: Number(run.paid_amount || 0),
-      commission_amount: 0,
-      currency: "INR",
-      status: "settled",
-      raw_status: "settled",
-      paid_at: run.settled_at,
-      payment_reference: run.payment_reference,
-      notes: run.notes,
-      settlement_run: true,
-      settlement_year: Number(run.settlement_year),
-      settlement_month: Number(run.settlement_month),
-      pending_amount_before: Number(run.pending_amount_before || 0),
-      pending_amount_after: Number(run.pending_amount_after || 0),
-      carry_forward_reduced_amount: Number(run.carry_forward_reduced_amount || 0),
-      display_status: "Settled",
-      created_at: run.settled_at,
-      updated_at: run.settled_at,
-    })));
   }
-  records.sort((left, right) => new Date(right.paid_at || right.updated_at || right.created_at || 0) - new Date(left.paid_at || left.updated_at || left.created_at || 0));
-  const safeLimit = normalizeLimit(limit, 50);
-  const safeOffset = Number(offset) || 0;
-  const paginatedRecords = records.slice(safeOffset, safeOffset + safeLimit);
+
+  const limitParam = runParams.length + 1;
+  const offsetParam = runParams.length + 2;
+  runParams.push(safeLimit, safeOffset);
+  const runRecords = includeSettlementRuns
+    ? `
+      SELECT
+        to_jsonb(provider_settlement_runs) || jsonb_build_object(
+          'reservation_id', id,
+          'payment_session_id', 'settlement-run:' || id,
+          'amount', paid_amount,
+          'paid_amount', paid_amount,
+          'commission_amount', 0,
+          'currency', 'INR',
+          'status', 'settled',
+          'raw_status', 'settled',
+          'paid_at', settled_at,
+          'settlement_run', true,
+          'display_status', 'Settled',
+          'created_at', settled_at,
+          'updated_at', settled_at
+        ) AS record,
+        settled_at AS record_date,
+        id::text AS record_id
+      FROM provider_settlement_runs
+      WHERE ${runWhere.join(" AND ")}
+        AND COALESCE(paid_amount, 0) > 0
+    `
+    : `
+      SELECT NULL::jsonb AS record, NULL::timestamp AS record_date, NULL::text AS record_id
+      WHERE false
+    `;
+  const providerRecordsQuery = normalizedStatus === "settled"
+    ? "SELECT NULL::uuid AS id, NULL::timestamp AS paid_at, NULL::timestamp AS updated_at, NULL::timestamp AS created_at WHERE false"
+    : baseQuery;
+  const combinedQuery = `
+    WITH provider_records AS (${providerRecordsQuery}), combined_records AS (
+      SELECT to_jsonb(provider_records) AS record,
+             COALESCE(paid_at, updated_at, created_at)::timestamp AS record_date,
+             id::text AS record_id
+      FROM provider_records
+      UNION ALL
+      ${runRecords}
+    )
+    SELECT record, COUNT(*) OVER()::int AS total_count
+    FROM combined_records
+    ORDER BY record_date DESC, record_id DESC
+    LIMIT $${limitParam} OFFSET $${offsetParam}
+  `;
+
+  let result = { rows: [] };
+  try {
+    result = await client.query(combinedQuery, runParams);
+  } catch (error) {
+    if (
+      error?.code !== "42P01" &&
+      !String(error?.message || "").startsWith("Unexpected SQL in mock") &&
+      !String(error?.message || "").startsWith("Unexpected query")
+    ) {
+      throw error;
+    }
+  }
+
+  const records = preserveSettlementRecordDisplay(
+    applyRefundCarryForward(result.rows.map((row) => serializeSettlement(row.record))),
+  );
+  const count = Number(result.rows[0]?.total_count || 0);
 
   return {
-    records: paginatedRecords,
+    records,
     limit: safeLimit,
     offset: safeOffset,
-    count: records.length,
+    page: safePage,
+    pageCount: Math.ceil(count / safeLimit),
+    count,
   };
+}
+
+async function getProviderSettledRecordsTotal({
+  client = pool,
+  providerId,
+  year,
+} = {}) {
+  const params = [providerId];
+  const where = ["provider_id = $1", "status = 'settled'"];
+  if (year) {
+    where.push("settlement_year = $2");
+    params.push(Number(year));
+  }
+
+  const result = await client.query(
+    `
+    SELECT COALESCE(SUM(paid_amount), 0)::numeric AS total
+    FROM provider_settlement_runs
+    WHERE ${where.join(" AND ")}
+      AND COALESCE(paid_amount, 0) > 0
+    `,
+    params,
+  );
+
+  return Number(result.rows[0]?.total || 0);
 }
 
 async function listProviderSettlementRuns({
@@ -3579,6 +3621,7 @@ module.exports = {
   deactivateProviderPayoutAccount,
   ensureProviderPayoutSchema,
   getProviderSettlementSummary,
+  getProviderSettledRecordsTotal,
   listProviderSettlementRecords,
   listProviderSettlementRuns,
   listAdminProviderSettlements,

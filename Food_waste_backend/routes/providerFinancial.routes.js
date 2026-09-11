@@ -17,5 +17,6 @@ router.post(
 );
 router.get("/settlements", providerFinancialCtrl.getMySettlementSummary);
 router.get("/settlements/records", providerFinancialCtrl.getMySettlementRecords);
+router.get("/settlements/settled-total", providerFinancialCtrl.getMySettledRecordsTotal);
 
 module.exports = router;

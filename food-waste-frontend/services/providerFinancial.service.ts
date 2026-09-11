@@ -24,6 +24,8 @@ type SettlementRecordsPayload = {
   records?: ProviderSettlementHistoryRow[] | SettlementRecordsPayload;
   limit?: unknown;
   offset?: unknown;
+  page?: unknown;
+  pageCount?: unknown;
   count?: unknown;
 };
 
@@ -31,6 +33,8 @@ type SettlementRecordsResult = {
   records: ProviderSettlementHistoryRow[];
   limit: number;
   offset: number;
+  page: number;
+  pageCount: number;
   count: number;
 };
 
@@ -83,6 +87,7 @@ export async function getSettlementRecords(params: {
   month?: number;
   status?: string;
   limit?: number;
+  page?: number;
   offset?: number;
 }): Promise<SettlementRecordsResult> {
   const { data } = await api.get("/provider/financial/settlements/records", {
@@ -103,6 +108,8 @@ export async function getSettlementRecords(params: {
       records: payload.records,
       limit: Number(payload.limit || payload.records.length || 0),
       offset: Number(payload.offset || 0),
+      page: Number(payload.page || 1),
+      pageCount: Number(payload.pageCount || 0),
       count: Number(payload.count || payload.records.length || 0),
     };
   }
@@ -120,16 +127,27 @@ export async function getSettlementRecords(params: {
         records,
         limit: Number(inner.limit || records.length || 0),
         offset: Number(inner.offset || 0),
+        page: Number(inner.page || 1),
+        pageCount: Number(inner.pageCount || 0),
         count: Number(inner.count || records.length || 0),
       };
     }
   }
 
   if (Array.isArray(payload)) {
-    return { records: payload, limit: payload.length, offset: 0, count: payload.length };
+    return { records: payload, limit: payload.length, offset: 0, page: 1, pageCount: 1, count: payload.length };
   }
 
-  return { records: [], limit: 0, offset: 0, count: 0 };
+  return { records: [], limit: 0, offset: 0, page: 1, pageCount: 0, count: 0 };
+}
+
+export async function getSettledRecordsTotal(year: number): Promise<number> {
+  const { data } = await api.get<{ total?: number | string }>(
+    "/provider/financial/settlements/settled-total",
+    { params: { year } },
+  );
+
+  return Number(data.total || 0);
 }
 
 export const providerFinancialService = {
@@ -139,5 +157,6 @@ export const providerFinancialService = {
   requestPayoutAccountChange,
   getSettlementSummary,
   getSettlementRecords,
+  getSettledRecordsTotal,
   getErrorMessage,
 };

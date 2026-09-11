@@ -405,6 +405,33 @@ export async function getSettlementRuns(params: {
   return getEnvelopeData<{ runs: { records: ProviderSettlementRunRow[]; limit: number; offset: number; count: number } }>(data).runs;
 }
 
+export async function getAdminSettlementRecords(params: {
+  providerId: DbId;
+  year: number;
+  month: number;
+  limit?: number;
+  page?: number;
+}): Promise<{
+  records: AdminProviderSettlementRow[];
+  limit: number;
+  offset: number;
+  page: number;
+  pageCount: number;
+  count: number;
+}> {
+  const { data } = await api.get("/admin/settlements/records", { params });
+  return getEnvelopeData<{
+    records: {
+      records: AdminProviderSettlementRow[];
+      limit: number;
+      offset: number;
+      page: number;
+      pageCount: number;
+      count: number;
+    };
+  }>(data).records;
+}
+
 async function patchProviderSettlement(
   id: DbId,
   action: "paid" | "failed" | "notes",
@@ -962,6 +989,7 @@ export const adminService = {
   dismissProviderReport,
   getProviderSettlementConsole,
   getMonthlySettlementConsole,
+  getAdminSettlementRecords,
   getSettlementRuns,
   markProviderSettlementPaid,
   markProviderSettlementFailed,

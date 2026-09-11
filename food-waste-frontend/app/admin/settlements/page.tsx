@@ -243,6 +243,8 @@ export default function AdminSettlementsPage() {
   const [filter, setFilter] = useState<SettlementFilter>("pending");
   const [verificationFilter, setVerificationFilter] = useState<VerificationFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedYear, setSelectedYear] = useState("");
+  const [yearOptions, setYearOptions] = useState<number[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [consoleData, setConsoleData] =
     useState<AdminProviderSettlementConsoleData | null>(null);
@@ -321,11 +323,20 @@ export default function AdminSettlementsPage() {
           verificationStatus: verificationFilter,
           search: searchQuery.trim() || undefined,
           providerId: selectedProviderId || undefined,
+          year: selectedYear ? Number(selectedYear) : undefined,
           limit: 500,
         }),
       ]);
       setConsoleData(regularResult);
       setMonthlyConsoleData(monthlyResult);
+      setYearOptions((current) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...monthlyResult.monthly_settlements.map((row) => row.year),
+          ]),
+        ).sort((left, right) => right - left),
+      );
       setDrafts((current) => {
         const next = { ...current };
         for (const settlement of regularResult.settlements) {
@@ -344,7 +355,7 @@ export default function AdminSettlementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, searchQuery, selectedProviderId, verificationFilter]);
+  }, [filter, searchQuery, selectedProviderId, selectedYear, verificationFilter]);
 
   useEffect(() => {
     let active = true;
@@ -412,6 +423,13 @@ export default function AdminSettlementsPage() {
       current ? { ...current, settlements: [] } : current
     );
     resetProviderSelectionState();
+  }
+
+  function handleYearChange(value: string) {
+    setSelectedYear(value);
+    setMonthlyConsoleData((current) =>
+      current ? { ...current, monthly_settlements: [] } : current,
+    );
   }
 
   function updateDraft(
@@ -1073,16 +1091,28 @@ export default function AdminSettlementsPage() {
                 )}
               </div>
             </div>
+            <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700">
+              <label htmlFor="settlement-year" className="font-medium">
+                Year
+              </label>
+              <select
+                id="settlement-year"
+                value={selectedYear}
+                onChange={(event) => handleYearChange(event.target.value)}
+                className="rounded-md border border-zinc-300 bg-white px-2 py-1"
+              >
+                <option value="">All years</option>
+                {yearOptions.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-zinc-100 text-sm">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
                   <tr>
-                    <th className="px-4 py-3">Month</th>
-                    <th className="px-4 py-3">Records</th>
-                    <th className="px-4 py-3">Total</th>
-                    <th className="px-4 py-3">Paid</th>
-                    <th className="px-4 py-3">Pending</th>
-                    <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Actions</th>
                   </tr>
                 </thead>
@@ -1091,34 +1121,6 @@ export default function AdminSettlementsPage() {
                   const monthKey = `${monthly.year}-${String(monthly.month).padStart(2, '0')}`;
                   return (
                     <tr key={`${monthly.provider_id}-${monthKey}-${index}`}>
-                      <td className="px-4 py-3 font-medium text-zinc-950">
-                        {monthly.month_label}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-700">
-                        {monthly.record_count} records
-                      </td>
-                      <td className="px-4 py-3 font-medium text-zinc-950">
-                        {formatCurrency(monthly.total_amount)}
-                      </td>
-                      <td className="px-4 py-3 text-emerald-700">
-                        {formatCurrency(monthly.paid_amount)}
-                      </td>
-                      <td className="px-4 py-3 text-orange-700">
-                        {formatCurrency(monthly.pending_amount)}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-700">
-                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${
-                          monthly.status === 'Paid' 
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : monthly.status === 'Partially Paid'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : monthly.status === 'Failed'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-orange-100 text-orange-800'
-                        }`}>
-                          {monthly.status}
-                        </span>
-                      </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-2">
                           <button

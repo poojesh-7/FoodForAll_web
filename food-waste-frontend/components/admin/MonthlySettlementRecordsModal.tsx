@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import type { AdminProviderSettlementRow, DbId } from "@shared/contracts/api-contracts";
 import { adminService } from "@/services/admin.service";
@@ -32,54 +32,9 @@ function label(value: unknown) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function effectiveSettlementAmount(record: AdminProviderSettlementRow) {
-  if (record.net_payable !== undefined) return Number(record.net_payable || 0);
-  return Math.max(
-    0,
-    Number(record.amount || 0) - Number(record.refund_deduction_amount || 0),
-  );
-}
-
 function settlementAmountLabel(record: AdminProviderSettlementRow) {
   const amount = Number(record.amount || 0);
   return formatCurrency(amount);
-}
-
-function settlementRunRecord(run: {
-  id: DbId;
-  provider_id: DbId;
-  settled_at: string;
-  paid_amount: number | string;
-  pending_amount_before: number | string;
-  pending_amount_after: number | string;
-  carry_forward_reduced_amount: number | string;
-  payment_reference?: string | null;
-  notes?: string | null;
-}) {
-  return {
-    id: run.id,
-    provider_id: run.provider_id,
-    reservation_id: run.id,
-    amount_due: 0,
-    pending_settlements: 0,
-    payout_account: null,
-    payment_session_id: `settlement-run:${run.id}`,
-    amount: run.paid_amount,
-    paid_amount: run.paid_amount,
-    currency: "INR",
-    status: "settled",
-    raw_status: "settled",
-    paid_at: run.settled_at,
-    payment_reference: run.payment_reference,
-    notes: run.notes,
-    settlement_run: true,
-    pending_amount_before: run.pending_amount_before,
-    pending_amount_after: run.pending_amount_after,
-    carry_forward_reduced_amount: run.carry_forward_reduced_amount,
-    display_status: "Settled",
-    created_at: run.settled_at,
-    updated_at: run.settled_at,
-  } as AdminProviderSettlementRow;
 }
 
 export function MonthlySettlementRecordsModal({
@@ -93,7 +48,9 @@ export function MonthlySettlementRecordsModal({
   const [records, setRecords] = useState<AdminProviderSettlementRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [recordCount, setRecordCount] = useState(0);
   const [carryForwardModal, setCarryForwardModal] = useState<{
     isOpen: boolean;
     settlementId?: DbId;
@@ -101,81 +58,43 @@ export function MonthlySettlementRecordsModal({
     providerName?: string;
   }>({ isOpen: false });
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const loadRecords = async () => {
-      try {
-        setLoading(true);
-        setError("");
-        // Fetch individual records for this provider and month
-        const [result, runsResult] = await Promise.all([
-          adminService.getProviderSettlementConsole({
-            providerId,
-            status: "all",
-            verificationStatus: "all",
-            limit: 500,
-          }),
-          adminService.getSettlementRuns({ providerId, year, month, status: "settled", limit: 500 }),
-        ]);
-
-        // Filter by year/month in memory (frontend filtering for simplicity)
-        const filtered = result.settlements.filter((s) => {
-          const recordDate = new Date(s.created_at || s.updated_at || "");
-          return (
-            recordDate.getFullYear() === year &&
-            recordDate.getMonth() + 1 === month
-          );
-        });
-
-        setRecords([...filtered, ...runsResult.records.map(settlementRunRecord)]);
-      } catch (err) {
-        setError(adminService.getErrorMessage(err));
-        toast.error("Failed to load records");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadRecords();
-  }, [isOpen, providerId, month, year]);
-
-  const handleCarryForwardSuccess = async () => {
-    // Reload records after carry forward
+  const loadRecords = useCallback(async (pageNumber: number) => {
     try {
-      const [result, runsResult] = await Promise.all([
-        adminService.getProviderSettlementConsole({
-          providerId,
-          status: "all",
-          verificationStatus: "all",
-          limit: 500,
-        }),
-        adminService.getSettlementRuns({ providerId, year, month, status: "settled", limit: 500 }),
-      ]);
-
-      const filtered = result.settlements.filter((s) => {
-          const recordDate = new Date(s.created_at || s.updated_at || "");
-        return (
-          recordDate.getFullYear() === year &&
-          recordDate.getMonth() + 1 === month
-        );
+      setLoading(true);
+      setError("");
+      const result = await adminService.getAdminSettlementRecords({
+        providerId,
+        year,
+        month,
+        limit: 10,
+        page: pageNumber,
       });
 
-      setRecords([...filtered, ...runsResult.records.map(settlementRunRecord)]);
-      toast.success("Settlement data refreshed");
+      setRecords(result.records);
+      setPage(result.page);
+      setPageCount(result.pageCount);
+      setRecordCount(result.count);
     } catch (err) {
-      toast.error("Failed to refresh after carry forward");
+      setError(adminService.getErrorMessage(err));
+      toast.error("Failed to load records");
+    } finally {
+      setLoading(false);
     }
+  }, [month, providerId, year]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    queueMicrotask(() => {
+      void loadRecords(1);
+    });
+  }, [isOpen, loadRecords]);
+
+  const handleCarryForwardSuccess = async () => {
+    await loadRecords(page);
+    toast.success("Settlement data refreshed");
   };
 
   if (!isOpen) return null;
-
-  const visibleRecords = records.filter((record) => {
-    if (statusFilter === "all") return true;
-    if (statusFilter === "settled") return Boolean(record.settlement_run);
-    if (statusFilter === "refunded") return Number(record.refund_amount || 0) > 0;
-    return String(record.status || "").toLowerCase() === statusFilter;
-  });
 
   return (
     <>
@@ -188,22 +107,8 @@ export function MonthlySettlementRecordsModal({
                   Settlement Records - {monthLabel}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
-                  Showing {visibleRecords.length} records
+                  Showing {recordCount} records
                 </p>
-                <label className="mt-2 inline-flex items-center gap-2 text-sm text-zinc-700">
-                  Status
-                  <select
-                    value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value)}
-                    className="rounded-md border border-zinc-300 bg-white px-2 py-1"
-                  >
-                    <option value="all">All</option>
-                    <option value="pending">Pending</option>
-                    <option value="paid">Paid</option>
-                    <option value="settled">Settled</option>
-                    <option value="refunded">Refunded</option>
-                  </select>
-                </label>
               </div>
               <button
                 onClick={onClose}
@@ -225,7 +130,7 @@ export function MonthlySettlementRecordsModal({
               <div className="text-center py-8">
                 <p className="text-zinc-600">Loading records...</p>
               </div>
-            ) : visibleRecords.length === 0 ? (
+            ) : records.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-zinc-600">
                   No settlement records found for {monthLabel}
@@ -245,7 +150,7 @@ export function MonthlySettlementRecordsModal({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {visibleRecords.map((record) => {
+                    {records.map((record) => {
                       const refundAmount = Number(record.refund_amount || 0);
                       const carriedForwardAmount = Number(
                         record.manual_carry_forward_amount || 0,
@@ -332,6 +237,32 @@ export function MonthlySettlementRecordsModal({
                 </table>
               </div>
             )}
+
+            {!loading && pageCount > 0 ? (
+              <div className="mt-4 flex items-center justify-between border-t border-zinc-200 pt-4">
+                <p className="text-sm text-zinc-600">
+                  Page {page} of {pageCount}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadRecords(page - 1)}
+                    disabled={page <= 1}
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void loadRecords(page + 1)}
+                    disabled={page >= pageCount}
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="border-t border-zinc-200 bg-zinc-50 px-6 py-4 flex justify-end">

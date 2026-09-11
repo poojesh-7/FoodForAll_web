@@ -24,6 +24,7 @@ const {
   calculateMonthSettlementCarryForwardReduction,
   listAdminProviderSettlements,
   listAdminMonthlySettlements,
+  listProviderSettlementRecords,
   listProviderSettlementRuns,
   listAdminProviderPayoutChangeRequests,
   reduceSettlementCarryForwardUsage,
@@ -1290,6 +1291,36 @@ exports.getMonthlySettlementConsole = async (req, res) => {
     });
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to fetch monthly settlements",
+    });
+  }
+};
+
+exports.getAdminSettlementRecords = async (req, res) => {
+  const providerId = req.query.providerId || req.query.provider_id;
+  if (!providerId || !isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is invalid" });
+  }
+
+  try {
+    const records = await listProviderSettlementRecords({
+      providerId,
+      year: req.query.year,
+      month: req.query.month,
+      limit: req.query.limit,
+      page: req.query.page,
+      offset: req.query.offset,
+      status: "all",
+    });
+    res.json({ records });
+  } catch (err) {
+    logger.error("Failed to fetch admin settlement records", {
+      err,
+      adminId: req.user?.id,
+      providerId,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch settlement records",
     });
   }
 };

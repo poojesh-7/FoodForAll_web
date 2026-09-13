@@ -311,6 +311,42 @@ function createProviderFinanceClient() {
         };
       }
 
+      if (text.includes("WITH source_liability AS")) {
+        const [reservationId, paymentSessionId] = params;
+        const sourceRefundIds = new Set();
+        let issuedAmount = 0;
+        for (const entry of ledger.values()) {
+          if (
+            entry.event_type === "provider_refund_liability_issued" &&
+            entry.reservation_id === reservationId &&
+            entry.payment_session_id === paymentSessionId &&
+            entry.refund_id
+          ) {
+            sourceRefundIds.add(entry.refund_id);
+            issuedAmount += Number(entry.amount || 0);
+          }
+        }
+
+        let releasedAmount = 0;
+        for (const entry of ledger.values()) {
+          if (
+            entry.event_type === "provider_refund_liability_released" &&
+            sourceRefundIds.has(entry.refund_id)
+          ) {
+            releasedAmount += Number(entry.amount || 0);
+          }
+        }
+
+        return {
+          rows: [
+            {
+              issued_amount: issuedAmount,
+              released_amount: Math.min(releasedAmount, issuedAmount),
+            },
+          ],
+        };
+      }
+
       if (text.includes("INSERT INTO financial_accounting_classifications")) {
         const key = params[12];
         if (classifications.has(key)) return { rows: [] };
@@ -333,6 +369,62 @@ function createProviderFinanceClient() {
         };
         classifications.set(key, row);
         return { rows: [{ ...row }] };
+      }
+
+      if (text.includes("source_settlement.id AS source_settlement_id")) {
+        const providerId = params[0];
+        const grouped = new Map();
+        for (const entry of ledger.values()) {
+          if (
+            !entry.refund_id ||
+            ![
+              "refund_issued",
+              "provider_refund_liability_issued",
+              "provider_refund_liability_released",
+            ].includes(entry.event_type)
+          ) {
+            continue;
+          }
+
+          const source = Array.from(settlements.values()).find(
+            (settlement) =>
+              settlement.provider_id === providerId &&
+              settlement.reservation_id === entry.reservation_id &&
+              settlement.payment_session_id === entry.payment_session_id,
+          );
+          if (!source) continue;
+
+          const key = `${entry.refund_id}:${source.id}`;
+          const row = grouped.get(key) || {
+            refund_id: entry.refund_id,
+            source_settlement_id: source.id,
+            source_carry_forward_amount: Number(
+              source.manual_carry_forward_amount || 0,
+            ),
+            total_refund_amount: 0,
+            liability_issued: 0,
+            liability_released: 0,
+          };
+          if (entry.event_type === "refund_issued") {
+            row.total_refund_amount += Number(entry.amount || 0);
+          }
+          if (entry.event_type === "provider_refund_liability_issued") {
+            row.liability_issued += Number(entry.amount || 0);
+          }
+          if (entry.event_type === "provider_refund_liability_released") {
+            row.liability_released += Number(entry.amount || 0);
+          }
+          grouped.set(key, row);
+        }
+
+        return {
+          rows: Array.from(grouped.values()).filter(
+            (row) =>
+              Number(row.liability_issued || 0) >
+                Number(row.liability_released || 0) ||
+              Number(row.source_carry_forward_amount || 0) > 0,
+          ),
+        };
       }
 
       if (text.includes("FROM provider_payout_accounts")) {
@@ -364,10 +456,37 @@ function createProviderFinanceClient() {
         };
       }
 
+      if (
+        text.includes("UPDATE provider_settlements") &&
+        text.includes("manual_carry_forward_amount = GREATEST(manual_carry_forward_amount - $2")
+      ) {
+        const row = settlements.get(params[0]);
+        if (!row) return { rows: [] };
+        row.manual_carry_forward_amount = Math.max(
+          Number(row.manual_carry_forward_amount || 0) - Number(params[1] || 0),
+          0,
+        );
+        row.manual_carry_forward_applied_at =
+          row.manual_carry_forward_amount === 0
+            ? null
+            : row.manual_carry_forward_applied_at || null;
+        row.updated_at = "2026-01-04T00:00:00.000Z";
+        return { rows: [{ ...row }] };
+      }
+
       if (text.includes("UPDATE provider_settlements")) {
         const row = settlements.get(params[0]);
         if (!row) return { rows: [] };
         row.status = params[1];
+        row.paid_amount = params[6];
+        row.manual_carry_forward_amount = Math.max(
+          Number(row.manual_carry_forward_amount || 0) - Number(params[7] || 0),
+          0,
+        );
+        row.manual_carry_forward_applied_at =
+          row.manual_carry_forward_amount === 0
+            ? null
+            : row.manual_carry_forward_applied_at || null;
         if (params[1] === "paid") {
           row.paid_at = params[2] || row.paid_at || "2026-01-04T00:00:00.000Z";
         }
@@ -434,6 +553,64 @@ function createProviderFinanceClient() {
               };
             }),
         };
+      }
+
+      if (
+        text.includes("SELECT COALESCE(SUM(paid_amount), 0)::numeric AS total_paid") &&
+        text.includes("FROM provider_settlement_runs")
+      ) {
+        const providerId = params[0];
+        const totalPaid = Array.from(settlements.values())
+          .filter((row) => row.provider_id === providerId && row.status === "paid")
+          .reduce(
+            (sum, row) =>
+              sum + Number(row.paid_amount ?? row.amount ?? 0),
+            0,
+          );
+        return { rows: [{ total_paid: totalPaid }] };
+      }
+
+      if (text.includes("WITH provider_records AS")) {
+        const providerId = params[0];
+        const rows = Array.from(settlements.values())
+          .filter((row) => row.provider_id === providerId)
+          .sort((left, right) => new Date(right.created_at) - new Date(left.created_at))
+          .map((row) => {
+            let totalRefund = 0;
+            for (const refund of refundEvents.values()) {
+              if (
+                refund.reservation_id === row.reservation_id &&
+                refund.payment_session_id === row.payment_session_id &&
+                refund.event_type === "refund_issued"
+              ) {
+                totalRefund += Number(refund.amount || 0);
+              }
+            }
+            for (const ledgerEntry of ledger.values()) {
+              if (
+                ledgerEntry.reservation_id === row.reservation_id &&
+                ledgerEntry.payment_session_id === row.payment_session_id &&
+                ledgerEntry.event_type === "refund_issued"
+              ) {
+                totalRefund += Number(ledgerEntry.amount || 0);
+              }
+            }
+            const refundAmount = Math.min(Number(row.amount || 0), totalRefund);
+            return {
+              record: {
+                ...row,
+                status:
+                  refundAmount >= Number(row.amount || 0) &&
+                  Number(row.amount || 0) > 0
+                    ? "refunded"
+                    : row.status,
+                refund_amount: refundAmount,
+              },
+              total_count: settlements.size,
+            };
+          });
+
+        return { rows };
       }
 
       if (
@@ -545,6 +722,22 @@ function createProviderFinanceClient() {
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
+}
+
+async function addVerifiedPayoutAccount(client) {
+  const account = await replaceProviderPayoutAccount({
+    client,
+    providerId: PROVIDER_ID,
+    payload: { account_type: "UPI", upi_id: "settlement@upi" },
+    ensureSchema: false,
+  });
+  await verifyProviderPayoutAccount({
+    client,
+    payoutAccountId: account.id,
+    adminId: ADMIN_ID,
+    ensureSchema: false,
+  });
+  return account;
 }
 
 test("T-FIN-2 validates UPI and bank payout account inputs", () => {
@@ -689,6 +882,243 @@ test("T-FIN-2 manual settlement transitions are replay-safe updates", async () =
         ensureSchema: false,
       }),
     /Paid settlement/,
+  );
+});
+
+test("T-FIN-2 original provider refund-liability source settlement cannot be paid", async () => {
+  const client = createProviderFinanceClient();
+  const source = {
+    id: "source_refund_19",
+    provider_id: PROVIDER_ID,
+    reservation_id: "19191919-1919-4919-8919-191919191919",
+    payment_id: "29292929-2929-4929-8929-292929292929",
+    payment_session_id: "source_session_19",
+    settlement_allocation_id: "39393939-3939-4939-8939-393939393939",
+    amount: 19,
+    paid_amount: 0,
+    manual_carry_forward_amount: 0,
+    commission_amount: 0,
+    currency: "INR",
+    status: "pending",
+    paid_at: null,
+    payment_reference: null,
+    notes: null,
+    processed_by: null,
+    created_at: "2026-02-01T00:00:00.000Z",
+    updated_at: "2026-02-01T00:00:00.000Z",
+  };
+  client.settlements.set(source.id, source);
+  client.ledger.set("ledger:refund:source-19", {
+    id: "ledger_refund_source_19",
+    reservation_id: source.reservation_id,
+    payment_session_id: source.payment_session_id,
+    event_type: "refund_issued",
+    amount: 45,
+    currency: "INR",
+    refund_id: "refund-source-19",
+    accounting_category: ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
+  });
+  client.ledger.set("ledger:liability:source-19", {
+    id: "ledger_liability_source_19",
+    reservation_id: source.reservation_id,
+    payment_session_id: source.payment_session_id,
+    event_type: "provider_refund_liability_issued",
+    amount: 19,
+    currency: "INR",
+    refund_id: "refund-source-19",
+    accounting_category: ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+  });
+
+  await assert.rejects(
+    () =>
+      transitionProviderSettlementStatus({
+        client,
+        settlementId: source.id,
+        status: "paid",
+        adminId: ADMIN_ID,
+        paymentReference: "blocked-source",
+        ensureSchema: false,
+      }),
+    (error) => {
+      assert.equal(error.code, "REFUND_LIABILITY_SOURCE_SETTLEMENT");
+      assert.equal(error.statusCode, 409);
+      return true;
+    },
+  );
+
+  assert.equal(client.settlements.get(source.id).status, "pending");
+  assert.equal(
+    Array.from(client.ledger.values()).some(
+      (entry) =>
+        entry.event_type === "provider_settlement_paid" &&
+        entry.provider_settlement_id === source.id,
+    ),
+    false,
+  );
+});
+
+test("T-FIN-2 future settlement recovers source refund liability without paying source", async () => {
+  const client = createProviderFinanceClient();
+  await addVerifiedPayoutAccount(client);
+
+  const source = {
+    id: "source_refund_recovery_19",
+    provider_id: PROVIDER_ID,
+    reservation_id: "41414141-4141-4441-8441-414141414141",
+    payment_id: "42424242-4242-4442-8442-424242424242",
+    payment_session_id: "source_recovery_session_19",
+    settlement_allocation_id: "43434343-4343-4443-8443-434343434343",
+    amount: 19,
+    paid_amount: 0,
+    manual_carry_forward_amount: 19,
+    manual_carry_forward_applied_at: "2026-02-02T00:00:00.000Z",
+    commission_amount: 0,
+    currency: "INR",
+    status: "pending",
+    paid_at: null,
+    payment_reference: null,
+    notes: null,
+    processed_by: null,
+    created_at: "2026-02-01T00:00:00.000Z",
+    updated_at: "2026-02-02T00:00:00.000Z",
+  };
+  const future = {
+    id: "future_recovery_28_50",
+    provider_id: PROVIDER_ID,
+    reservation_id: "51515151-5151-4551-8551-515151515151",
+    payment_id: "52525252-5252-4552-8552-525252525252",
+    payment_session_id: "future_recovery_session_28_50",
+    settlement_allocation_id: "53535353-5353-4553-8553-535353535353",
+    amount: 28.5,
+    paid_amount: 0,
+    manual_carry_forward_amount: 0,
+    commission_amount: 0,
+    currency: "INR",
+    status: "pending",
+    paid_at: null,
+    payment_reference: null,
+    notes: null,
+    processed_by: null,
+    created_at: "2026-03-01T00:00:00.000Z",
+    updated_at: "2026-03-01T00:00:00.000Z",
+  };
+  client.settlements.set(source.id, source);
+  client.settlements.set(future.id, future);
+  client.ledger.set("ledger:refund:recovery-source-19", {
+    id: "ledger_refund_recovery_source_19",
+    reservation_id: source.reservation_id,
+    payment_session_id: source.payment_session_id,
+    event_type: "refund_issued",
+    amount: 45,
+    currency: "INR",
+    refund_id: "refund-recovery-source-19",
+    accounting_category: ACCOUNTING_CATEGORIES.REFUND_EXPENSE,
+  });
+  client.ledger.set("ledger:liability:recovery-source-19", {
+    id: "ledger_liability_recovery_source_19",
+    reservation_id: source.reservation_id,
+    payment_session_id: source.payment_session_id,
+    event_type: "provider_refund_liability_issued",
+    amount: 19,
+    currency: "INR",
+    refund_id: "refund-recovery-source-19",
+    accounting_category: ACCOUNTING_CATEGORIES.PROVIDER_REFUND_LIABILITY,
+  });
+
+  const paid = await transitionProviderSettlementStatus({
+    client,
+    settlementId: future.id,
+    status: "paid",
+    adminId: ADMIN_ID,
+    paymentReference: "future-net-payment",
+    paidAmount: 9.5,
+    ensureSchema: false,
+  });
+
+  const release = Array.from(client.ledger.values()).find(
+    (entry) =>
+      entry.event_type === "provider_refund_liability_released" &&
+      entry.provider_settlement_id === future.id,
+  );
+
+  assert.equal(paid.status, "paid");
+  assert.equal(Number(client.settlements.get(future.id).paid_amount), 9.5);
+  assert.equal(Number(release?.amount), 19);
+  assert.equal(release?.refund_id, "refund-recovery-source-19");
+  assert.equal(client.settlements.get(source.id).status, "pending");
+  assert.equal(Number(client.settlements.get(source.id).manual_carry_forward_amount), 0);
+  assert.equal(
+    Array.from(client.ledger.values()).some(
+      (entry) =>
+        entry.event_type === "provider_settlement_paid" &&
+        entry.provider_settlement_id === source.id,
+    ),
+    false,
+  );
+
+  await assert.rejects(
+    () =>
+      transitionProviderSettlementStatus({
+        client,
+        settlementId: source.id,
+        status: "paid",
+        adminId: ADMIN_ID,
+        paymentReference: "blocked-after-release",
+        ensureSchema: false,
+      }),
+    /Original provider refund-liability source settlement/,
+  );
+});
+
+test("T-FIN-2 pending settlement with carry-forward and no source liability still pays", async () => {
+  const client = createProviderFinanceClient();
+  await addVerifiedPayoutAccount(client);
+  const settlement = {
+    id: "ordinary_carry_forward_target",
+    provider_id: PROVIDER_ID,
+    reservation_id: "61616161-6161-4661-8661-616161616161",
+    payment_id: "62626262-6262-4662-8662-626262626262",
+    payment_session_id: "ordinary_carry_forward_target_session",
+    settlement_allocation_id: "63636363-6363-4663-8663-636363636363",
+    amount: 40,
+    paid_amount: 0,
+    manual_carry_forward_amount: 10,
+    manual_carry_forward_applied_at: "2026-04-01T00:00:00.000Z",
+    commission_amount: 0,
+    currency: "INR",
+    status: "pending",
+    paid_at: null,
+    payment_reference: null,
+    notes: null,
+    processed_by: null,
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+  };
+  client.settlements.set(settlement.id, settlement);
+
+  const paid = await transitionProviderSettlementStatus({
+    client,
+    settlementId: settlement.id,
+    status: "paid",
+    adminId: ADMIN_ID,
+    paymentReference: "ordinary-carry-forward",
+    paidAmount: 30,
+    ensureSchema: false,
+  });
+
+  assert.equal(paid.status, "paid");
+  assert.equal(Number(client.settlements.get(settlement.id).paid_amount), 30);
+  assert.equal(
+    Number(client.settlements.get(settlement.id).manual_carry_forward_amount),
+    0,
+  );
+  assert.equal(
+    Array.from(client.ledger.values()).some(
+      (entry) =>
+        entry.event_type === "provider_settlement_paid" &&
+        entry.provider_settlement_id === settlement.id,
+    ),
+    true,
   );
 });
 

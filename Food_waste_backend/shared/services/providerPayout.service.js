@@ -3120,6 +3120,76 @@ async function recordSettlementRefundLiabilityReleases({
   return totalReleased > 0 ? { totalReleased } : null;
 }
 
+async function getProviderRefundLiabilitySourceState({
+  client,
+  settlement,
+} = {}) {
+  if (
+    !client ||
+    !settlement?.reservation_id ||
+    !settlement?.payment_session_id
+  ) {
+    return {
+      isOriginalProviderRefundLiabilitySource: false,
+      issuedAmount: 0,
+      applicableIssuedAmount: 0,
+      releasedAmount: 0,
+      outstandingAmount: 0,
+    };
+  }
+
+  const result = await client.query(
+    `
+    WITH source_liability AS (
+      SELECT
+        issued.refund_id,
+        COALESCE(SUM(issued.amount), 0)::numeric AS issued_amount
+      FROM financial_ledger_entries issued
+      WHERE issued.reservation_id = $1
+        AND issued.payment_session_id = $2
+        AND issued.event_type = 'provider_refund_liability_issued'
+        AND issued.refund_id IS NOT NULL
+      GROUP BY issued.refund_id
+    ),
+    source_releases AS (
+      SELECT
+        source_liability.refund_id,
+        COALESCE(SUM(release_entry.amount), 0)::numeric AS released_amount
+      FROM source_liability
+      LEFT JOIN financial_ledger_entries release_entry
+        ON release_entry.refund_id = source_liability.refund_id
+        AND release_entry.event_type = 'provider_refund_liability_released'
+      GROUP BY source_liability.refund_id
+    )
+    SELECT
+      COALESCE(SUM(source_liability.issued_amount), 0)::numeric AS issued_amount,
+      COALESCE(SUM(LEAST(source_releases.released_amount, source_liability.issued_amount)), 0)::numeric AS released_amount
+    FROM source_liability
+    LEFT JOIN source_releases
+      ON source_releases.refund_id = source_liability.refund_id
+    `,
+    [settlement.reservation_id, settlement.payment_session_id],
+  );
+
+  const row = result.rows[0] || {};
+  const issuedAmount = roundMoney(row.issued_amount || 0);
+  const releasedAmount = roundMoney(row.released_amount || 0);
+  const applicableIssuedAmount = roundMoney(
+    Math.min(issuedAmount, Math.max(Number(settlement.amount || 0), 0)),
+  );
+  const outstandingAmount = roundMoney(
+    Math.max(issuedAmount - releasedAmount, 0),
+  );
+
+  return {
+    isOriginalProviderRefundLiabilitySource: applicableIssuedAmount > 0,
+    issuedAmount,
+    applicableIssuedAmount,
+    releasedAmount,
+    outstandingAmount,
+  };
+}
+
 async function transitionProviderSettlementStatus({
   client,
   settlementId,
@@ -3147,6 +3217,19 @@ async function transitionProviderSettlementStatus({
     if (!current) return null;
 
     if (nextStatus === "paid") {
+      const refundLiabilitySourceState =
+        await getProviderRefundLiabilitySourceState({
+          client: db,
+          settlement: current,
+        });
+      if (refundLiabilitySourceState.isOriginalProviderRefundLiabilitySource) {
+        throw serviceError(
+          "Original provider refund-liability source settlement cannot be marked paid. Recover the liability from a future provider settlement.",
+          409,
+          "REFUND_LIABILITY_SOURCE_SETTLEMENT",
+        );
+      }
+
       await persistProjectedRefundRecovery({
         client: db,
         providerId: current.provider_id,
@@ -3609,6 +3692,7 @@ module.exports = {
   ensureProviderPayoutSchema,
   getProviderSettlementSummary,
   getProviderSettledRecordsTotal,
+  getProviderRefundLiabilitySourceState,
   listProviderSettlementRecords,
   listProviderSettlementRuns,
   listAdminProviderSettlements,

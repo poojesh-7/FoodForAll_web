@@ -30,6 +30,7 @@ const {
   listAdminProviderPayoutChangeRequests,
   reduceSettlementCarryForwardUsage,
   transitionProviderSettlementStatus,
+  getProviderRefundLiabilitySourceState,
   updateProviderSettlementNotes,
   verifyProviderPayoutAccount,
   rejectProviderPayoutAccount,
@@ -1743,6 +1744,14 @@ exports.settleMonthly = async (req, res) => {
         0,
       );
       if (netRemainingSettlement <= 0) continue;
+      const refundLiabilitySourceState =
+        await getProviderRefundLiabilitySourceState({
+          client: db,
+          settlement,
+        });
+      if (refundLiabilitySourceState.isOriginalProviderRefundLiabilitySource) {
+        continue;
+      }
 
       const paidAmountBeforeSettlement = Number(settlement.paid_amount || 0);
       const paymentForSettlement = remainingPayment === null

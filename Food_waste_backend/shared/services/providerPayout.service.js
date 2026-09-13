@@ -3097,13 +3097,6 @@ async function recordSettlementRefundLiabilityReleases({
           total_refund_amount: totalRefundAmount,
           outstanding_liability: outstandingLiability,
         },
-      }).catch((err) => {
-        logger.warn("Failed to record individual refund liability release", {
-          err,
-          settlementId: settlement.id,
-          refundId,
-          releaseAmount,
-        });
       });
 
       totalReleased += releaseAmount;
@@ -3320,12 +3313,6 @@ async function transitionProviderSettlementStatus({
           source: "settlement_paid_transition",
           admin_id: adminId || null,
         },
-      }).catch((err) => {
-        logger.warn("Failed to record settlement refund liability releases", {
-          err,
-          settlementId: updated.id,
-          reservationId: updated.reservation_id,
-        });
       });
     }
 

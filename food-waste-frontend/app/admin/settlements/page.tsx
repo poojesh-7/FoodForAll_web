@@ -607,10 +607,7 @@ export default function AdminSettlementsPage() {
         return (
           settlementProviderId === selectedProviderId &&
           ["pending", "processing", "allocated", "batched"].includes(status) &&
-          !(
-            Number(settlement.refund_amount || 0) > 0 &&
-            Number(settlement.recorded_carry_forward_amount || 0) > 0
-          ) &&
+          Number(settlement.refund_amount || 0) <= 0 &&
             Number(settlement.net_payable ?? settlement.amount ?? 0) >
               Number(settlement.paid_amount || 0) +
               (Number(settlement.paid_amount || 0) > 0
@@ -619,24 +616,29 @@ export default function AdminSettlementsPage() {
         );
       })
     : [];
-  const selectedProviderPendingAmount = selectedProviderPendingRows.reduce(
-      (sum, settlement) =>
-        sum +
-        Math.max(
-                          Number(settlement.refund_amount || 0) > 0 &&
-                            Number(settlement.recorded_carry_forward_amount || 0) > 0
-                            ? 0
-                            : Number(settlement.net_payable ?? settlement.amount ?? 0) -
-            Number(settlement.paid_amount || 0) -
-            (Number(settlement.paid_amount || 0) > 0
-              ? Number(settlement.refund_deduction_amount || 0)
-              : 0),
-          0,
-        ),
-    0
-  );
+  const selectedProviderGrossPendingAmount = selectedProvider
+    ? (consoleData?.settlements || [])
+        .filter((settlement) => {
+          const status = String(settlement.status || "").toLowerCase();
+          const refundAmount = Number(settlement.refund_amount || 0);
+          const paidAmount = Number(settlement.paid_amount || 0);
+          return (
+            ["pending", "processing", "allocated", "batched"].includes(status) &&
+            (refundAmount <= 0 || paidAmount <= 0)
+          );
+        })
+        .reduce((sum, settlement) => {
+          const refundAmount = Number(settlement.refund_amount || 0);
+          if (refundAmount > 0) return sum + Number(settlement.amount || 0);
+          return sum + Math.max(
+            Number(settlement.net_payable ?? settlement.amount ?? 0) -
+              Number(settlement.paid_amount || 0),
+            0,
+          );
+        }, 0)
+    : 0;
   const effectiveTotalAmountDue = selectedProvider
-    ? selectedProviderPendingAmount
+    ? selectedProviderGrossPendingAmount
     : totalAmountDue;
   const effectivePendingSettlementCount = selectedProvider
     ? selectedProviderPendingRows.length
@@ -826,13 +828,16 @@ export default function AdminSettlementsPage() {
                   const rowPendingCount = selected
                     ? rowPendingRows.filter(
                         (settlement) =>
+                          Number(settlement.refund_amount || 0) <= 0 &&
                           Math.max(
                             Number(settlement.net_payable ?? settlement.amount ?? 0) -
                               Number(settlement.paid_amount || 0),
                             0,
                           ) > 0,
                       ).length
-                    : Number(row.pending_settlements || 0);
+                    : Number(row.amount_due || 0) > 0
+                      ? Number(row.pending_settlements || 0)
+                      : 0;
                   return (
                     <tr
                       key={rowProviderId}
@@ -1150,8 +1155,8 @@ export default function AdminSettlementsPage() {
                                 monthLabel: monthly.month_label,
                                 recordCount: monthly.record_count,
                                 totalAmount: Math.max(
-                                  Number(effectiveTotalAmountDue || 0) -
-                                    Number(selectedProvider?.pending_refund_amount || 0),
+                                  Number(monthly.pending_amount || 0) -
+                                    Number(monthly.carry_forward_amount || 0),
                                   0,
                                 ),
                               })

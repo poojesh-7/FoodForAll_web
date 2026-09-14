@@ -1247,13 +1247,6 @@ async function persistProjectedRefundRecovery({
       `,
       [row.id, recovery, adminId || null, notes || null],
     );
-    await recordRefundCarryForwardLedger(client, {
-      refundSettlementId: source.id,
-      targetSettlementId: row.id,
-      amount: recovery,
-      adminId: adminId || null,
-      notes: notes || null,
-    });
   }
 }
 
@@ -1287,8 +1280,10 @@ function calculateRefundCarryForwardAllocations({
 }
 
 function calculateMonthSettlementCarryForwardReduction({
-  pendingSettlements = [],
-  carryForwardAmount,
+  settlements,
+  totalCarryForwardAmount,
+  pendingSettlements = settlements || [],
+  carryForwardAmount = totalCarryForwardAmount,
 } = {}) {
   const pendingTotal = pendingSettlements.reduce((sum, settlement) => {
     const amount = Number(settlement.amount || 0);
@@ -1598,7 +1593,10 @@ async function getProviderSettlementSummary({
       if (paidStatus && refund <= 0) {
         monthData.paid += getNetPaidSettlementAmount(row);
       }
-      if (pendingStatus) {
+      if (
+        pendingStatus &&
+        !(refund > 0 && Number(row.recorded_carry_forward_amount || 0) > 0)
+      ) {
         monthData.pending += netAmount;
       }
       monthData.count += 1;
@@ -2074,7 +2072,10 @@ function serializeAdminSettlementSummary(row) {
     provider_phone: row.provider_phone || null,
     restaurant_name: row.restaurant_name || null,
     amount_due: Number(row.amount_due || 0),
-    pending_settlements: Number(row.pending_settlements || 0),
+    pending_settlements:
+      Number(row.amount_due || 0) > 0
+        ? Number(row.pending_settlements || 0)
+        : 0,
     pending_refund_amount: Number(row.pending_refund_amount || 0),
     refund_deduction_amount: Number(row.refund_deduction_amount || 0),
     paid_earnings: Number(row.paid_earnings || 0),
@@ -2317,14 +2318,16 @@ async function listAdminMonthlySettlements({
         ? getPaidSettlementAmount(record)
         : Math.min(Number(record.paid_amount || 0), netAmount);
     const pendingAmount = PENDING_SETTLEMENT_STATUSES.includes(recordStatus)
-      ? refund > 0 && Number(record.recorded_carry_forward_amount || 0) > 0
-        ? 0
+      ? refund > 0
+        ? Number(record.paid_amount || 0) > 0
+          ? 0
+          : amount
         : Math.max(
-          netAmount -
-            paidAmount -
-            (paidAmount > 0 ? Number(record.refund_deduction_amount || 0) : 0),
-          0,
-        )
+            netAmount -
+              paidAmount -
+              (paidAmount > 0 ? Number(record.refund_deduction_amount || 0) : 0),
+            0,
+          )
       : 0;
 
     monthRecord.record_count += 1;
@@ -2778,7 +2781,7 @@ async function listAdminProviderSettlements({
         ORDER BY p.updated_at DESC, p.id DESC
         LIMIT 1
       ) AS refund_status,
-      LEAST(ps.amount, COALESCE(fle.amount, 0))::numeric AS refund_amount,
+      LEAST(ps.amount, COALESCE(fle.refund_amount, 0))::numeric AS refund_amount,
       COALESCE(ps.manual_carry_forward_amount, 0)::numeric AS manual_carry_forward_amount,
       ${sqlNullableTimestampUtc("ps.manual_carry_forward_applied_at")} AS manual_carry_forward_applied_at,
       ${sqlNullableTimestampUtc("ps.paid_at")} AS paid_at,
@@ -2809,10 +2812,13 @@ async function listAdminProviderSettlements({
       ppa.created_at AS payout_created_at,
       ppa.updated_at AS payout_updated_at
     FROM provider_settlements ps
-    LEFT JOIN financial_ledger_entries fle
-      ON fle.reservation_id = ps.reservation_id
-      AND fle.payment_session_id = ps.payment_session_id
-      AND fle.event_type = 'refund_issued'
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(refund_entry.amount), 0)::numeric AS refund_amount
+      FROM financial_ledger_entries refund_entry
+      WHERE refund_entry.reservation_id = ps.reservation_id
+        AND refund_entry.payment_session_id = ps.payment_session_id
+        AND refund_entry.event_type = 'refund_issued'
+    ) fle ON true
     JOIN users u ON u.id=ps.provider_id
     LEFT JOIN restaurants r ON r.user_id=ps.provider_id
     LEFT JOIN provider_due pd ON pd.provider_id=ps.provider_id
@@ -2865,15 +2871,15 @@ async function listAdminProviderSettlements({
     };
     const status = normalizeSettlementStatus(record.status);
     const netPayable = Number(record.net_payable || 0);
-    const pendingPayable = Math.max(
-      Number(record.refund_amount || 0) > 0 &&
-        Number(record.recorded_carry_forward_amount || 0) > 0
-        ? 0
-        : netPayable - Number(record.paid_amount || 0),
-      0,
-    ) - (Number(record.paid_amount || 0) > 0
-      ? Number(record.refund_deduction_amount || 0)
-      : 0);
+    const refundAmount = Number(record.refund_amount || 0);
+    const pendingPayable = refundAmount > 0
+      ? 0
+      : Math.max(
+        netPayable - Number(record.paid_amount || 0),
+        0,
+      ) - (Number(record.paid_amount || 0) > 0
+        ? Number(record.refund_deduction_amount || 0)
+        : 0);
     const effectivePendingPayable = Math.max(
       pendingPayable,
       0,
@@ -2885,7 +2891,7 @@ async function listAdminProviderSettlements({
     providerSummary.refund_total += Number(
       record.recorded_carry_forward_amount || 0,
     );
-    if (Number(record.refund_amount || 0) > 0) {
+    if (refundAmount > 0) {
       providerSummary.carry_forward_liability += Number(
         record.manual_carry_forward_amount || 0,
       );
@@ -2927,7 +2933,8 @@ async function listAdminProviderSettlements({
     return serializeAdminSettlementSummary({
       ...row,
       amount_due: projection.amount_due,
-      pending_settlements: projection.pending_settlements,
+      pending_settlements:
+        projection.amount_due > 0 ? projection.pending_settlements : 0,
       pending_refund_amount: projection.carry_forward_liability,
       refund_deduction_amount: projection.refund_deduction_amount,
       paid_earnings: projection.paid_earnings,
@@ -3074,13 +3081,8 @@ async function recordSettlementRefundLiabilityReleases({
     if (!refundId || outstandingLiability <= 0) continue;
 
     // Release amount is capped at outstanding liability and settlement amount
-    const remainingInSettlement = Math.max(
-      0,
-      Number(settlement.amount || 0) - totalReleased,
-    );
     const releaseAmount = Math.min(
       outstandingLiability,
-      remainingInSettlement,
       totalRefundAmount,
       sourceCarryForwardAmount,
     );
@@ -3702,6 +3704,7 @@ module.exports = {
   loadActiveProviderPayoutAccount,
   normalizeSettlementStatus,
   replaceProviderPayoutAccount,
+  recordSettlementRefundLiabilityReleases,
   requestProviderPayoutAccountChange,
   approveProviderPayoutAccountChange,
   rejectProviderPayoutAccountChange,

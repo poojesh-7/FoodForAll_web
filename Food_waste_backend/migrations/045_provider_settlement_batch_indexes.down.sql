@@ -1,0 +1,5 @@
+DROP INDEX IF EXISTS idx_financial_ledger_entries_refund_event;
+DROP INDEX IF EXISTS idx_financial_ledger_entries_provider_settlement_event;
+DROP INDEX IF EXISTS idx_financial_ledger_entries_reservation_session_event;
+DROP INDEX IF EXISTS idx_provider_settlements_provider_carry_forward;
+DROP INDEX IF EXISTS idx_provider_settlements_provider_status_created_batch;

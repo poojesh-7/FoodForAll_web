@@ -170,6 +170,44 @@ describe("Phase 2: Monthly Admin Settlements", () => {
       });
     });
 
+    it("should not count carry-forwarded refund rows as current amount due", async () => {
+      const testCarryForwardDoubleCount = async (db) => {
+        const providerId = await seedProvider(db, "carryforward-double");
+        const carryForwardPaymentSessionId = fixturePaymentSession("carryforward-allocation");
+        const currentPendingPaymentSessionId = fixturePaymentSession("carryforward-pending");
+        const allocationId = await seedSettlementAllocation(db, carryForwardPaymentSessionId);
+
+        await db.query(
+          `
+          INSERT INTO provider_settlements
+          (provider_id, reservation_id, settlement_allocation_id, payment_session_id, amount, status, manual_carry_forward_amount, idempotency_key, created_at)
+          VALUES
+            ($1, $2, $3, $4, 38.00, 'pending', 38.00, 'phase2-carryforward-refund-${randomUUID()}', '2026-08-01'::timestamp),
+            ($1, 'd0d54fca-91bd-48ee-9b16-b1fbaf0a5704', $3, $5, 114.00, 'pending', 0, 'phase2-carryforward-pending-${randomUUID()}', '2026-08-02'::timestamp)
+          `,
+          [providerId, fixtureReservationId, allocationId, carryForwardPaymentSessionId, currentPendingPaymentSessionId]
+        );
+
+        const result = await listAdminProviderSettlements({
+          client: db,
+          providerId,
+          status: "pending",
+          limit: 100,
+          ensureSchema: false,
+        });
+
+        const providerSummary = result.summary.find((row) => row.provider_id === providerId);
+        expect(providerSummary).toBeDefined();
+        expect(Number(providerSummary.amount_due)).toBe(114.00);
+        expect(Number(providerSummary.pending_settlements)).toBe(1);
+      };
+
+      await withTransaction(pool, testCarryForwardDoubleCount, {
+        name: "test_carryforward_double_count_reduction",
+        maxAttempts: 1,
+      });
+    });
+
     it("should not include processing fee in provider settlement", async () => {
       // Verify that the settlement amount is correct and does not include processing fee
       // This is validated through the existing settlement projection logic

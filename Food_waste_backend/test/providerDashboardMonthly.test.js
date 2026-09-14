@@ -126,6 +126,28 @@ test('Month settlement reduction applies the carry-forward sum once against tota
   assert.equal(reduction.reduced, true);
 });
 
+test('Month settlement reduction accepts admin operation parameter names in either record order', () => {
+  const pendingThenRefunded = calculateMonthSettlementCarryForwardReduction({
+    settlements: [
+      { id: 'pending-20', amount: 20, paid_amount: 0, refund_amount: 0 },
+      { id: 'refunded-60', amount: 60, paid_amount: 0, refund_amount: 60 },
+    ],
+    totalCarryForwardAmount: 60,
+  });
+  const refundedThenPending = calculateMonthSettlementCarryForwardReduction({
+    settlements: [
+      { id: 'refunded-20', amount: 20, paid_amount: 0, refund_amount: 20 },
+      { id: 'pending-60', amount: 60, paid_amount: 0, refund_amount: 0 },
+    ],
+    totalCarryForwardAmount: 20,
+  });
+
+  assert.equal(pendingThenRefunded.settlementAmount, 20);
+  assert.equal(refundedThenPending.settlementAmount, 60);
+  assert.equal(pendingThenRefunded.totalPendingAmount, 80);
+  assert.equal(refundedThenPending.totalPendingAmount, 80);
+});
+
 test('Manual refund carry-forward does not project automatically across future settlements', async () => {
   const client = createCarryForwardMockClient([
     {

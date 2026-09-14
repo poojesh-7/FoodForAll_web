@@ -1258,6 +1258,79 @@ async function recordProviderSettlementPaidLedger({
   });
 }
 
+async function recordProviderSettlementPaidLedgerBatch({
+  client = pool,
+  settlements = [],
+  adminId = null,
+} = {}) {
+  const rows = (Array.isArray(settlements) ? settlements : [])
+    .filter((settlement) => settlement?.id && Number(settlement.paid_amount || 0) > 0)
+    .map((settlement) => ({
+      ...settlement,
+      paid_amount: roundMoney(settlement.paid_amount),
+    }));
+  if (rows.length === 0) return [];
+
+  const values = [];
+  const placeholders = rows.map((settlement, index) => {
+    const offset = index * 9;
+    values.push(
+      settlement.reservation_id,
+      settlement.payment_id || null,
+      settlement.payment_session_id,
+      settlement.settlement_allocation_id || null,
+      settlement.id,
+      settlement.paid_amount,
+      settlement.currency || "INR",
+      settlement.provider_id,
+      adminId || null,
+    );
+    return `($${offset + 1}::uuid,$${offset + 2}::uuid,$${offset + 3}::text,$${offset + 4}::uuid,$${offset + 5}::uuid,$${offset + 6}::numeric,$${offset + 7}::text,$${offset + 8}::uuid,$${offset + 9}::uuid)`;
+  });
+
+  const result = await client.query(
+    `
+    WITH requested(
+      reservation_id, payment_id, payment_session_id, settlement_allocation_id,
+      provider_settlement_id, amount, currency, provider_id, actor_user_id
+    ) AS (VALUES ${placeholders.join(",")}), inserted AS (
+      INSERT INTO financial_ledger_entries (
+        reservation_id, payment_id, payment_session_id, settlement_allocation_id,
+        provider_settlement_id, event_type, amount, currency, actor_user_id,
+        actor_role, counterparty_user_id, counterparty_role, source_type, source_id,
+        accounting_category, idempotency_key, metadata
+      )
+      SELECT
+        reservation_id, payment_id, payment_session_id, settlement_allocation_id,
+        provider_settlement_id, 'provider_settlement_paid', amount, currency,
+        actor_user_id, 'admin', provider_id, 'provider', 'provider_settlement',
+        provider_settlement_id, 'provider_settlement_paid',
+        'ledger:provider_settlement_paid:' || provider_settlement_id,
+        jsonb_build_object('source', 'monthly_provider_settlement_batch', 'admin_id', actor_user_id)
+      FROM requested
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING *
+    )
+    INSERT INTO financial_accounting_classifications (
+      financial_ledger_entry_id, reservation_id, payment_id, payment_session_id,
+      provider_settlement_id, accounting_category, source_event_type, amount,
+      currency, source_type, source_id, idempotency_key, metadata
+    )
+    SELECT
+      id, reservation_id, payment_id, payment_session_id, provider_settlement_id,
+      accounting_category, event_type, amount, currency, source_type, source_id,
+      'accounting_classification:' || id || ':provider_settlement_paid',
+      jsonb_build_object('classification_source', 'monthly_provider_settlement_batch')
+    FROM inserted
+    ON CONFLICT (idempotency_key) DO NOTHING
+    RETURNING financial_ledger_entry_id
+    `,
+    values,
+  );
+
+  return result.rows;
+}
+
 async function recordGatewayFeeExpense({
   client = pool,
   payment,
@@ -2075,6 +2148,7 @@ module.exports = {
   recordGatewayFeeExpense,
   recordLedgerEntry,
   recordProviderSettlementPaidLedger,
+  recordProviderSettlementPaidLedgerBatch,
   recordRefundLiabilityIssued,
   recordRefundLiabilityReleased,
   recordSettlementAllocation,

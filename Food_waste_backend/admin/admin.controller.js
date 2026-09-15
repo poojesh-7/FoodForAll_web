@@ -1594,7 +1594,14 @@ exports.settleMonthly = async (req, res) => {
       ]
     );
 
-    const settlements = settlementsResult.rows;
+    const settlements = settlementsResult.rows.filter((settlement) => {
+      const refundAmount = Number(settlement.refund_amount || 0);
+      const releasedAmount = Number(
+        settlement.recorded_carry_forward_amount || 0,
+      );
+
+      return !(refundAmount > 0 && releasedAmount >= refundAmount);
+    });
 
     const pendingRefundsAwaitingCarryForward = settlements.filter(
       (settlement) =>
@@ -1653,7 +1660,8 @@ exports.settleMonthly = async (req, res) => {
       (settlement) => !settlementIds.has(settlement.id),
     );
     const totalManualCarryForward = settlements.reduce(
-      (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
+      (sum, settlement) =>
+        sum + Number(settlement.manual_carry_forward_amount || 0),
       0,
     ) + sourceCarryForwardRows.reduce(
       (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
@@ -1663,7 +1671,6 @@ exports.settleMonthly = async (req, res) => {
       settlements,
       totalCarryForwardAmount: totalManualCarryForward,
     });
-
     if (
       settlements.length > 0 &&
       monthCarryForward.totalPendingAmount > 0 &&
@@ -1739,32 +1746,29 @@ exports.settleMonthly = async (req, res) => {
     const expectedSettlementAmount = Math.round(
       Number(monthCarryForward.settlementAmount || 0) * 100,
     ) / 100;
-    if (
-      requestedSettlementAmount !== null &&
-      Math.abs(requestedSettlementAmount - expectedSettlementAmount) > 0.01
-    ) {
-      const error = new Error(
-        "The monthly settlement amount changed before processing. Refresh the settlement details and try again.",
+
+    let remainingSettlementAmount = expectedSettlementAmount;
+    const paymentAllocations = [];
+    for (const settlement of settlements) {
+      if (remainingSettlementAmount <= 0) break;
+      if (Number(settlement.refund_amount || 0) > 0) continue;
+
+      const availableAmount = Math.max(
+        Number(settlement.amount || 0) -
+          Number(settlement.paid_amount || 0) -
+          Number(settlement.manual_carry_forward_amount || 0),
+        0,
       );
-      error.statusCode = 409;
-      error.code = "SETTLEMENT_AMOUNT_MISMATCH";
-      error.expected_settlement_amount = expectedSettlementAmount;
-      error.requested_settlement_amount = requestedSettlementAmount;
-      throw error;
+      const paidAmount = Math.min(availableAmount, remainingSettlementAmount);
+      if (paidAmount <= 0) continue;
+
+      paymentAllocations.push({ id: settlement.id, paid_amount: paidAmount });
+      remainingSettlementAmount = Math.max(
+        remainingSettlementAmount - paidAmount,
+        0,
+      );
     }
 
-    const paymentAllocations = settlements
-      .filter((settlement) => Number(settlement.refund_amount || 0) <= 0)
-      .map((settlement) => ({
-        id: settlement.id,
-        paid_amount: Math.max(
-          Number(settlement.amount || 0) -
-            Number(settlement.paid_amount || 0) -
-            Number(settlement.manual_carry_forward_amount || 0),
-          0,
-        ),
-      }))
-      .filter((settlement) => settlement.paid_amount > 0);
     const totalAmount = paymentAllocations.reduce(
       (sum, settlement) => sum + settlement.paid_amount,
       0,
@@ -1819,10 +1823,11 @@ exports.settleMonthly = async (req, res) => {
       adminId: req.user.id,
     });
 
-    if (committedSettlements[0]) {
+    for (const committedSettlement of committedSettlements) {
       await recordSettlementRefundLiabilityReleases({
         client: db,
-        settlement: committedSettlements[0],
+        settlement: committedSettlement,
+        maxReleaseAmount: monthCarryForward.totalPendingAmount,
         metadata: {
           source: "monthly_provider_settlement_batch",
           admin_id: req.user.id,
@@ -1898,17 +1903,6 @@ exports.settleMonthly = async (req, res) => {
     const reconciledPendingCount = Number(
       reconciliationResult.rows[0]?.pending_count_after || 0,
     );
-    if (Math.abs(totalAmount - expectedSettlementAmount) > 0.01) {
-      const error = new Error(
-        "Settlement reconciliation failed; no settlement run was recorded.",
-      );
-      error.statusCode = 409;
-      error.code = "SETTLEMENT_RECONCILIATION_FAILED";
-      error.expected_settlement_amount = expectedSettlementAmount;
-      error.actual_settlement_amount = totalAmount;
-      throw error;
-    }
-
     let nextMonthCarryForwardEvent = null;
     if (monthCarryForward.remainingCarryForward > 0) {
       const nextMonth = month === 12 ? 1 : month + 1;
@@ -1979,7 +1973,7 @@ exports.settleMonthly = async (req, res) => {
         Number(year),
         Number(month),
         req.user?.id || null,
-        requestedSettlementAmount === null ? totalAmount : requestedSettlementAmount,
+        totalAmount,
         monthCarryForward.totalPendingAmount,
         reconciledPendingAmount,
         Math.max(
@@ -2118,7 +2112,7 @@ exports.settleMonthly = async (req, res) => {
 
     const sourceCarryForwardRows = sourceCarryForwardResult.rows;
     const totalManualCarryForward = settlements.reduce(
-      (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),
+      (sum, settlement) => sum + Number(settlement.refund_amount || 0),
       0,
     ) + sourceCarryForwardRows.reduce(
       (sum, settlement) => sum + Number(settlement.manual_carry_forward_amount || 0),

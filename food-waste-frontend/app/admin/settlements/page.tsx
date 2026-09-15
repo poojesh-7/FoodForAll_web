@@ -280,6 +280,7 @@ export default function AdminSettlementsPage() {
     monthLabel: string;
     recordCount: number;
     totalAmount: number | string;
+    eligibleCount: number;
   }>({
     isOpen: false,
     providerId: null,
@@ -289,6 +290,7 @@ export default function AdminSettlementsPage() {
     monthLabel: "",
     recordCount: 0,
     totalAmount: 0,
+    eligibleCount: 0,
   });
 
   const loadChangeRequests = useCallback(async () => {
@@ -607,41 +609,25 @@ export default function AdminSettlementsPage() {
         return (
           settlementProviderId === selectedProviderId &&
           ["pending", "processing", "allocated", "batched"].includes(status) &&
-          Number(settlement.refund_amount || 0) <= 0 &&
+          (Number(settlement.refund_amount || 0) > 0 ||
             Number(settlement.net_payable ?? settlement.amount ?? 0) >
               Number(settlement.paid_amount || 0) +
               (Number(settlement.paid_amount || 0) > 0
                 ? Number(settlement.refund_deduction_amount || 0)
-                : 0)
+                : 0))
         );
       })
     : [];
-  const selectedProviderGrossPendingAmount = selectedProvider
-    ? (consoleData?.settlements || [])
-        .filter((settlement) => {
-          const status = String(settlement.status || "").toLowerCase();
-          const refundAmount = Number(settlement.refund_amount || 0);
-          const paidAmount = Number(settlement.paid_amount || 0);
-          return (
-            ["pending", "processing", "allocated", "batched"].includes(status) &&
-            (refundAmount <= 0 || paidAmount <= 0)
-          );
-        })
-        .reduce((sum, settlement) => {
-          const refundAmount = Number(settlement.refund_amount || 0);
-          if (refundAmount > 0) return sum + Number(settlement.amount || 0);
-          return sum + Math.max(
-            Number(settlement.net_payable ?? settlement.amount ?? 0) -
-              Number(settlement.paid_amount || 0),
-            0,
-          );
-        }, 0)
-    : 0;
   const effectiveTotalAmountDue = selectedProvider
-    ? selectedProviderGrossPendingAmount
+    ? monthlySettlements.reduce(
+        (sum, monthly) => sum + Number(monthly.pending_amount || 0),
+        0,
+      )
     : totalAmountDue;
   const effectivePendingSettlementCount = selectedProvider
-    ? selectedProviderPendingRows.length
+    ? selectedProviderPendingRows.filter(
+        (settlement) => Number(settlement.refund_amount || 0) <= 0,
+      ).length
     : pendingSettlementCount;
 
   return (
@@ -814,14 +800,14 @@ export default function AdminSettlementsPage() {
                     ? rowPendingRows.reduce(
                         (sum, settlement) =>
                           sum +
-                          Math.max(
-                            Number(settlement.refund_amount || 0) > 0 &&
-                              Number(settlement.recorded_carry_forward_amount || 0) > 0
-                              ? 0
-                              : Number(settlement.net_payable ?? settlement.amount ?? 0) -
-                              Number(settlement.paid_amount || 0),
-                            0,
-                          ),
+                          (Number(settlement.refund_amount || 0) > 0 &&
+                          Number(settlement.recorded_carry_forward_amount || 0) > 0
+                            ? 0
+                            : Math.max(
+                                Number(settlement.amount || 0) -
+                                  Number(settlement.paid_amount || 0),
+                                0,
+                              )),
                         0,
                       )
                     : Number(row.amount_due || 0);
@@ -1156,9 +1142,10 @@ export default function AdminSettlementsPage() {
                                 recordCount: monthly.record_count,
                                 totalAmount: Math.max(
                                   Number(monthly.pending_amount || 0) -
-                                    Number(monthly.carry_forward_amount || 0),
+                                    Number(monthly.outstanding_refund_liability || 0),
                                   0,
                                 ),
+                                eligibleCount: monthly.eligible_count || 0,
                               })
                             }
                             className="inline-flex min-h-9 items-center justify-center rounded-md bg-zinc-950 px-3 text-sm font-medium text-white hover:bg-zinc-800"

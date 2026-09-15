@@ -270,7 +270,31 @@ async function ensureSettlementAccountingSchema(client = pool) {
   if (db === pool && schemaReady) return schemaReady;
 
   const run = async () => {
-    await db.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+    const useSchemaLock = client === pool || !client;
+    const schemaClient = useSchemaLock ? await pool.connect() : client;
+    const db = schemaClient;
+    const schemaLockKey = "food_waste_financial_schema";
+    let schemaLockAcquired = false;
+
+    try {
+      if (useSchemaLock) {
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          const lockResult = await schemaClient.query(
+            "SELECT pg_try_advisory_lock(hashtext($1)) AS acquired",
+            [schemaLockKey],
+          );
+          if (lockResult.rows[0]?.acquired) {
+            schemaLockAcquired = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        if (!schemaLockAcquired) {
+          throw new Error("Timed out waiting for financial schema initialization lock");
+        }
+      }
+
+      await db.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
     await db.query(`
       CREATE TABLE IF NOT EXISTS settlement_batches (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -571,13 +595,21 @@ async function ensureSettlementAccountingSchema(client = pool) {
         FOR EACH ROW
         EXECUTE FUNCTION prevent_financial_ledger_mutation();
     `);
-    await db.query(`
+      await db.query(`
       DROP TRIGGER IF EXISTS trg_financial_accounting_classifications_immutable ON financial_accounting_classifications;
       CREATE TRIGGER trg_financial_accounting_classifications_immutable
         BEFORE UPDATE OR DELETE ON financial_accounting_classifications
         FOR EACH ROW
         EXECUTE FUNCTION prevent_financial_ledger_mutation();
     `);
+    } finally {
+      if (useSchemaLock && schemaLockAcquired) {
+        await schemaClient
+          .query("SELECT pg_advisory_unlock(hashtext($1))", [schemaLockKey])
+          .catch(() => {});
+        schemaClient.release();
+      }
+    }
   };
 
   if (db === pool) {

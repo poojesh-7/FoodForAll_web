@@ -885,6 +885,9 @@ export interface AdminMonthlySettlementRow {
   pending_amount: number | string;
   carry_forward_amount?: number | string;
   uncarried_refund_amount?: number | string;
+  outstanding_refund_liability?: number | string;
+  eligible_count: number;
+  eligible_payable_amount: number | string;
   status: "Paid" | "Pending" | "Partially Paid" | "Failed";
   last_settlement_at?: ISODateString | null;
   payout_account: ProviderPayoutAccount | null;

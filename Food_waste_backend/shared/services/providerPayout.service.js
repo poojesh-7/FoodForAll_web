@@ -1035,10 +1035,12 @@ function applyRefundCarryForward(records) {
     projectedById.set(record.id, {
       refund_deduction_amount: recoveryAmount,
       net_payable: roundMoney(
-        Math.max(
-          Number(record.amount || 0) - recoveryAmount,
-          0,
-        ),
+        refundAmount > 0
+          ? 0
+          : Math.max(
+              Number(record.amount || 0) - recoveryAmount,
+              0,
+            ),
       ),
       pending_refund_amount: 0,
       projected_recovery_amount: 0,
@@ -1072,9 +1074,7 @@ function applyRefundCarryForward(records) {
         const remainingRefund = roundMoney(
           Math.max(refundAmount - carriedForwardAmount, 0),
         );
-        refund_note = remainingRefund > 0
-          ? `Refund carry-forward recorded: ₹${carriedForwardAmount.toFixed(2)}. Remaining refund balance: ₹${remainingRefund.toFixed(2)}.`
-          : "Refund recovery applied from carry-forward.";
+        refund_note = `Refund carry-forward recorded: ₹${carriedForwardAmount.toFixed(2)}. Remaining refund balance: ₹${remainingRefund.toFixed(2)}.`;
       } else {
         refund_note = "Refund recovery awaiting future provider settlements.";
       }
@@ -1115,21 +1115,63 @@ function applyRefundCarryForward(records) {
 }
 
 function applyManualCarryForwardProjection(records) {
-  // Carry-forward is a liability until the admin settlement action consumes it.
-  // Do not deduct it from pending rows in read projections.
-  return Array.isArray(records)
-    ? records.map((record) => ({
+  if (!Array.isArray(records)) return [];
+
+  const orderedRows = [...records].sort((left, right) => {
+    const leftTime = new Date(left.created_at || left.updated_at || 0).getTime();
+    const rightTime = new Date(right.created_at || right.updated_at || 0).getTime();
+    return leftTime - rightTime || String(left.id || "").localeCompare(String(right.id || ""));
+  });
+
+  let remainingCarryForward = 0;
+  const projectedById = new Map();
+
+  for (const record of orderedRows) {
+    const recordId = String(record.id || "");
+    const refundAmount = Number(record.refund_amount || 0);
+    const manualCarryForwardAmount = Number(record.manual_carry_forward_amount || 0);
+    const normalizedStatus = normalizeSettlementStatus(record.status);
+    const amount = Number(record.amount || 0);
+
+    if (refundAmount > 0 && manualCarryForwardAmount > 0) {
+      remainingCarryForward += manualCarryForwardAmount;
+    }
+
+    const pendingStatus = PENDING_SETTLEMENT_STATUSES.includes(normalizedStatus);
+    const deduction = pendingStatus && refundAmount === 0 && remainingCarryForward > 0
+      ? Math.min(remainingCarryForward, amount)
+      : 0;
+
+    if (deduction > 0) {
+      remainingCarryForward = Math.max(0, remainingCarryForward - deduction);
+    }
+
+    projectedById.set(recordId, {
+      ...record,
+      refund_deduction_amount: Number(deduction || record.refund_deduction_amount || 0),
+      net_payable: Number(
+        record.net_payable ??
+          (refundAmount > 0 ? 0 : Math.max(amount - deduction, 0)),
+      ),
+    });
+  }
+
+  return records.map((record) => {
+    const projected = projectedById.get(String(record.id || ""));
+    if (!projected) {
+      return {
         ...record,
         refund_deduction_amount: Number(record.refund_deduction_amount || 0),
-        net_payable: Number(
-          record.net_payable ??
-            Math.max(
-              Number(record.amount || 0) - Number(record.refund_amount || 0),
-              0,
-            ),
-        ),
-      }))
-    : [];
+        net_payable: Number(record.net_payable ?? Math.max(Number(record.amount || 0), 0)),
+      };
+    }
+    return {
+      ...record,
+      ...projected,
+      refund_deduction_amount: Number(projected.refund_deduction_amount || 0),
+      net_payable: Number(projected.net_payable || 0),
+    };
+  });
 }
 
 function preserveSettlementRecordDisplay(records) {
@@ -1166,8 +1208,9 @@ function getNetPaidSettlementAmount(settlement) {
     return Math.min(paidAmount, amount);
   }
 
+  const status = normalizeSettlementStatus(settlement.status);
   const deduction = Number(settlement.refund_deduction_amount || 0);
-  if (deduction > 0) {
+  if (deduction > 0 && PAID_SETTLEMENT_STATUSES.includes(status)) {
     return Math.max(amount - deduction, 0);
   }
   return getPaidSettlementAmount(settlement);
@@ -1286,9 +1329,11 @@ function calculateMonthSettlementCarryForwardReduction({
   carryForwardAmount = totalCarryForwardAmount,
 } = {}) {
   const pendingTotal = pendingSettlements.reduce((sum, settlement) => {
-    const amount = Number(settlement.amount || 0);
-    const paidAmount = Number(settlement.paid_amount || 0);
-    return sum + Math.max(amount - paidAmount, 0);
+    const normalizedStatus = normalizeSettlementStatus(settlement.status);
+    if (!PENDING_SETTLEMENT_STATUSES.includes(normalizedStatus)) {
+      return sum;
+    }
+    return sum + Number(settlement.amount || 0);
   }, 0);
 
   const totalCarryForward = roundMoney(
@@ -1389,24 +1434,20 @@ function summarizeSettlementProjection(records) {
   }, 0);
 
   const paidAmount = paidSettle.reduce((sum, row) => {
-    if (Number(row.refund_amount || 0) > 0) return sum;
     return sum + getNetPaidSettlementAmount(row);
   }, 0);
 
-  const partialPaidAmount = pendingSettle.reduce(
-    (sum, row) => Number(row.refund_amount || 0) > 0
-      ? sum
-      : sum + Math.min(
-        Number(row.amount || 0),
-        Number(row.paid_amount || 0) + Number(row.refund_deduction_amount || 0),
-      ),
+  const partialPaidAmount = pendingSettle.reduce((sum, row) => {
+    if (Number(row.refund_amount || 0) > 0) return sum;
+    const paid = Number(row.paid_amount || 0);
+    if (paid <= 0) return sum;
+    return sum + Math.min(Number(row.amount || 0), paid);
+  }, 0);
+
+  const refundTotal = rows.reduce(
+    (sum, row) => sum + getRecordedRefundRecoveryAmount(row),
     0,
   );
-
-  const refundTotal = rows.reduce((sum, row) => {
-    const amount = Number(row.recorded_carry_forward_amount || 0);
-    return sum + amount;
-  }, 0);
 
   const refundDeduction = rows.reduce((sum, row) => {
     if (Number(row.refund_amount || 0) > 0) return sum;
@@ -1414,8 +1455,7 @@ function summarizeSettlementProjection(records) {
   }, 0);
 
   const outstandingRefund = rows.reduce((sum, row) => {
-    if (Number(row.refund_amount || 0) <= 0) return sum;
-    return sum + Number(row.manual_carry_forward_amount || 0);
+    return sum + getOutstandingRefundLiabilityAmount(row);
   }, 0);
 
   return {
@@ -1427,7 +1467,6 @@ function summarizeSettlementProjection(records) {
       total: Math.round(refundTotal * 100) / 100,
       count: rows.filter((row) => Number(row.refund_deduction_amount || 0) > 0).length,
       deducted: Math.round(refundDeduction * 100) / 100,
-      // Pending liability = refunds on paid settlements - what's been deducted
       pending: Math.round(outstandingRefund * 100) / 100,
     },
     rows,
@@ -1435,18 +1474,22 @@ function summarizeSettlementProjection(records) {
 }
 
 async function getProviderSettledRunTotal(client, providerId) {
-  const result = await client.query(
-    `
-    SELECT COALESCE(SUM(paid_amount), 0)::numeric AS total_paid
-    FROM provider_settlement_runs
-    WHERE provider_id = $1
-      AND status = 'settled'
-      AND COALESCE(paid_amount, 0) > 0
-    `,
-    [providerId],
-  );
+  try {
+    const result = await client.query(
+      `
+      SELECT COALESCE(SUM(paid_amount), 0)::numeric AS total_paid
+      FROM provider_settlement_runs
+      WHERE provider_id = $1
+        AND status = 'settled'
+        AND COALESCE(paid_amount, 0) > 0
+      `,
+      [providerId],
+    );
 
-  return Number(result.rows[0]?.total_paid || 0);
+    return Number(result.rows[0]?.total_paid || 0);
+  } catch (error) {
+    return 0;
+  }
 }
 
 function sqlTimestampUtc(columnName) {
@@ -1552,9 +1595,10 @@ async function getProviderSettlementSummary({
     applyRefundCarryForward(settlementRows.rows.map(serializeSettlement)),
   );
   const projectedSummary = summarizeSettlementProjection(projectedRows);
-  projectedSummary.earnings.paid = Math.round(
-    (await getProviderSettledRunTotal(client, providerId)) * 100,
-  ) / 100;
+  const settledRunTotal = await getProviderSettledRunTotal(client, providerId);
+  if (settledRunTotal > 0) {
+    projectedSummary.earnings.paid = Math.round(settledRunTotal * 100) / 100;
+  }
 
   // Aggregate settlements by month for frontend display
   function aggregateSettlementsByMonth(rows) {
@@ -1593,11 +1637,8 @@ async function getProviderSettlementSummary({
       if (paidStatus && refund <= 0) {
         monthData.paid += getNetPaidSettlementAmount(row);
       }
-      if (
-        pendingStatus &&
-        !(refund > 0 && Number(row.recorded_carry_forward_amount || 0) > 0)
-      ) {
-        monthData.pending += netAmount;
+      if (pendingStatus && Number(row.paid_amount || 0) <= 0) {
+        monthData.pending += Number(row.amount || 0);
       }
       monthData.count += 1;
 
@@ -1845,7 +1886,16 @@ async function listProviderSettlementRecords({
   }
 
   const records = preserveSettlementRecordDisplay(
-    applyRefundCarryForward(result.rows.map((row) => serializeSettlement(row.record))),
+    applyRefundCarryForward(
+      result.rows
+        .map((row) => {
+          if (!row) return null;
+          if (row.record) return serializeSettlement(row.record);
+          if (row.id) return serializeSettlement(row);
+          return null;
+        })
+        .filter(Boolean),
+    ),
   );
   const count = Number(result.rows[0]?.total_count || 0);
 
@@ -2119,9 +2169,82 @@ function serializeAdminMonthlySettlement(row) {
     pending_amount: pending,
     carry_forward_amount: Number(row.carry_forward_amount || 0),
     uncarried_refund_amount: Number(row.uncarried_refund_amount || 0),
+    outstanding_refund_liability: Number(row.outstanding_refund_liability || 0),
+    eligible_count: Number(row.eligible_count || 0),
+    eligible_payable_amount: Number(row.eligible_payable_amount || 0),
     status,
     last_settlement_at: row.last_settlement_at || null,
     payout_account: payoutAccountSummary(row),
+  };
+}
+
+function getSettlementGrossPendingAmount(record) {
+  const amount = Number(record.amount || 0);
+  const normalizedStatus = normalizeSettlementStatus(record.status);
+
+  if (!PENDING_SETTLEMENT_STATUSES.includes(normalizedStatus)) {
+    return 0;
+  }
+
+  if (
+    Number(record.refund_amount || 0) > 0 &&
+    Number(record.recorded_carry_forward_amount || 0) > 0
+  ) {
+    return 0;
+  }
+
+  return amount;
+}
+
+function getSettlementRefundLiabilityAmount(record) {
+  const amount = Number(record.amount || 0);
+  const refundAmount = Math.min(amount, Number(record.refund_amount || 0));
+
+  if (refundAmount <= 0) {
+    return 0;
+  }
+
+  return refundAmount;
+}
+
+function getOutstandingRefundLiabilityAmount(record) {
+  return Math.max(Number(record.manual_carry_forward_amount || 0), 0);
+}
+
+function getRecordedRefundRecoveryAmount(record) {
+  return Math.max(
+    Number(record.recorded_refund_deduction_amount || 0),
+    0,
+  );
+}
+
+function calculateAdminMonthlySettlementAmounts(record) {
+  const amount = Number(record.amount || 0);
+  const refund = Math.min(amount, Number(record.refund_amount || 0));
+  const paidAmount = Number(record.paid_amount || 0);
+  const normalizedStatus = normalizeSettlementStatus(record.status);
+  const grossPendingAmount = getSettlementGrossPendingAmount(record);
+  const carryForwardAmount = getOutstandingRefundLiabilityAmount(record);
+  const paidSettlementAmount = PAID_SETTLEMENT_STATUSES.includes(normalizedStatus)
+    ? getPaidSettlementAmount(record)
+    : Math.min(paidAmount, amount);
+
+  return {
+    netAmount: Math.max(amount - Number(record.refund_deduction_amount || 0), 0),
+    paidAmount: PAID_SETTLEMENT_STATUSES.includes(normalizedStatus)
+      ? paidSettlementAmount
+      : 0,
+    pendingAmount: grossPendingAmount,
+    eligiblePayableAmount: Math.max(grossPendingAmount - carryForwardAmount, 0),
+    carryForwardAmount,
+    uncarriedRefundAmount: refund > 0
+      ? Math.max(
+          refund -
+            Number(record.manual_carry_forward_amount || 0) -
+            Number(record.recorded_carry_forward_amount || 0),
+          0,
+        )
+      : 0,
   };
 }
 
@@ -2304,50 +2427,37 @@ async function listAdminMonthlySettlements({
       pending_amount: 0,
       carry_forward_amount: 0,
       uncarried_refund_amount: 0,
+      outstanding_refund_liability: 0,
       refunded_amount: 0,
+      eligible_count: 0,
+      eligible_payable_amount: 0,
       last_settlement_at: record.paid_at || record.updated_at || record.created_at,
       payout_account: record.payout_account,
     };
-    const amount = Number(record.amount || 0);
-    const refund = Number(record.refund_amount || 0);
-    const deduction = Number(record.refund_deduction_amount || 0);
-    const netAmount = Math.max(amount - deduction, 0);
-    const paidAmount = refund > 0
-      ? 0
-      : recordStatus === "paid"
-        ? getPaidSettlementAmount(record)
-        : Math.min(Number(record.paid_amount || 0), netAmount);
-    const pendingAmount = PENDING_SETTLEMENT_STATUSES.includes(recordStatus)
-      ? refund > 0
-        ? Number(record.paid_amount || 0) > 0
-          ? 0
-          : amount
-        : Math.max(
-            netAmount -
-              paidAmount -
-              (paidAmount > 0 ? Number(record.refund_deduction_amount || 0) : 0),
-            0,
-          )
-      : 0;
+    const {
+      netAmount,
+      paidAmount,
+      pendingAmount,
+      carryForwardAmount,
+      uncarriedRefundAmount,
+      eligiblePayableAmount,
+    } = calculateAdminMonthlySettlementAmounts(record);
+    const refundAmount = Math.min(
+      Number(record.amount || 0),
+      Number(record.refund_amount || 0),
+    );
 
     monthRecord.record_count += 1;
     monthRecord.total_amount += netAmount;
     monthRecord.paid_amount += paidAmount;
     monthRecord.pending_amount += pendingAmount;
-    monthRecord.refunded_amount += refund;
-    if (refund > 0) {
-      monthRecord.carry_forward_amount += Number(
-        record.manual_carry_forward_amount || 0,
-      ) + Number(
-        record.recorded_carry_forward_amount || 0,
-      );
-      monthRecord.uncarried_refund_amount += Math.max(
-        refund -
-          Number(record.manual_carry_forward_amount || 0) -
-          Number(record.recorded_carry_forward_amount || 0),
-        0,
-      );
-    }
+    monthRecord.refunded_amount += refundAmount;
+    monthRecord.carry_forward_amount += carryForwardAmount;
+    monthRecord.uncarried_refund_amount += uncarriedRefundAmount;
+    monthRecord.outstanding_refund_liability +=
+      getOutstandingRefundLiabilityAmount(record);
+    if (eligiblePayableAmount > 0) monthRecord.eligible_count += 1;
+    monthRecord.eligible_payable_amount += eligiblePayableAmount;
     monthlyMap.set(monthMapKey, monthRecord);
   }
 
@@ -2870,44 +2980,35 @@ async function listAdminProviderSettlements({
       carry_forward_liability: 0,
     };
     const status = normalizeSettlementStatus(record.status);
-    const netPayable = Number(record.net_payable || 0);
+    const grossPendingAmount = getSettlementGrossPendingAmount(record);
+    const refundLiabilityAmount = getSettlementRefundLiabilityAmount(record);
     const refundAmount = Number(record.refund_amount || 0);
-    const pendingPayable = refundAmount > 0
-      ? 0
-      : Math.max(
-        netPayable - Number(record.paid_amount || 0),
-        0,
-      ) - (Number(record.paid_amount || 0) > 0
-        ? Number(record.refund_deduction_amount || 0)
-        : 0);
-    const effectivePendingPayable = Math.max(
-      pendingPayable,
-      0,
-    );
+
     if (OUTSTANDING_SETTLEMENT_STATUSES.includes(status)) {
-      providerSummary.amount_due += effectivePendingPayable;
-      if (effectivePendingPayable > 0) providerSummary.pending_settlements += 1;
+      providerSummary.amount_due += grossPendingAmount;
+      if (grossPendingAmount > 0) providerSummary.pending_settlements += 1;
     }
-    providerSummary.refund_total += Number(
-      record.recorded_carry_forward_amount || 0,
-    );
+
+    providerSummary.refund_total += getRecordedRefundRecoveryAmount(record);
     if (refundAmount > 0) {
-      providerSummary.carry_forward_liability += Number(
-        record.manual_carry_forward_amount || 0,
-      );
+      providerSummary.carry_forward_liability +=
+        getOutstandingRefundLiabilityAmount(record);
     }
+
     if (PAID_SETTLEMENT_STATUSES.includes(status)) {
-      if (Number(record.refund_amount || 0) > 0) {
+      if (refundAmount > 0) {
         projectedSummaryByProvider.set(record.provider_id, providerSummary);
         continue;
       }
       providerSummary.paid_earnings += getNetPaidSettlementAmount(record);
     }
-    if (Number(record.refund_amount || 0) === 0) {
+
+    if (refundAmount === 0) {
       providerSummary.refund_deduction_amount += Number(
         record.refund_deduction_amount || 0,
       );
     }
+
     projectedSummaryByProvider.set(record.provider_id, providerSummary);
   }
   const settledRunTotals = await client.query(
@@ -3018,6 +3119,7 @@ async function loadActiveProviderPayoutAccount(client, providerId) {
 async function recordSettlementRefundLiabilityReleases({
   client,
   settlement,
+  maxReleaseAmount = null,
   metadata = {},
 } = {}) {
   if (
@@ -3064,6 +3166,9 @@ async function recordSettlementRefundLiabilityReleases({
 
   // For each refund, check if there's an outstanding liability and release up to the settlement amount
   let totalReleased = 0;
+  let remainingReleaseBudget = Number.isFinite(Number(maxReleaseAmount))
+    ? Math.max(Number(maxReleaseAmount), 0)
+    : Math.max(Number(settlement.amount || 0) - Number(settlement.paid_amount || 0), 0);
 
   for (const refundRow of refundResult.rows) {
     const refundId = refundRow.refund_id;
@@ -3078,13 +3183,14 @@ async function recordSettlementRefundLiabilityReleases({
       sourceCarryForwardAmount,
     );
 
-    if (!refundId || outstandingLiability <= 0) continue;
+    if (!refundId || outstandingLiability <= 0 || remainingReleaseBudget <= 0) continue;
 
     // Release amount is capped at outstanding liability and settlement amount
     const releaseAmount = Math.min(
       outstandingLiability,
       totalRefundAmount,
       sourceCarryForwardAmount,
+      remainingReleaseBudget,
     );
 
     if (releaseAmount > 0) {
@@ -3102,6 +3208,10 @@ async function recordSettlementRefundLiabilityReleases({
       });
 
       totalReleased += releaseAmount;
+      remainingReleaseBudget = Math.max(
+        remainingReleaseBudget - releaseAmount,
+        0,
+      );
 
       await client.query(
         `
@@ -3394,6 +3504,7 @@ async function transitionProviderSettlementStatus({
       await recordSettlementRefundLiabilityReleases({
         client: db,
         settlement: updated,
+        maxReleaseAmount: remainingPayable,
         metadata: {
           source: "settlement_paid_transition",
           admin_id: adminId || null,
@@ -3525,11 +3636,48 @@ async function applyManualRefundCarryForward({
       [refundSettlementId, totalCarryForwardAmount, adminId || null, notes || null],
     );
 
+    const targetSettlementResult = await db.query(
+      `
+      SELECT
+        ps.id,
+        ps.provider_id,
+        ps.reservation_id,
+        ps.payment_session_id,
+        ps.amount,
+        ps.paid_amount,
+        ps.status,
+        ps.created_at
+      FROM provider_settlements ps
+      WHERE ps.provider_id = $1
+        AND ps.id <> $2
+        AND ps.status = ANY($3::text[])
+        AND COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) > 0
+        AND LEAST(ps.amount, COALESCE((
+          SELECT SUM(fle.amount)
+          FROM financial_ledger_entries fle
+          WHERE fle.reservation_id = ps.reservation_id
+            AND fle.payment_session_id = ps.payment_session_id
+            AND fle.event_type = 'refund_issued'
+        ), 0)) = 0
+        AND ps.created_at > $4
+      ORDER BY ps.created_at ASC, ps.id ASC
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [
+        refunded.provider_id,
+        refundSettlementId,
+        PENDING_SETTLEMENT_STATUSES,
+        refunded.created_at,
+      ],
+    );
+    const targetSettlement = targetSettlementResult.rows[0] || null;
+
     return {
       success: true,
       refundSettlement: updateRefundResult.rows[0],
-      targetSettlement: updateRefundResult.rows[0],
-      targetSettlements: [updateRefundResult.rows[0]],
+      targetSettlement,
+      targetSettlements: targetSettlement ? [targetSettlement] : [],
       carryForwardAmount: Math.round(totalCarryForwardAmount * 100) / 100,
       remainingToCarryForward: 0,
     };
@@ -3541,86 +3689,6 @@ async function applyManualRefundCarryForward({
     name: "apply_manual_refund_carry_forward",
     maxAttempts: 3,
   });
-}
-
-async function recordRefundCarryForwardLedger(
-  db,
-  { refundSettlementId, targetSettlementId, amount, adminId, notes } = {}
-) {
-  // Record the carry forward operation in financial ledger for accounting
-  const idempotencyKey = [
-    "ledger",
-    "provider_refund_liability_released",
-    refundSettlementId,
-    targetSettlementId,
-  ].join(":");
-
-  // Get settlement details for the ledger entry
-  const refundSettlement = await db.query(
-    `
-    SELECT
-      target.reservation_id,
-      target.payment_session_id,
-      (
-        SELECT fle.refund_id
-        FROM financial_ledger_entries fle
-        JOIN provider_settlements source
-          ON source.reservation_id = fle.reservation_id
-          AND source.payment_session_id = fle.payment_session_id
-        WHERE source.id = $1
-          AND fle.event_type = 'refund_issued'
-          AND fle.refund_id IS NOT NULL
-        ORDER BY fle.created_at DESC, fle.id DESC
-        LIMIT 1
-      ) AS refund_id
-    FROM provider_settlements target
-    WHERE target.id = $2
-    `,
-    [refundSettlementId, targetSettlementId],
-  );
-
-  if (refundSettlement.rows[0]) {
-    const { reservation_id, payment_session_id, refund_id } = refundSettlement.rows[0];
-
-    // Record carry forward ledger entry
-    await db.query(
-      `
-      INSERT INTO financial_ledger_entries (
-        reservation_id,
-        payment_session_id,
-        provider_settlement_id,
-        event_type,
-        amount,
-        actor_user_id,
-        actor_role,
-        accounting_category,
-        refund_id,
-        idempotency_key,
-        metadata,
-        created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-      ON CONFLICT (idempotency_key) DO NOTHING
-      `,
-      [
-        reservation_id,
-        payment_session_id,
-        targetSettlementId,
-        'provider_refund_liability_released',
-        amount,
-        adminId || null,
-        'admin',
-        'provider_refund_liability',
-        refund_id,
-        idempotencyKey,
-        JSON.stringify({
-          refund_settlement_id: refundSettlementId,
-          target_settlement_id: targetSettlementId,
-          carry_forward_amount: amount,
-          admin_notes: notes || null,
-        }),
-      ],
-    );
-  }
 }
 
 async function updateProviderSettlementNotes({
@@ -3682,8 +3750,10 @@ module.exports = {
   applyRefundCarryForward,
   applyManualCarryForwardProjection,
   applyManualRefundCarryForward,
+  calculateAdminMonthlySettlementAmounts,
   calculateMonthSettlementCarryForwardReduction,
   calculateRefundCarryForwardAllocations,
+  getOutstandingRefundLiabilityAmount,
   reduceSettlementCarryForwardUsage,
   CHANGE_REQUEST_STATUSES,
   FINAL_SETTLEMENT_STATUSES,
@@ -3695,6 +3765,7 @@ module.exports = {
   getProviderSettlementSummary,
   getProviderSettledRecordsTotal,
   getProviderRefundLiabilitySourceState,
+  summarizeSettlementProjection,
   listProviderSettlementRecords,
   listProviderSettlementRuns,
   listAdminProviderSettlements,

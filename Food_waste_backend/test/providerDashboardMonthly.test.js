@@ -5,12 +5,42 @@ const {
   applyRefundCarryForward,
   applyManualCarryForwardProjection,
   applyManualRefundCarryForward,
+  calculateAdminMonthlySettlementAmounts,
   calculateMonthSettlementCarryForwardReduction,
   calculateRefundCarryForwardAllocations,
+  getOutstandingRefundLiabilityAmount,
   getProviderSettlementSummary,
   listProviderSettlementRecords,
   reduceSettlementCarryForwardUsage,
+  summarizeSettlementProjection,
 } = require('../shared/services/providerPayout.service');
+
+test('Month settlement validation keeps raw refunds outside liability until carry-forward', () => {
+  const records = [
+    { amount: 76, status: 'pending', paid_amount: 0, refund_amount: 0 },
+    { amount: 19, status: 'pending', paid_amount: 0, refund_amount: 19 },
+    { amount: 19, status: 'pending', paid_amount: 0, refund_amount: 19 },
+    { amount: 19, status: 'paid', paid_amount: 19, refund_amount: 19 },
+  ];
+  const totals = records.reduce(
+    (result, record) => {
+      const monthly = calculateAdminMonthlySettlementAmounts(record);
+      result.pending += monthly.pendingAmount;
+      result.carryForward += monthly.carryForwardAmount;
+      return result;
+    },
+    { pending: 0, carryForward: 0 },
+  );
+  const reduction = calculateMonthSettlementCarryForwardReduction({
+    settlements: records,
+    totalCarryForwardAmount: totals.carryForward,
+  });
+
+  assert.equal(totals.pending, 114);
+  assert.equal(totals.carryForward, 0);
+  assert.equal(reduction.totalPendingAmount, 114);
+  assert.equal(reduction.settlementAmount, 114);
+});
 
 test('Refund carry-forward remains a liability until settlement release', () => {
   const rows = applyRefundCarryForward([
@@ -231,6 +261,71 @@ test('Manual refund carry-forward does not project automatically across future s
   assert.equal(client.releases.length, 0);
 });
 
+test('Manual refund carry-forward compares created_at against timestamp, not the refund settlement id', async () => {
+  const seenParams = [];
+  const client = {
+    async query(sql, params = []) {
+      const text = String(sql);
+
+      if (text.includes('WHERE ps.id = $1')) {
+        return {
+          rows: [{
+            id: 'refund-57',
+            provider_id: 'prov_1',
+            reservation_id: 'refund-res',
+            payment_session_id: 'refund-session',
+            amount: 57,
+            status: 'paid',
+            created_at: '2026-09-04T07:58:00.000Z',
+            manual_carry_forward_amount: 0,
+            refund_amount: 57,
+          }],
+        };
+      }
+
+      if (text.includes('WHERE ps.provider_id = $1') && text.includes('ps.created_at > $4')) {
+        seenParams.push(params);
+        return { rows: [{
+          id: 'target-38',
+          provider_id: 'prov_1',
+          reservation_id: 'target-res-38',
+          payment_session_id: 'target-session-38',
+          amount: 38,
+          paid_amount: 0,
+          status: 'pending',
+          created_at: '2026-09-04T08:03:00.000Z',
+        }] };
+      }
+
+      if (text.includes('UPDATE provider_settlements')) {
+        return { rows: [{
+          id: 'refund-57',
+          provider_id: 'prov_1',
+          amount: 57,
+          status: 'paid',
+          manual_carry_forward_amount: 57,
+          manual_carry_forward_applied_at: '2026-09-04T08:10:00.000Z',
+          manual_carry_forward_applied_by: 'admin-1',
+        }] };
+      }
+
+      return { rows: [] };
+    },
+  };
+
+  await applyManualRefundCarryForward({
+    client,
+    refundSettlementId: 'refund-57',
+    adminId: 'admin-1',
+    notes: 'recover refund',
+    ensureSchema: false,
+  });
+
+  assert.equal(seenParams[0][1], 'refund-57');
+  assert.equal(seenParams[0][3], '2026-09-04T07:58:00.000Z');
+  assert.equal(typeof seenParams[0][3], 'string');
+});
+
 test('Month settlement consumes carry-forward from the pending rows and clears only the used portion', () => {
   const settled = reduceSettlementCarryForwardUsage({
     settlements: [
@@ -317,16 +412,17 @@ function createCarryForwardMockClient(initialSettlements) {
 
       if (
         text.includes('FROM provider_settlements ps') &&
-        text.includes('AND ps.created_at > $2') &&
+        text.includes('ps.created_at > $4') &&
         text.includes('FOR UPDATE')
       ) {
-        const [providerId, createdAt] = params;
+        const [providerId, refundSettlementId, statuses, createdAt] = params;
         return {
           rows: settlements
             .filter((settlement) =>
               settlement.provider_id === providerId &&
+              settlement.id !== refundSettlementId &&
+              statuses.includes(settlement.status) &&
               settlement.created_at > createdAt &&
-              ['pending', 'processing', 'allocated', 'batched'].includes(settlement.status) &&
               Number(settlement.refund_amount || 0) === 0 &&
               Math.max(
                 Number(settlement.amount || 0) -
@@ -523,8 +619,8 @@ test('Monthly aggregation and refund exclusion', async () => {
 
   const summary = await getProviderSettlementSummary({ client, providerId: 'prov_1', limit: 12, ensureSchema: false });
 
-  // pending should include only the active pending settlement (10000)
-  assert.equal(Number(summary.earnings.pending), 10000);
+  // gross pending includes the active pending and refunded pending settlement
+  assert.equal(Number(summary.earnings.pending), 15000);
   // paid should include only the settled amount (9500)
   assert.equal(Number(summary.earnings.paid), 9500);
   // monthly rows should include two months: current and last month
@@ -556,7 +652,200 @@ test('Provider summary exposes outstanding refund liability after a post-settlem
   assert.equal(summary.earnings.pending, 1800);
   assert.equal(summary.earnings.paid, 750);
   assert.equal(summary.refunds.total, 0);
-  assert.equal(summary.refunds.pending, 450);
+  assert.equal(summary.refunds.pending, 0);
+});
+
+test('Released liability is excluded while later refund liabilities remain outstanding', () => {
+  const rows = [
+    {
+      amount: 28.5,
+      refund_amount: 28.5,
+      recorded_carry_forward_amount: 28.5,
+      status: 'paid',
+    },
+    {
+      amount: 38,
+      refund_amount: 38,
+      manual_carry_forward_amount: 38,
+      status: 'pending',
+    },
+    {
+      amount: 19,
+      refund_amount: 19,
+      manual_carry_forward_amount: 19,
+      status: 'pending',
+    },
+  ];
+
+  assert.deepEqual(
+    rows.map(getOutstandingRefundLiabilityAmount),
+    [0, 38, 19],
+  );
+  assert.equal(
+    rows.reduce((sum, row) => sum + getOutstandingRefundLiabilityAmount(row), 0),
+    57,
+  );
+});
+
+test('Refund accounting follows carry-forward and settlement lifecycle buckets', () => {
+  const summarize = (rows) => summarizeSettlementProjection(rows);
+  const pending = (extra = {}) => ({
+    id: 'pending-28-5',
+    amount: 28.5,
+    paid_amount: 0,
+    status: 'pending',
+    refund_amount: 0,
+    ...extra,
+  });
+
+  let summary = summarize([
+    pending(),
+    { id: 'refund-38', amount: 38, status: 'pending', refund_amount: 38 },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 66.5, paid: 0, refunds: 0, liability: 0 },
+  );
+
+  summary = summarize([
+    pending(),
+    {
+      id: 'refund-38',
+      amount: 38,
+      status: 'pending',
+      refund_amount: 38,
+      manual_carry_forward_amount: 38,
+    },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 66.5, paid: 0, refunds: 0, liability: 38 },
+  );
+
+  summary = summarize([
+    pending({ status: 'paid', paid_amount: 28.5, payment_reference: 'UTR111111111111' }),
+    {
+      id: 'refund-38',
+      amount: 38,
+      status: 'pending',
+      refund_amount: 38,
+      recorded_refund_deduction_amount: 38,
+      recorded_carry_forward_amount: 38,
+      manual_carry_forward_amount: 0,
+    },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 0, paid: 28.5, refunds: 38, liability: 0 },
+  );
+
+  summary = summarize([
+    {
+      id: 'settled-refunded-28-5',
+      amount: 28.5,
+      paid_amount: 28.5,
+      status: 'paid',
+      refund_amount: 28.5,
+      recorded_refund_deduction_amount: 0,
+    },
+    {
+      id: 'refund-38',
+      amount: 38,
+      status: 'pending',
+      refund_amount: 38,
+      recorded_refund_deduction_amount: 38,
+      recorded_carry_forward_amount: 38,
+      manual_carry_forward_amount: 0,
+    },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 0, paid: 28.5, refunds: 38, liability: 0 },
+  );
+
+  summary = summarize([
+    {
+      id: 'settled-refunded-28-5',
+      amount: 28.5,
+      paid_amount: 28.5,
+      status: 'paid',
+      refund_amount: 28.5,
+      manual_carry_forward_amount: 28.5,
+    },
+    {
+      id: 'refund-38',
+      amount: 38,
+      status: 'pending',
+      refund_amount: 38,
+      recorded_refund_deduction_amount: 38,
+      manual_carry_forward_amount: 0,
+    },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 38, paid: 28.5, refunds: 38, liability: 28.5 },
+  );
+
+  summary = summarize([
+    {
+      id: 'next-40',
+      amount: 40,
+      paid_amount: 9.5,
+      status: 'paid',
+      refund_amount: 0,
+      recorded_refund_deduction_amount: 28.5,
+    },
+    {
+      id: 'settled-refunded-28-5',
+      amount: 28.5,
+      paid_amount: 28.5,
+      status: 'paid',
+      refund_amount: 28.5,
+      manual_carry_forward_amount: 0,
+    },
+    {
+      id: 'refund-38',
+      amount: 38,
+      status: 'pending',
+      refund_amount: 38,
+      recorded_refund_deduction_amount: 38,
+      manual_carry_forward_amount: 0,
+    },
+  ]);
+  assert.deepEqual(
+    {
+      pending: summary.earnings.pending,
+      paid: summary.earnings.paid,
+      refunds: summary.refunds.total,
+      liability: summary.refunds.pending,
+    },
+    { pending: 38, paid: 38, refunds: 66.5, liability: 0 },
+  );
 });
 
 test('Provider summary keeps refund liability after a future settlement partially absorbs it', async () => {
@@ -576,7 +865,7 @@ test('Provider summary keeps refund liability after a future settlement partiall
   assert.equal(summary.earnings.pending, 900);
   assert.equal(summary.earnings.paid, 300);
   assert.equal(summary.refunds.total, 0);
-  assert.equal(summary.refunds.pending, 700);
+  assert.equal(summary.refunds.pending, 1000);
 });
 
 test('Provider accounting separates earnings from refund adjustments', async () => {
@@ -595,7 +884,7 @@ test('Provider accounting separates earnings from refund adjustments', async () 
   assert.equal(summary.earnings.pending, 2375);
   assert.equal(summary.earnings.paid, 2850);
   assert.equal(summary.refunds.total, 0);
-  assert.equal(summary.refunds.pending, 1900);
+  assert.equal(summary.refunds.pending, 3800);
   assert.equal(summary.earnings.pending + summary.earnings.paid, 5225);
   assert.equal(summary.refunds.total, 0);
 });

@@ -31,6 +31,11 @@ function ensureFoodListingSoftDeleteSchema(client = pool) {
 
       await client.query(`
         ALTER TABLE food_listings
+        ADD COLUMN IF NOT EXISTS original_price NUMERIC(10,2) NULL
+      `);
+
+      await client.query(`
+        ALTER TABLE food_listings
         ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other',
         ADD COLUMN IF NOT EXISTS dietary_tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
       `);

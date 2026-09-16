@@ -248,6 +248,7 @@ export interface FoodListingRow extends DbRow {
   category?: FoodCategory | string;
   dietary_tags?: Array<DietaryTag | string>;
   price?: number | string;
+  original_price?: number | string | null;
   is_free?: boolean;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString;
@@ -293,6 +294,7 @@ export interface NearbyFoodListing {
   status?: string;
   is_free?: boolean;
   price?: number | string | null;
+  original_price?: number | string | null;
   provider_name?: string | null;
   provider_profile_image_url?: string | null;
   restaurant_name?: string | null;
@@ -1097,6 +1099,7 @@ export interface CreateFoodRequest {
   category: FoodCategory | string;
   dietary_tags?: Array<DietaryTag | string> | string;
   price?: number | string;
+  original_price?: number | string | null;
   is_free?: boolean | "true" | "false";
   pickup_start_time?: ISODateString;
   pickup_end_time: ISODateString;
@@ -1116,6 +1119,7 @@ export interface UpdateFoodRequest {
   category?: FoodCategory | string | null;
   dietary_tags?: Array<DietaryTag | string> | string | null;
   price?: number | string | null;
+  original_price?: number | string | null;
   is_free?: boolean | "true" | "false" | null;
   pickup_start_time?: ISODateString | null;
   pickup_end_time?: ISODateString | null;

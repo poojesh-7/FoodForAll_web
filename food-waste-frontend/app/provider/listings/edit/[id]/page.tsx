@@ -25,7 +25,8 @@ const emptyValues: FoodFormValues = {
   category: "",
   dietary_tags: [],
   price: "",
-  is_free: true,
+  original_price: "",
+  is_free: false,
   pickup_start_time: "",
   pickup_end_time: "",
   images: [],
@@ -91,6 +92,7 @@ export default function EditProviderListingPage() {
             ? listing.dietary_tags.map(String)
             : [],
           price: String(listing.price ?? ""),
+          original_price: String(listing.original_price ?? ""),
           is_free: Boolean(listing.is_free),
           pickup_start_time: toDateTimeLocal(listing.pickup_start_time),
           pickup_end_time: toDateTimeLocal(listing.pickup_end_time),
@@ -139,6 +141,7 @@ export default function EditProviderListingPage() {
         category: sanitizedValues.category,
         dietary_tags: sanitizedValues.dietary_tags,
         price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
+        original_price: sanitizedValues.is_free ? null : Number(sanitizedValues.original_price),
         is_free: sanitizedValues.is_free,
         pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),
         images: sanitizedValues.images

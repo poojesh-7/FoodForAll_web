@@ -14,6 +14,8 @@ import {
 } from "@/lib/listingDiscovery";
 import { quantityUnits } from "@/lib/quantityUnits";
 
+const ENABLE_FREE_LISTING = false;
+
 type FoodListingFormProps = {
   values: FoodFormValues;
   mode: "create" | "edit";
@@ -261,29 +263,73 @@ export default function FoodListingForm({
         />
       )}
 
-      <label className="flex items-center gap-2 text-sm text-zinc-700">
-        <input
-          type="checkbox"
-          checked={values.is_free}
-          disabled={!canEditPricing}
-          onChange={(event) =>
-            update({
-              is_free: event.target.checked,
-              price: event.target.checked ? "0" : values.price,
-            })
-          }
-        />
-        Free food
-      </label>
+      <section className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-zinc-950">Pricing</p>
+          {ENABLE_FREE_LISTING && (
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={values.is_free}
+                disabled={!canEditPricing}
+                onChange={(event) =>
+                  update({
+                    is_free: event.target.checked,
+                    price: event.target.checked ? "0" : values.price,
+                    original_price: event.target.checked ? "" : values.original_price,
+                  })
+                }
+              />
+              Free food
+            </label>
+          )}
+        </div>
 
-      <input
-        value={values.price}
-        inputMode="decimal"
-        placeholder="Price"
-        disabled={values.is_free || !canEditPricing}
-        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
-        onChange={(event) => update({ price: event.target.value })}
-      />
+        {!values.is_free && (
+          <div className="space-y-3">
+            <label className="block space-y-1 text-sm text-zinc-700">
+              <span>Regular price</span>
+              <input
+                value={values.original_price}
+                inputMode="decimal"
+                placeholder="₹ 50.00"
+                disabled={!canEditPricing}
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+                onChange={(event) => update({ original_price: event.target.value })}
+              />
+            </label>
+
+            <label className="block space-y-1 text-sm text-zinc-700">
+              <span>Rescue price</span>
+              <input
+                value={values.price}
+                inputMode="decimal"
+                placeholder="₹ 20.00"
+                disabled={!canEditPricing}
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950 disabled:bg-zinc-100"
+                onChange={(event) => update({ price: event.target.value })}
+              />
+            </label>
+
+            <p className="text-xs text-zinc-500">
+              Users pay the rescue price. Savings are calculated from the regular price.
+            </p>
+
+            {/* {Number(values.original_price) > 0 && Number(values.price) > 0 && Number(values.original_price) > Number(values.price) && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                You save ₹{(Number(values.original_price) - Number(values.price)).toFixed(2)} · {Math.round(((Number(values.original_price) - Number(values.price)) / Number(values.original_price)) * 100)}% off
+              </div>
+            )} */}
+          </div>
+        )}
+
+        {values.is_free && (
+          <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
+            Free food: rescue price is set to ₹0.
+          </div>
+        )}
+      </section>
+
       {!canEditPricing && (
         <p className="text-sm text-zinc-600">
           Price and free status are locked once reservations exist.

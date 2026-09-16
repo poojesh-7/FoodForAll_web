@@ -15,6 +15,9 @@ const logger = require("../shared/utils/logger");
 const { jobOptions } = require("../shared/utils/queueOptions");
 const { operationalPolicy } = require("../shared/config/operationalPolicy");
 const {
+  validateFoodPricing,
+} = require("../shared/services/foodPricing.service");
+const {
   normalizeQuantityUnitFields,
 } = require("../shared/services/quantityUnit.service");
 const {
@@ -439,6 +442,7 @@ exports.createFood = async (req, res) => {
       category,
       dietary_tags,
       price,
+      original_price,
       is_free,
       pickup_start_time,
       pickup_end_time,
@@ -459,7 +463,19 @@ exports.createFood = async (req, res) => {
     });
     quantity = Number(quantity);
     price = Number(price) || 0;
+    const normalizedOriginalPrice =
+      original_price === undefined || original_price === null || original_price === ""
+        ? null
+        : Number(original_price);
     is_free = is_free === true || is_free === "true";
+    const pricingValidation = validateFoodPricing({
+      is_free,
+      price,
+      original_price: normalizedOriginalPrice,
+    });
+    if (!pricingValidation.valid) {
+      return res.status(400).json({ error: pricingValidation.error });
+    }
     const quantityMetadata = normalizeQuantityUnitFields({
       quantity_unit,
       custom_quantity_unit,
@@ -552,6 +568,7 @@ exports.createFood = async (req, res) => {
         category,
         dietary_tags,
         price,
+        original_price,
         is_free,
         pickup_start_time,
         pickup_end_time,
@@ -574,12 +591,13 @@ exports.createFood = async (req, res) => {
         $10,
         $11,
         $12,
-        $13::double precision,
+        $13,
         $14::double precision,
+        $15::double precision,
         ST_SetSRID(
           ST_MakePoint(
-            $14::double precision,
-            $13::double precision
+            $15::double precision,
+            $14::double precision
           ),
           4326
         )::geography,
@@ -603,6 +621,7 @@ exports.createFood = async (req, res) => {
         listingCategory,
         dietaryTags,
         price,
+        normalizedOriginalPrice,
         is_free,
         pickup_start_time,
         pickup_end_time,
@@ -802,6 +821,7 @@ exports.updateFood = async (req, res) => {
       title,
       description,
       price,
+      original_price,
       is_free,
       quantity,
       quantity_unit,
@@ -895,11 +915,24 @@ exports.updateFood = async (req, res) => {
         : is_free === false || is_free === "false"
           ? false
           : Boolean(current.is_free);
+    const requestedOriginalPrice =
+      isProvided(original_price) ? toNumber(original_price) : toNumber(current.original_price);
     const requestedPrice = isProvided(price) ? toNumber(price) : toNumber(current.price);
     const nextPrice = requestedFree ? 0 : requestedPrice;
+    const nextOriginalPrice = requestedFree ? null : requestedOriginalPrice;
+    const pricingValidation = validateFoodPricing({
+      is_free: requestedFree,
+      price: nextPrice,
+      original_price: requestedOriginalPrice,
+    });
+    if (!pricingValidation.valid) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: pricingValidation.error });
+    }
     const pricingChanged =
       requestedFree !== Boolean(current.is_free) ||
-      Number(nextPrice) !== Number(current.price);
+      Number(nextPrice) !== Number(current.price) ||
+      Number(nextOriginalPrice ?? 0) !== Number(current.original_price ?? 0);
 
     if (pricingChanged && reservationCount > 0) {
       await client.query("ROLLBACK");
@@ -929,9 +962,10 @@ exports.updateFood = async (req, res) => {
            category=$7,
            dietary_tags=$8,
            price=$9,
-           is_free=$10,
-           pickup_end_time=$11
-       WHERE id=$12
+           original_price=$10,
+           is_free=$11,
+           pickup_end_time=$12
+       WHERE id=$13
        RETURNING *`,
       [
         sanitizedTitle,
@@ -943,6 +977,7 @@ exports.updateFood = async (req, res) => {
         listingCategory,
         dietaryTags,
         nextPrice,
+        nextOriginalPrice,
         requestedFree,
         pickup_end_time,
         id,

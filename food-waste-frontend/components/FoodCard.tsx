@@ -9,6 +9,8 @@ import {
   formatDistanceKm,
   getListingId,
   getListingPrice,
+  getListingOriginalPrice,
+  getListingSavings,
   getRestaurantDisplayName,
   type FoodCardListing,
 } from "@/lib/food";
@@ -47,6 +49,8 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
   const id = getListingId(listing);
   const status = String(listing.status ?? "active").toLowerCase();
   const price = getListingPrice(listing);
+  const originalPrice = getListingOriginalPrice(listing);
+  const savings = getListingSavings(listing);
   const providerName = getRestaurantDisplayName(listing);
   const distance = formatDistanceKm(listing);
   const dietaryTags = getDietaryTags(listing);
@@ -65,11 +69,33 @@ export default function FoodCard({ listing, href, actions }: FoodCardProps) {
               </p>
             )}
           </div>
-          {price && (
-            <span className="shrink-0 rounded-md border border-zinc-200 bg-zinc-950 px-2.5 py-1 text-sm font-semibold text-white">
-              {price}
-            </span>
-          )}
+        </div>
+
+        <div className="flex items-end justify-between gap-2">
+          <div className="min-w-0">
+            {listing.is_free ? (
+              <div className="text-2xl font-bold text-emerald-700">FREE</div>
+            ) : (
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-zinc-950">
+                  {price}
+                </span>
+                {originalPrice !== null && (
+                  <span className="text-sm text-zinc-400 line-through">
+                    Rs. {originalPrice.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            )}
+            {savings && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">
+                  {savings.percentage}% OFF
+                </span>
+                <span className="text-zinc-600">You save ₹{savings.savingsAmount.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">

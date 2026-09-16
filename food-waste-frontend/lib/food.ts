@@ -44,6 +44,7 @@ export type FoodFormValues = {
   category: string;
   dietary_tags: string[];
   price: string;
+  original_price: string;
   is_free: boolean;
   pickup_start_time: string;
   pickup_end_time: string;
@@ -68,6 +69,7 @@ export function getFoodValidationError(
   const customQuantityUnit = values.custom_quantity_unit.trim();
   const quantity = Number(values.quantity);
   const price = Number(values.price);
+  const originalPrice = Number(values.original_price);
   const now = Date.now();
   const startTime = new Date(values.pickup_start_time).getTime();
   const endTime = new Date(values.pickup_end_time).getTime();
@@ -134,8 +136,18 @@ export function getFoodValidationError(
     return "Free food cannot have a price.";
   }
 
-  if (!values.is_free && (!Number.isFinite(price) || price <= 0)) {
-    return "Paid food must have a valid price.";
+  if (!values.is_free) {
+    if (!Number.isFinite(price) || price <= 0) {
+      return "Paid food must have a valid rescue price.";
+    }
+
+    if (!Number.isFinite(originalPrice) || originalPrice <= 0) {
+      return "Regular price must be greater than 0 for paid listings.";
+    }
+
+    if (originalPrice <= price) {
+      return "Rescue price must be lower than the regular price.";
+    }
   }
 
   return null;
@@ -172,6 +184,8 @@ export function sanitizeFoodFormValues(values: FoodFormValues): FoodFormValues {
       values.quantity_unit === "Other"
         ? sanitizeTextInput(values.custom_quantity_unit, { maxLength: 80 })
         : "",
+    price: values.is_free ? "0" : values.price,
+    original_price: values.is_free ? "" : values.original_price,
     category: values.category,
     dietary_tags: [...new Set(values.dietary_tags)],
   };
@@ -252,6 +266,30 @@ export function getListingPrice(listing: FoodCardListing) {
   if (!("is_free" in listing)) return "";
   if (listing.is_free) return "Free";
   return `Rs. ${String("price" in listing ? listing.price ?? 0 : 0)}`;
+}
+
+export function getListingOriginalPrice(listing: FoodCardListing) {
+  if (!("original_price" in listing)) return null;
+  const value = Number(listing.original_price ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+export function getListingSavings(listing: FoodCardListing) {
+  const regularPrice = getListingOriginalPrice(listing);
+  const rescuePrice = Number("price" in listing ? listing.price ?? 0 : 0);
+
+  if (!regularPrice || !Number.isFinite(rescuePrice) || regularPrice <= rescuePrice) {
+    return null;
+  }
+
+  const savingsAmount = regularPrice - rescuePrice;
+  const percentage = Number(((savingsAmount / regularPrice) * 100).toFixed(0));
+
+  return {
+    savingsAmount,
+    percentage,
+    hasDiscount: true,
+  };
 }
 
 export { formatQuantityWithUnit };

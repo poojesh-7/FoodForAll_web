@@ -51,6 +51,26 @@ export type FoodFormValues = {
   images: FoodFormImage[];
 };
 
+export function getReusableFoodFormValues(listing: FoodListingRow): FoodFormValues {
+  return {
+    title: String(listing.title ?? ""),
+    description: String(listing.description ?? ""),
+    quantity: "",
+    quantity_unit: String(listing.quantity_unit ?? "Piece"),
+    custom_quantity_unit: String(listing.custom_quantity_unit ?? ""),
+    category: String(listing.category ?? ""),
+    dietary_tags: Array.isArray(listing.dietary_tags)
+      ? listing.dietary_tags.map(String)
+      : [],
+    price: String(listing.price ?? ""),
+    original_price: listing.original_price == null ? "" : String(listing.original_price),
+    is_free: Boolean(listing.is_free),
+    pickup_start_time: "",
+    pickup_end_time: "",
+    images: [],
+  };
+}
+
 type FoodValidationOptions = {
   includeQuantity?: boolean;
   includePickupStart?: boolean;

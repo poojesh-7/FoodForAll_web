@@ -8,6 +8,7 @@ import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { foodService } from "@/services/food.service";
 import {
   formatFoodDate,
+  getFinalPickupStartTime,
   getListingOriginalPrice,
   getListingSavings,
   getPrimaryImageUrl,
@@ -202,7 +203,21 @@ export default function CreateProviderListingPage() {
     if (loading) return;
 
     const sanitizedValues = sanitizeFoodFormValues(values);
-    const validationError = getFoodValidationError(sanitizedValues);
+    const finalPickupStartTime = getFinalPickupStartTime(
+      sanitizedValues.pickup_start_time
+    );
+    const finalValues = {
+      ...sanitizedValues,
+      pickup_start_time: finalPickupStartTime,
+    };
+    const finalStartTime = new Date(finalPickupStartTime).getTime();
+    const endTime = new Date(finalValues.pickup_end_time).getTime();
+    const validationError =
+      Number.isFinite(finalStartTime) &&
+      Number.isFinite(endTime) &&
+      endTime - finalStartTime < 30 * 60 * 1000
+        ? "Pickup end time must be at least 30 minutes after the pickup start time."
+        : getFoodValidationError(finalValues);
     if (validationError) {
       setError(validationError);
       return;
@@ -213,22 +228,22 @@ export default function CreateProviderListingPage() {
       setError("");
 
       await foodService.createFood({
-        title: sanitizedValues.title,
-        description: sanitizedValues.description || null,
-        quantity: Number(sanitizedValues.quantity),
-        quantity_unit: sanitizedValues.quantity_unit,
+        title: finalValues.title,
+        description: finalValues.description || null,
+        quantity: Number(finalValues.quantity),
+        quantity_unit: finalValues.quantity_unit,
         custom_quantity_unit:
-          sanitizedValues.quantity_unit === "Other"
-            ? sanitizedValues.custom_quantity_unit
+          finalValues.quantity_unit === "Other"
+            ? finalValues.custom_quantity_unit
             : null,
-        category: sanitizedValues.category,
-        dietary_tags: sanitizedValues.dietary_tags,
-        price: sanitizedValues.is_free ? 0 : Number(sanitizedValues.price),
-        original_price: sanitizedValues.is_free ? null : Number(sanitizedValues.original_price),
-        is_free: sanitizedValues.is_free,
-        pickup_start_time: new Date(sanitizedValues.pickup_start_time).toISOString(),
-        pickup_end_time: new Date(sanitizedValues.pickup_end_time).toISOString(),
-        images: sanitizedValues.images
+        category: finalValues.category,
+        dietary_tags: finalValues.dietary_tags,
+        price: finalValues.is_free ? 0 : Number(finalValues.price),
+        original_price: finalValues.is_free ? null : Number(finalValues.original_price),
+        is_free: finalValues.is_free,
+        pickup_start_time: new Date(finalValues.pickup_start_time).toISOString(),
+        pickup_end_time: new Date(finalValues.pickup_end_time).toISOString(),
+        images: finalValues.images
           .map((image) => image.file)
           .filter((file): file is File => Boolean(file)),
       });

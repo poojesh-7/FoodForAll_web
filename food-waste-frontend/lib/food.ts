@@ -51,6 +51,35 @@ export type FoodFormValues = {
   images: FoodFormImage[];
 };
 
+function toDateTimeLocalValue(value: Date) {
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
+export function getFinalPickupStartTime(
+  pickupStartTime: string,
+  now = new Date()
+) {
+  const startTime = new Date(pickupStartTime).getTime();
+  if (!Number.isFinite(startTime) || startTime > now.getTime()) {
+    return pickupStartTime;
+  }
+
+  const nextStart = new Date(now);
+  const remainder = nextStart.getMinutes() % 5;
+  const hasSubMinuteTime = nextStart.getSeconds() > 0 || nextStart.getMilliseconds() > 0;
+  nextStart.setSeconds(0, 0);
+  nextStart.setMinutes(
+    nextStart.getMinutes() + (remainder === 0 ? 0 : 5 - remainder)
+  );
+
+  if (hasSubMinuteTime && nextStart.getTime() <= now.getTime()) {
+    nextStart.setMinutes(nextStart.getMinutes() + 5);
+  }
+
+  return toDateTimeLocalValue(nextStart);
+}
+
 export function getReusableFoodFormValues(listing: FoodListingRow): FoodFormValues {
   return {
     title: String(listing.title ?? ""),

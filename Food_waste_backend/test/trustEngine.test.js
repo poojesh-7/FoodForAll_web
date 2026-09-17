@@ -101,6 +101,21 @@ function policyPayload(eventType, overrides = {}) {
   };
 }
 
+function buildUserNegativeProjection(eventTypes) {
+  return buildTrustProjectionFromEvents(
+    eventTypes.map((eventType, index) =>
+      createProjectionEvent(
+        index + 1,
+        eventType,
+        policyPayload(eventType),
+        `2026-01-0${index + 1}T00:00:00.000Z`
+      )
+    ),
+    "user",
+    USER_ID
+  );
+}
+
 function withEnv(values, callback) {
   const previous = {};
   for (const [key, value] of Object.entries(values)) {
@@ -170,6 +185,69 @@ test("appendTrustEvent inserts once and protects duplicate event keys", async ()
   assert.match(db.queries[0].sql, /ON CONFLICT \(event_key\) DO NOTHING/);
 });
 
+test("two cancellations remain below level 1 and do not create a cooldown", () => {
+  const projection = buildUserNegativeProjection([
+    "user_cancelled_reservation",
+    "user_cancelled_reservation",
+  ]);
+
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.failure_streak, 2);
+  assert.equal(projection.projected_cooldown_until, null);
+});
+
+test("two stale payment timeouts remain below level 1", () => {
+  const projection = buildUserNegativeProjection([
+    "user_payment_timeout",
+    "user_payment_timeout",
+  ]);
+
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.failure_streak, 2);
+});
+
+test("a cancellation and payment timeout remain below level 1", () => {
+  const projection = buildUserNegativeProjection([
+    "user_cancelled_reservation",
+    "user_payment_timeout",
+  ]);
+
+  assert.equal(projection.projected_restriction_level, 0);
+  assert.equal(projection.penalty_level, 2);
+  assert.equal(projection.failure_streak, 2);
+});
+
+test("two pickup misses still reach level 1 through score and penalty", () => {
+  const projection = buildUserNegativeProjection([
+    "user_pickup_failed",
+    "user_pickup_failed",
+  ]);
+
+  assert.equal(projection.trust_score, 86);
+  assert.equal(projection.penalty_level, 4);
+  assert.equal(projection.projected_restriction_level, 1);
+  assert.deepEqual(projection.risk_state.restriction_trigger_sources.sort(), [
+    "penalty",
+    "score",
+  ]);
+});
+
+test("four cancellations reach level 1 through penalty", () => {
+  assert.equal(
+    calculateRestrictionLevel({ score: 96, penaltyLevel: 4, failureStreak: 0 }),
+    1
+  );
+});
+
+test("four payment timeouts reach level 1 through penalty", () => {
+  assert.equal(
+    calculateRestrictionLevel({ score: 92, penaltyLevel: 4, failureStreak: 0 }),
+    1
+  );
+});
+
 test("buildTrustEffect normalizes passive projection deltas", () => {
   const effect = buildTrustEffect(
     createEvent({
@@ -206,7 +284,7 @@ test("balanced restriction thresholds require repeated normal failures", () => {
       { level: 4, penaltyLevel: 12, scoreAtOrBelow: 58, scoreBelow: undefined, failureStreak: 5 },
       { level: 3, penaltyLevel: 8, scoreAtOrBelow: 72, scoreBelow: undefined, failureStreak: 4 },
       { level: 2, penaltyLevel: 6, scoreAtOrBelow: 80, scoreBelow: undefined, failureStreak: 3 },
-      { level: 1, penaltyLevel: 4, scoreAtOrBelow: undefined, scoreBelow: 88, failureStreak: 2 },
+      { level: 1, penaltyLevel: 4, scoreAtOrBelow: undefined, scoreBelow: 88, failureStreak: 3 },
     ]
   );
   assert.equal(calculateRestrictionLevel({ score: 93, penaltyLevel: 2, failureStreak: 1 }), 0);
@@ -2004,7 +2082,7 @@ test("reservation completion derives user and provider trust events", () => {
   );
 });
 
-test("payment timeout flow derives user and system events from final reservation state", () => {
+test("stale payment expiration emits user payment timeout", () => {
   const events = buildReservationTrustEvents({
     id: RESERVATION_ID,
     user_id: USER_ID,
@@ -2145,6 +2223,25 @@ test("reservation cancellation derives passive cancellation events only", () => 
   assert.equal(events.length, 1);
   assert.equal(events[0].eventType, "user_cancelled_reservation");
   assert.equal(events[0].eventPayload.cancellation_delta, 1);
+});
+
+test("pending-payment cancellation emits only user cancellation", () => {
+  const events = buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "cancelled_before_confirmation",
+    task_status: "self_pickup",
+    payment_status: "failed",
+    payment_row_status: "failed",
+    payment_id: PAYMENT_ID,
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["user_cancelled_reservation"]
+  );
 });
 
 test("NGO delivery derives NGO, volunteer, and provider completion events", () => {

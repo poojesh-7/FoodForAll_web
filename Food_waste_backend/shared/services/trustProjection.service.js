@@ -18,7 +18,7 @@ const RESTRICTION_THRESHOLDS = [
   { level: 4, penaltyLevel: 12, scoreAtOrBelow: 58, failureStreak: 5 },
   { level: 3, penaltyLevel: 8, scoreAtOrBelow: 72, failureStreak: 4 },
   { level: 2, penaltyLevel: 6, scoreAtOrBelow: 80, failureStreak: 3 },
-  { level: 1, penaltyLevel: 4, scoreBelow: 88, failureStreak: 2 },
+  { level: 1, penaltyLevel: 4, scoreBelow: 88, failureStreak: 3 },
 ];
 const ANALYTICS_ONLY_EVENT_TYPES = new Set([
   "provider_listing_expired",

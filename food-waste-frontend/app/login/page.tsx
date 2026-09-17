@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { CheckCircle2, MapPin, ShieldCheck, Sparkles } from "lucide-react";
 import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import { PublicFooter, PublicHeader } from "@/components/public/PublicSite";
-import { getPublicGoogleClientId } from "@/lib/env";
+import {
+  getPublicGoogleClientId,
+  isVolunteerNgoAuthEnabled,
+} from "@/lib/env";
 import { getPostAuthRedirect } from "@/lib/onboarding";
 import { useAuthStore } from "@/store/authStore";
 
@@ -85,6 +89,25 @@ function getSafeNextPath() {
   return nextPath?.startsWith("/") && !nextPath.startsWith("//") ? nextPath : null;
 }
 
+function getRequestedRole() {
+  if (typeof window === "undefined") return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedRole = params.get("role");
+  if (requestedRole === "provider") return "provider" as const;
+  if (requestedRole === "ngo" && isVolunteerNgoAuthEnabled()) return "ngo" as const;
+  if (requestedRole === "volunteer" && isVolunteerNgoAuthEnabled()) {
+    return "volunteer" as const;
+  }
+
+  const nextPath = params.get("next");
+  if (nextPath === "/provider/register" || nextPath === "/restaurant/register") {
+    return "provider" as const;
+  }
+
+  return null;
+}
+
 function getInitialSessionNotice() {
   if (typeof window === "undefined") return "";
 
@@ -154,6 +177,7 @@ export default function LoginPage() {
   const authError = useAuthStore((state) => state.authError);
   const authSuccess = useAuthStore((state) => state.authSuccess);
   const googleLogin = useAuthStore((state) => state.googleLogin);
+  const setRole = useAuthStore((state) => state.setRole);
   const clearMessages = useAuthStore((state) => state.clearMessages);
 
   const clearPopupNoticeTimer = useCallback(() => {
@@ -230,7 +254,18 @@ export default function LoginPage() {
       );
 
       if (result?.user) {
-        finishAuthRedirect(result.user);
+        let authenticatedUser = result.user;
+        const requestedRole = getRequestedRole();
+        const onboardingRole = requestedRole ||
+          (authenticatedUser.role ? null : "user");
+
+        if (onboardingRole && authenticatedUser.role !== onboardingRole) {
+          const updatedUser = await setRole(onboardingRole);
+          if (!updatedUser) return;
+          authenticatedUser = updatedUser;
+        }
+
+        finishAuthRedirect(authenticatedUser);
       }
     },
     [
@@ -238,6 +273,7 @@ export default function LoginPage() {
       finishAuthRedirect,
       googleLogin,
       clearPopupNoticeTimer,
+      setRole,
     ]
   );
 
@@ -529,6 +565,22 @@ export default function LoginPage() {
             <p className="text-sm leading-6 text-zinc-600">
               You will add your contact phone number during profile setup.
             </p>
+            {isVolunteerNgoAuthEnabled() && (
+              <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm font-medium">
+                <Link
+                  href="/login?role=volunteer"
+                  className="text-emerald-700 underline-offset-2 hover:underline"
+                >
+                  Volunteer login
+                </Link>
+                <Link
+                  href="/login?role=ngo"
+                  className="text-emerald-700 underline-offset-2 hover:underline"
+                >
+                  NGO login
+                </Link>
+              </div>
+            )}
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-800">
               Reserve, pay, and collect fresh surplus food through your
               FoodForAll account.

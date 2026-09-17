@@ -44,6 +44,14 @@ export function getPublicGoogleClientId() {
   return (process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "").trim();
 }
 
+export function isVolunteerNgoAuthEnabled() {
+  const configured =
+    process.env.NEXT_PUBLIC_ENABLE_VOLUNTEER_NGO_AUTH ??
+    process.env.NEXT_PUBLIC_ENABLE_NGO_VOLUNTEER_LOGIN;
+
+  return String(configured || "false").toLowerCase() === "true";
+}
+
 export function validatePublicEnv() {
   const appEnv = (process.env.NEXT_PUBLIC_APP_ENV || "local").toLowerCase();
   const apiUrl = getPublicApiBaseUrl();

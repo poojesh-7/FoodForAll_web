@@ -53,7 +53,7 @@ function getVerificationStatus(user: OnboardingUser | null | undefined): Verific
 }
 
 export function getPostAuthRedirect(user: OnboardingUser | null | undefined) {
-  if (!user?.role) return "/select-role";
+  if (!user?.role) return "/complete-profile";
 
   if (user.role !== "admin" && !isProfileComplete(user)) {
     return "/complete-profile";
@@ -114,7 +114,9 @@ export function getRouteAccessRedirect(
   pathname: string
 ) {
   if (!user?.role) {
-    return pathname === "/select-role" ? null : "/select-role";
+    return pathname === "/select-role" || pathname === "/complete-profile"
+      ? null
+      : "/complete-profile";
   }
 
   if (user.role !== "admin" && !isProfileComplete(user)) {
@@ -147,7 +149,9 @@ export function getRouteAccessRedirect(
   }
 
   if (
-    (pathname.startsWith("/provider") || pathname.startsWith("/restaurant/register")) &&
+    ((pathname.startsWith("/provider") &&
+      !pathname.startsWith("/provider/register")) ||
+      pathname.startsWith("/restaurant/register")) &&
     user?.role !== "provider"
   ) {
     return getPostAuthRedirect(user);

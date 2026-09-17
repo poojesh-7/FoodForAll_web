@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import {
   BadgeIndianRupee,
   CheckCircle2,
@@ -356,6 +357,12 @@ export default function Home() {
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <PublicAuthActions variant="darkCta" />
+            <Link
+              href="/provider/register"
+              className="inline-flex w-full items-center justify-center rounded-md border border-white/30 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 sm:w-auto"
+            >
+              Register as a Provider / Restaurant
+            </Link>
           </div>
         </div>
       </section>

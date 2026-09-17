@@ -14,6 +14,7 @@ const protectedRoutes = [
   "/dashboard",
   "/select-role",
   "/complete-profile",
+  "/provider/register",
   "/ngo/register",
   "/restaurant/register",
   "/pending-verification",

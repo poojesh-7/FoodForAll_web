@@ -36,20 +36,20 @@ export default function AdminShell({
   const pathname = usePathname();
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <header className="space-y-4">
+    <main className="min-h-screen bg-[var(--background)] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="space-y-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-hover)]">
               Admin Control Center
             </p>
-            <h1 className="mt-1 text-2xl font-semibold text-zinc-950">{title}</h1>
+            <h1 className="mt-1 text-3xl font-semibold text-[var(--text-primary)]">{title}</h1>
             {description && (
-              <p className="mt-1 text-sm text-zinc-600">{description}</p>
+              <p className="mt-2 max-w-3xl text-sm text-[var(--text-secondary)]">{description}</p>
             )}
           </div>
 
-          <nav className="flex gap-2 overflow-x-auto rounded-lg border border-zinc-200 bg-white p-2 shadow-sm">
+          <nav className="flex gap-1 overflow-x-auto border-y border-[var(--border)] bg-[var(--surface)] py-2" aria-label="Admin navigation">
             {navItems.map((item) => {
               const active =
                 item.href === "/admin"
@@ -65,10 +65,10 @@ export default function AdminShell({
                 <Link
                   key={`${item.href}-${item.label}`}
                   href={item.href}
-                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
+                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                     active
-                      ? "bg-zinc-950 text-white"
-                      : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                      ? "bg-[var(--brand-soft)] text-[var(--brand-hover)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                   }`}
                 >
                   {item.label}

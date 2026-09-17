@@ -2,27 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import NotificationList from "@/components/notifications/NotificationList";
 import { useAuthStore } from "@/store/authStore";
 import { useNotificationStore } from "@/store/notificationStore";
-
-function BellIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-      viewBox="0 0 24 24"
-    >
-      <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
-      <path d="M10 21h4" />
-    </svg>
-  );
-}
 
 export default function NotificationBell() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -86,7 +69,7 @@ export default function NotificationBell() {
         onClick={() => setOpen((current) => !current)}
         className="relative inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
       >
-        <BellIcon />
+        <Bell className="h-5 w-5 shrink-0" aria-hidden="true" />
         {unreadCount > 0 && (
           <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-white">
             {displayCount}

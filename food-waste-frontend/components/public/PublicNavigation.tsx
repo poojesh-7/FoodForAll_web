@@ -105,19 +105,19 @@ export function PublicNavigation() {
   };
 
   return (
-    <header className="border-b border-zinc-200 bg-white/95 backdrop-blur">
+    <header className="border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex min-h-20 items-center justify-between gap-4">
           <Link
             href="/"
-            className="flex-shrink-0 rounded-md text-xl font-semibold text-zinc-950 outline-none transition hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-4"
+            className="flex-shrink-0 rounded-md text-xl font-semibold text-[var(--text-primary)] outline-none transition-colors hover:text-[var(--brand-hover)]"
           >
             {businessName}
           </Link>
 
           <nav
             ref={navRef}
-            className="relative hidden flex-1 items-center justify-center gap-2 px-8 text-sm font-medium text-zinc-700 lg:flex"
+            className="relative hidden flex-1 items-center justify-center gap-2 px-8 text-sm font-medium text-[var(--text-secondary)] lg:flex"
             aria-label="Main navigation"
           >
             {publicLinks.map((link) => {
@@ -127,10 +127,10 @@ export function PublicNavigation() {
                   key={link.href}
                   href={link.href}
                   data-active={active ? "true" : "false"}
-                  className={`relative rounded-md px-3 py-2 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 ${
+                  className={`relative rounded-md px-3 py-2 transition-colors duration-200 ${
                     active
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "hover:bg-zinc-50 hover:text-zinc-950"
+                      ? "bg-[var(--brand-soft)] text-[var(--brand-hover)]"
+                      : "hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                   }`}
                   aria-current={active ? "page" : undefined}
                 >
@@ -140,7 +140,7 @@ export function PublicNavigation() {
             })}
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 h-0.5 rounded-full bg-emerald-700 transition-all duration-300 ease-out"
+              className="pointer-events-none absolute bottom-0 h-0.5 rounded-full bg-[var(--brand)] transition-all duration-200 ease-out"
               style={{
                 left: indicatorStyle.left,
                 width: indicatorStyle.width,
@@ -156,7 +156,7 @@ export function PublicNavigation() {
           <button
             ref={triggerRef}
             onClick={handleMobileMenuToggle}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 lg:hidden"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] shadow-[var(--shadow-subtle)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--brand-soft)] hover:text-[var(--brand-hover)] lg:hidden"
             aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-menu"
@@ -175,12 +175,12 @@ export function PublicNavigation() {
           <div
             id="mobile-menu"
             ref={menuRef}
-            className="fixed inset-0 top-20 z-50 origin-top overflow-y-auto bg-zinc-50 lg:hidden"
+            className="fixed inset-0 top-20 z-50 origin-top overflow-y-auto bg-[var(--background)] lg:hidden"
             role="navigation"
             aria-label="Mobile navigation"
           >
             <div className="space-y-5 px-5 py-5">
-              <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+              <section className="border-b border-[var(--border)] bg-[var(--surface)] p-4">
                 <PublicAuthActions variant="mobileMenu" showLogout={true} />
               </section>
 
@@ -192,16 +192,16 @@ export function PublicNavigation() {
                       key={link.href}
                       href={link.href}
                       onClick={closeMobileMenu}
-                      className={`flex min-h-12 items-center justify-between rounded-md border px-4 text-sm font-semibold shadow-sm transition-colors ${
+                      className={`flex min-h-12 items-center justify-between rounded-md border px-4 text-sm font-semibold transition-colors ${
                         active
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
+                          ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand-hover)]"
+                          : "border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                       }`}
                       aria-current={active ? "page" : undefined}
                     >
                       <span>{link.label}</span>
                       {active && (
-                        <span className="h-2 w-2 rounded-full bg-emerald-600" />
+                        <span className="h-2 w-2 rounded-full bg-[var(--brand)]" />
                       )}
                     </Link>
                   );

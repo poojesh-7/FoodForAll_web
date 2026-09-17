@@ -208,14 +208,14 @@ function DetailItem({
       className={`rounded-md border p-3 ${
         emphasis
           ? "border-amber-200 bg-amber-50"
-          : "border-zinc-200 bg-zinc-50"
+          : "border-border bg-surface-muted"
       }`}
     >
       <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
         {icon}
         {label}
       </div>
-      <div className="mt-1 text-sm font-semibold text-zinc-950">{value}</div>
+      <div className="mt-1 break-words text-sm font-semibold text-text-primary">{value}</div>
     </div>
   );
 }
@@ -335,13 +335,17 @@ export default function ReservationCard({
   );
 
   return (
-    <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <ReservationFoodImage source={reservation} />
-      <div className="space-y-4 p-5">
+    <article
+      className={`overflow-hidden rounded-lg border border-border bg-surface shadow-card ${
+        providerView ? "" : "border-l-4 border-l-brand"
+      }`}
+    >
+      <ReservationFoodImage source={reservation} className="h-40 sm:h-56" />
+      <div className="space-y-4 p-4 sm:space-y-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold leading-snug text-zinc-950">
+              <h2 className="break-words text-xl font-bold leading-snug tracking-tight text-text-primary">
                 {displayValue(reservation.title)}
               </h2>
               <MetaChip label={getReservationDisplayId(id)} />
@@ -360,7 +364,7 @@ export default function ReservationCard({
               />
             </div>
             {"description" in reservation && reservation.description && (
-              <p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-600">
+              <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-secondary">
                 {String(reservation.description)}
               </p>
             )}
@@ -372,37 +376,43 @@ export default function ReservationCard({
           <PaymentPendingNotice remainingMs={paymentRemainingMs} />
         )}
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <SignalTile
-            icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
-            label="Status"
-            value={getStatusLabel(status)}
-            detail={getTaskProgress(reservation, status)}
-            tone={getStatusTone(status)}
-          />
-          {pickupCodeVisible && (
+        <div className="grid gap-2 border-y border-border py-3 sm:gap-3 md:grid-cols-3">
+          <div className="col-span-2 md:col-span-1">
             <SignalTile
-              icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
-              label="Pickup Code"
-              value={displayValue(reservation.pickup_code)}
-              detail="Give this code only after receiving the food to avoid disputes."
-              tone={reservation.pickup_code ? "amber" : "zinc"}
+              icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+              label="Status"
+              value={getStatusLabel(status)}
+              detail={getTaskProgress(reservation, status)}
+              tone={getStatusTone(status)}
             />
+          </div>
+          {pickupCodeVisible && (
+            <div>
+              <SignalTile
+                icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
+                label="Pickup Code"
+                value={displayValue(reservation.pickup_code)}
+                detail="Give this code only after receiving the food to avoid disputes."
+                tone={reservation.pickup_code ? "amber" : "zinc"}
+              />
+            </div>
           )}
-          <SignalTile
-            icon={<Truck className="h-4 w-4" aria-hidden="true" />}
-            label={showVolunteer ? "Volunteer State" : "Task Progress"}
-            value={
-              showVolunteer
-                ? displayValue(reservation.assigned_volunteer_name)
-                : getStatusLabel(status)
-            }
-            detail={getTaskProgress(reservation, status)}
-            tone={showVolunteer ? "sky" : getStatusTone(status)}
-          />
+          <div>
+            <SignalTile
+              icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+              label={showVolunteer ? "Volunteer State" : "Task Progress"}
+              value={
+                showVolunteer
+                  ? displayValue(reservation.assigned_volunteer_name)
+                  : getStatusLabel(status)
+              }
+              detail={getTaskProgress(reservation, status)}
+              tone={showVolunteer ? "sky" : getStatusTone(status)}
+            />
+          </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
           <DetailItem
             icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
             label="Quantity"
@@ -456,7 +466,7 @@ export default function ReservationCard({
           )}
         </div>
 
-        <div className="grid gap-3 text-sm md:grid-cols-2">
+        <div className="grid gap-4 border-t border-border pt-4 text-sm md:grid-cols-2">
           <div className="space-y-2">
             <IdentityChip
               src={
@@ -504,14 +514,14 @@ export default function ReservationCard({
       </div>
 
       {providerLocation && (
-        <div className="space-y-3 border-t border-zinc-100 bg-zinc-50 p-4">
+        <div className="space-y-3 border-t border-border bg-surface-muted p-4">
           <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
             <div>
-              <p className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
+              <p className="flex items-center gap-2 text-sm font-semibold text-text-primary">
                 <MapPin className="h-4 w-4" aria-hidden="true" />
                 Restaurant Location
               </p>
-              <p className="mt-1 text-sm text-zinc-600">
+              <p className="mt-1 text-sm text-text-secondary">
                 {displayValue(reservation.provider_address)}
               </p>
             </div>
@@ -522,7 +532,7 @@ export default function ReservationCard({
               )}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-semibold text-white transition hover:bg-brand-hover"
             >
               <Navigation className="h-4 w-4" aria-hidden="true" />
               Navigate
@@ -533,12 +543,12 @@ export default function ReservationCard({
       )}
 
       {(actions || href) && (
-        <div className="flex flex-col gap-2 border-t border-zinc-100 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-          {actions ? <div className="text-sm text-zinc-600">{actions}</div> : <span />}
+        <div className="flex flex-col gap-2 border-t border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+          {actions ? <div className="text-sm text-text-secondary">{actions}</div> : <span />}
           {href && (
             <Link
               href={href}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border-strong px-4 text-sm font-semibold text-text-primary transition hover:bg-surface-muted"
             >
               Details
               <ArrowRight className="h-4 w-4" aria-hidden="true" />

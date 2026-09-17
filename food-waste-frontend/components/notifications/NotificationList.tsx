@@ -61,11 +61,11 @@ export default function NotificationList({
             className={`relative ${
               compact
                 ? "px-4 py-3"
-                : "rounded-lg border px-4 py-3 shadow-sm"
+                : "rounded-lg border px-4 py-3 shadow-subtle"
             } ${
               isUnread
-                ? "border-emerald-200 bg-emerald-50/80"
-                : "border-zinc-200 bg-white"
+                ? "border-brand bg-brand-soft"
+                : "border-border bg-surface"
             }`}
           >
             <div className="flex gap-3">
@@ -77,7 +77,7 @@ export default function NotificationList({
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                  <h3 className="text-sm font-semibold text-zinc-950">
+                  <h3 className="text-sm font-bold text-text-primary">
                     {notification.title || "Notification"}
                   </h3>
                   <time className="shrink-0 text-xs text-zinc-500">
@@ -86,7 +86,7 @@ export default function NotificationList({
                 </div>
                 {notification.message && (
                   <p
-                      className="mt-1 text-sm leading-5 text-zinc-600"
+                      className="mt-1 text-sm leading-5 text-text-secondary"
                       style={{ whiteSpace: "pre-line" }}
                   >
                       {notification.message}

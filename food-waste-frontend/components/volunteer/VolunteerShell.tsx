@@ -10,13 +10,13 @@ export default function VolunteerShell({
   children,
 }: VolunteerShellProps) {
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-6xl space-y-5">
+    <main className="min-h-screen bg-[var(--background)] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <div className="mx-auto max-w-6xl space-y-6">
         <header>
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">{title}</h1>
+            <h1 className="text-3xl font-semibold text-[var(--text-primary)]">{title}</h1>
             {description && (
-              <p className="mt-1 text-sm text-zinc-600">{description}</p>
+              <p className="mt-2 max-w-3xl text-sm text-[var(--text-secondary)]">{description}</p>
             )}
           </div>
         </header>

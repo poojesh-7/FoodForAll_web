@@ -105,40 +105,75 @@ export default function FoodMarketplacePage() {
   }, [listingVersion, listingsById]);
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-5xl space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">Food Marketplace</h1>
-            <p className="text-sm text-zinc-600">
-              Browse paid pickup reservations from nearby restaurants.
+    <main className="min-h-screen bg-background px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-8">
+        <header className="flex flex-col gap-6 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-2xl">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">
+              Food rescue marketplace
+            </p>
+            <h1 className="text-3xl font-semibold tracking-tight text-text-primary sm:text-4xl">
+              Discover good food that deserves another chance.
+            </h1>
+            <p className="mt-3 max-w-xl text-base leading-7 text-text-secondary">
+              Find fresh surplus from nearby restaurants, priced for a useful
+              second moment.
             </p>
           </div>
           <Link
             href="/food/nearby"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-semibold text-text-primary transition hover:border-brand hover:bg-brand-soft"
           >
-            Nearby
+            Explore nearby
           </Link>
-        </div>
+        </header>
 
         {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         <ListingDiscoveryControls
           filters={filters}
           onChange={setFilters}
+          variant="marketplace"
         />
 
+        {!loading && !error && listings.length > 0 && (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-text-secondary">
+              <span className="font-semibold text-text-primary">{listings.length}</span>{" "}
+              listings ready for pickup
+            </p>
+          </div>
+        )}
+
         {loading ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
-            Loading...
+          <div className="grid gap-5 sm:grid-cols-2">
+            {[1, 2, 3, 4].map((item) => (
+              <div
+                key={item}
+                className="overflow-hidden rounded-lg border border-border bg-surface"
+                aria-label="Loading listing"
+              >
+                <div className="h-48 animate-pulse bg-surface-muted" />
+                <div className="space-y-3 p-5">
+                  <div className="h-5 w-3/4 animate-pulse rounded bg-surface-muted" />
+                  <div className="h-4 w-1/2 animate-pulse rounded bg-surface-muted" />
+                  <div className="h-8 w-1/3 animate-pulse rounded bg-surface-muted" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : listings.length === 0 ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
-            No paid food reservations are available right now.
+          <div className="border-y border-border py-12 text-center">
+            <p className="text-lg font-semibold text-text-primary">
+              Nothing fresh nearby right now.
+            </p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-secondary">
+              Try a different category, distance, or pickup window to find the
+              next listing.
+            </p>
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-5 md:grid-cols-2">
             {listings.map((listing) => (
               <FoodCard key={String(listing.id)} listing={listing} />
             ))}

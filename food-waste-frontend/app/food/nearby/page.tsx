@@ -160,7 +160,7 @@ export default function NearbyFoodPage() {
                 type="button"
                 onClick={() => search()}
                 disabled={loading}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
               >
                 <Search className="h-4 w-4" aria-hidden="true" />
                 Search
@@ -169,7 +169,7 @@ export default function NearbyFoodPage() {
                 type="button"
                 onClick={useCurrentLocation}
                 disabled={loading}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-text-primary transition hover:bg-surface-muted disabled:opacity-50"
               >
                 <LocateFixed className="h-4 w-4" aria-hidden="true" />
                 Current

@@ -25,7 +25,7 @@ const variantClasses: Record<
   header: {
     wrapper: "flex items-center gap-2",
     primary:
-      "inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2",
+      "inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-brand px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
     secondary:
       "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:border-zinc-400 hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2",
     logout:
@@ -34,7 +34,7 @@ const variantClasses: Record<
   mobileMenu: {
     wrapper: "grid gap-2",
     primary:
-      "inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2",
+      "inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-md bg-brand px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
     secondary:
       "inline-flex min-h-11 w-full items-center justify-center whitespace-nowrap rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:border-zinc-400 hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2",
     logout:
@@ -43,7 +43,7 @@ const variantClasses: Record<
   lightCta: {
     wrapper: "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap",
     primary:
-      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto",
+      "inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-brand px-5 py-3 text-sm font-semibold text-white transition hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 sm:w-auto",
     secondary:
       "inline-flex w-full shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 sm:w-auto",
     logout:

@@ -431,7 +431,7 @@ export default function ProfilePage() {
               type="button"
               onClick={saveProfile}
               disabled={saving}
-              className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-brand px-4 text-sm font-semibold text-white transition hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
               {saving ? "Saving..." : "Save Profile"}
             </button>
@@ -554,30 +554,30 @@ export default function ProfilePage() {
         )}
 
         {isRestaurantProfile(roleProfile) && (
-          <section className={`${sectionClass} space-y-4`}>
+          <section className="space-y-4 border-t border-border pt-6">
             <div className="flex min-w-0 items-center gap-3">
               <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
                 <ShieldCheck className="h-5 w-5" aria-hidden="true" />
               </span>
-              <h2 className="text-lg font-semibold text-zinc-950">
+              <h2 className="text-lg font-bold text-text-primary">
                 Provider Details
               </h2>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <p className="text-xs font-medium uppercase text-zinc-500">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
                   Restaurant name
                 </p>
-                <p className="text-sm text-zinc-950">
+                <p className="text-sm font-medium text-text-primary">
                   {displayValue(roleProfile.restaurant_name)}
                 </p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase text-zinc-500">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
                   FSSAI number
                 </p>
-                <p className="text-sm text-zinc-950">
+                <p className="text-sm font-medium text-text-primary">
                   {displayValue(roleProfile.fssai_number)}
                 </p>
               </div>

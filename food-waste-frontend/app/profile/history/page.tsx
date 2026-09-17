@@ -177,7 +177,7 @@ export default function UserHistoryPage() {
             <p className="text-sm font-semibold uppercase text-emerald-700">
               Profile activity
             </p>
-            <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-zinc-950">
               History
             </h1>
             <p className="mt-1 text-sm leading-6 text-zinc-600">

@@ -84,7 +84,7 @@ export default function BrowserPushPermissionModal({
               type="button"
               onClick={handleEnable}
               disabled={submitting}
-              className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? "Enabling..." : "Enable notifications"}
             </button>

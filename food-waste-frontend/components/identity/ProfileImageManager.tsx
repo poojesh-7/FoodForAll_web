@@ -117,7 +117,7 @@ export default function ProfileImageManager({
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={saving}
-          className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-brand px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
         >
           {imageUrl ? "Replace" : "Upload"}
         </button>

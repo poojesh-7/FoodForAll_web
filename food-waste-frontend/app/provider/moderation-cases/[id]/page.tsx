@@ -604,7 +604,7 @@ export default function ProviderModerationCaseDetailPage() {
                       <button
                         type="submit"
                         disabled={submitting}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
                       >
                         <Send className="h-4 w-4" aria-hidden="true" />
                         {submitting ? "Submitting..." : "Submit"}
@@ -815,7 +815,7 @@ export default function ProviderModerationCaseDetailPage() {
                       <button
                         type="submit"
                         disabled={submittingAppeal}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
                       >
                         <Scale className="h-4 w-4" aria-hidden="true" />
                         {submittingAppeal ? "Submitting..." : "Submit appeal"}

@@ -379,20 +379,20 @@ export default function ReservationDetailPage() {
     : "";
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-5xl space-y-5">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">
-              Reservation Detail
+            <h1 className="text-3xl font-bold tracking-tight text-text-primary">
+              Pickup Pass
             </h1>
-            <p className="mt-1 text-sm text-zinc-600">
-              Review status, pickup codes, payment state, and cancellation eligibility.
+            <p className="mt-1 max-w-2xl text-sm text-text-secondary">
+              Keep the food, pickup window, and next action together for a clear handoff.
             </p>
           </div>
           <Link
             href="/reservations"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+            className="inline-flex min-h-10 items-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-primary transition hover:border-border-strong hover:bg-surface-muted"
           >
             Back
           </Link>
@@ -402,12 +402,12 @@ export default function ReservationDetailPage() {
         {success && <OperationalFeedbackBlock title={success} tone="success" />}
 
         {loading ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
             Loading reservation...
           </div>
         ) : reservation ? (
           <>
-            <section className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center">
+            <section className="flex flex-col justify-between gap-4 rounded-lg border border-border bg-surface p-5 shadow-subtle sm:flex-row sm:items-center sm:p-6">
               <div>
                 <p className="text-xs font-medium uppercase text-zinc-500">
                   Payment state
@@ -421,7 +421,7 @@ export default function ReservationDetailPage() {
                   type="button"
                   onClick={() => loadReservation(false)}
                   disabled={paymentProcessing}
-                  className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+                  className="min-h-10 rounded-md border border-border-strong px-4 py-2 text-sm font-semibold text-text-primary transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Refresh
                 </button>
@@ -430,7 +430,7 @@ export default function ReservationDetailPage() {
                     type="button"
                     onClick={continuePayment}
                     disabled={paymentProcessing}
-                    className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    className="min-h-10 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {paymentProcessing ? "Processing..." : "Continue Payment"}
                   </button>
@@ -445,7 +445,7 @@ export default function ReservationDetailPage() {
                   <button
                     onClick={() => setCancelModalOpen(true)}
                     disabled={cancelling}
-                    className="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-50"
+                    className="min-h-10 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {cancelling
                       ? "Cancelling..."
@@ -471,7 +471,7 @@ export default function ReservationDetailPage() {
               />
             )}
             {canRate(reservation) && !ratingSubmitted && isRatingWindowExpired(reservation) && (
-              <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+              <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
                 Rating window expired for this pickup.
               </div>
             )}
@@ -486,7 +486,7 @@ export default function ReservationDetailPage() {
             {paymentState !== "payment_pending" &&
               reservation.id &&
               reservation.provider_id && (
-              <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+              <section className="space-y-3 rounded-lg border border-border bg-surface p-5 shadow-subtle">
                 <div>
                   <h2 className="text-base font-semibold text-zinc-950">
                     Report Provider

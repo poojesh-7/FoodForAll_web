@@ -218,10 +218,10 @@ function StatCard({
   detail: string;
 }) {
   return (
-    <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-zinc-950">{value}</p>
-      <p className="mt-1 text-sm text-zinc-600">{detail}</p>
+    <article className="border-b border-border px-1 py-3 lg:border-b-0 lg:border-l lg:pl-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{label}</p>
+      <p className="mt-1 text-2xl font-semibold leading-tight text-text-primary">{value}</p>
+      <p className="mt-1 text-sm text-text-secondary">{detail}</p>
     </article>
   );
 }
@@ -414,8 +414,8 @@ export default function ProviderReservationsPage() {
         key={id}
         className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
       >
-        <ReservationFoodImage source={reservation} />
-        <div className="space-y-4 p-5">
+        <ReservationFoodImage source={reservation} className="h-40 sm:h-56" />
+        <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -448,35 +448,37 @@ export default function ProviderReservationsPage() {
             />
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <SignalTile
-              icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
-              label="Status"
-              value={getStatusLabel(operationalStatus)}
-              detail={getProviderProgress(reservation)}
-              tone={getStatusTone(operationalStatus)}
-            />
-            <SignalTile
-              icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
-              label="Pickup Code"
-              value={confirmable ? "Code required" : "No code needed now"}
-              detail={
-                confirmable
-                  ? "Ask the User or volunteer for the code."
-                  : getProviderProgress(reservation)
-              }
-              tone={confirmable ? "amber" : "zinc"}
-            />
-            <SignalTile
-              icon={<Truck className="h-4 w-4" aria-hidden="true" />}
-              label="Volunteer State"
-              value={getVolunteerState(reservation)}
-              detail={displayValue(reservation.assigned_volunteer_name)}
-              tone={reservation.pickup_type === "ngo" ? "sky" : "zinc"}
-            />
+              <div className="grid gap-2 sm:gap-3 md:grid-cols-3">
+                <div className="col-span-2 md:col-span-1">
+                  <SignalTile
+                    icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+                    label="Status"
+                    value={getStatusLabel(operationalStatus)}
+                    detail={getProviderProgress(reservation)}
+                    tone={getStatusTone(operationalStatus)}
+                  />
+                </div>
+                <SignalTile
+                  icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
+                  label="Pickup Code"
+                  value={confirmable ? "Code required" : "No code needed now"}
+                  detail={
+                    confirmable
+                      ? "Ask the User or volunteer for the code."
+                      : getProviderProgress(reservation)
+                  }
+                  tone={confirmable ? "amber" : "zinc"}
+                />
+                <SignalTile
+                  icon={<Truck className="h-4 w-4" aria-hidden="true" />}
+                  label="Volunteer State"
+                  value={getVolunteerState(reservation)}
+                  detail={displayValue(reservation.assigned_volunteer_name)}
+                  tone={reservation.pickup_type === "ngo" ? "sky" : "zinc"}
+                />
           </div>
 
-          <div className="grid gap-3 text-sm sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-2 text-sm sm:gap-3 sm:grid-cols-3">
             <div>
               <p className="text-xs font-medium uppercase text-zinc-500">
                 Pickup Ends
@@ -523,7 +525,7 @@ export default function ProviderReservationsPage() {
               <button
                 onClick={() => confirmPickup(reservation)}
                 disabled={processingId === id}
-                className="min-h-10 rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="min-h-10 rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
               >
                 {processingId === id ? "Confirming..." : "Confirm Pickup"}
               </button>
@@ -539,20 +541,21 @@ export default function ProviderReservationsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-7xl space-y-5">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">
-              Provider Reservations
+            <p className="text-xs font-semibold uppercase tracking-wide text-brand">Provider workspace</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-text-primary">
+              Reservations
             </h1>
-            <p className="mt-1 text-sm text-zinc-600">
+            <p className="mt-1 text-sm text-text-secondary">
               Track active pickups first, then review completed reservation history.
             </p>
           </div>
           <Link
             href="/provider/moderation-cases"
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-white"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border-strong bg-surface px-4 text-sm font-semibold text-text-primary transition hover:bg-surface-muted"
           >
             <ShieldAlert className="h-4 w-4" aria-hidden="true" />
             Moderation
@@ -563,16 +566,16 @@ export default function ProviderReservationsPage() {
         {success && <OperationalFeedbackBlock title={success} tone="success" />}
 
         {loading ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
             Loading provider reservations...
           </div>
         ) : reservations.length === 0 ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
             No reservations found for your listings.
           </div>
         ) : (
           <div className="space-y-5">
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <section className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label="Active"
                 value={stats.active}
@@ -595,12 +598,12 @@ export default function ProviderReservationsPage() {
               />
             </section>
 
-            <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-              <div className="grid gap-3 lg:grid-cols-[1.5fr_repeat(3,1fr)]">
+            <section className="space-y-3 rounded-lg border border-border bg-surface p-4 shadow-subtle">
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-[1.5fr_repeat(3,1fr)] lg:gap-3">
                 <input
                   value={query}
                   placeholder="Search RES-XXXX or requester"
-                  className="min-h-10 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                  className="col-span-2 min-h-11 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-brand lg:col-span-1"
                   onChange={(event) => setQuery(event.target.value)}
                 />
                 <select
@@ -608,7 +611,7 @@ export default function ProviderReservationsPage() {
                   onChange={(event) =>
                     setStatusFilter(event.target.value as StatusFilter)
                   }
-                  className="min-h-10 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                  className="min-h-11 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-brand"
                 >
                   <option value="all">All statuses</option>
                   <option value="active">Active</option>
@@ -625,7 +628,7 @@ export default function ProviderReservationsPage() {
                   onChange={(event) =>
                     setTypeFilter(event.target.value as TypeFilter)
                   }
-                  className="min-h-10 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                  className="min-h-11 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-brand"
                 >
                   <option value="all">All types</option>
                   <option value="ngo">NGO</option>
@@ -636,7 +639,7 @@ export default function ProviderReservationsPage() {
                   onChange={(event) =>
                     setPaymentFilter(event.target.value as PaymentFilter)
                   }
-                  className="min-h-10 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+                  className="col-span-2 min-h-11 rounded-md border border-border-strong bg-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-brand lg:col-span-1"
                 >
                   <option value="all">All payments</option>
                   <option value="paid">Paid</option>
@@ -653,7 +656,7 @@ export default function ProviderReservationsPage() {
                     onClick={() => setLifecycle(item)}
                     className={`min-h-10 flex-1 rounded px-3 text-sm font-medium transition ${
                       lifecycle === item
-                        ? "bg-white text-zinc-950 shadow-sm"
+                        ? "bg-brand text-white shadow-sm"
                         : "text-zinc-600 hover:text-zinc-950"
                     }`}
                   >

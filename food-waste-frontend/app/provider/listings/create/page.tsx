@@ -58,7 +58,7 @@ function PreviousListingsModal({
       onMouseDown={onClose}
     >
       <div
-        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-zinc-200 bg-white p-5 shadow-xl"
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-surface p-5 shadow-elevated"
         role="dialog"
         aria-modal="true"
         aria-labelledby="previous-listings-title"
@@ -66,10 +66,10 @@ function PreviousListingsModal({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 id="previous-listings-title" className="text-lg font-semibold text-zinc-950">
+            <h2 id="previous-listings-title" className="text-lg font-bold text-text-primary">
               Previous listings
             </h2>
-            <p className="mt-1 text-sm text-zinc-600">
+            <p className="mt-1 text-sm text-text-secondary">
               Reuse details from a previous listing.
             </p>
           </div>
@@ -77,14 +77,14 @@ function PreviousListingsModal({
             type="button"
             aria-label="Close previous listings"
             onClick={onClose}
-            className="min-h-10 min-w-10 rounded-md border border-zinc-300 text-lg text-zinc-700"
+            className="min-h-10 min-w-10 rounded-md border border-border-strong text-lg text-text-secondary transition hover:bg-surface-muted"
           >
             X
           </button>
         </div>
 
         {loading ? (
-          <p className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
+          <p className="mt-5 rounded-md border border-border bg-surface-muted p-4 text-sm text-text-secondary">
             Loading previous listings...
           </p>
         ) : error ? (
@@ -92,7 +92,7 @@ function PreviousListingsModal({
             <OperationalFeedbackBlock title={error} tone="error" />
           </div>
         ) : listings.length === 0 ? (
-          <p className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
+          <p className="mt-5 rounded-md border border-border bg-surface-muted p-4 text-sm text-text-secondary">
             No previous listings found.
           </p>
         ) : (
@@ -106,16 +106,16 @@ function PreviousListingsModal({
               return (
                 <article
                   key={String(listing.id)}
-                  className="flex gap-3 rounded-md border border-zinc-200 p-3"
+                  className="flex gap-3 rounded-md border border-border p-3 transition hover:bg-surface-muted"
                 >
                   {imageUrl && <FoodImage source={listing} className="h-20 w-20 shrink-0" />}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-col justify-between gap-2 sm:flex-row">
                       <div>
-                        <h3 className="font-semibold text-zinc-950">
+                        <h3 className="font-semibold text-text-primary">
                           {String(listing.title ?? "Untitled food")}
                         </h3>
-                        <p className="text-sm text-zinc-600">
+                        <p className="text-sm text-text-secondary">
                           {listing.is_free ? "Free" : `Rs. ${String(listing.price ?? "-")}`}
                           {originalPrice !== null && ` · Regular Rs. ${originalPrice.toFixed(2)}`}
                           {savings && ` · Save Rs. ${savings.savingsAmount.toFixed(2)}`}
@@ -124,12 +124,12 @@ function PreviousListingsModal({
                       <button
                         type="button"
                         onClick={() => onUse(listing)}
-                        className="min-h-10 rounded-md bg-zinc-950 px-3 text-sm font-medium text-white"
+                        className="min-h-10 rounded-md bg-brand px-3 text-sm font-semibold text-white transition hover:bg-brand-hover"
                       >
                         Use this
                       </button>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-600">
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-text-muted">
                       <span>{formatFoodCategory(String(listing.category ?? "other"))}</span>
                       {dietaryTags.map((tag) => (
                         <span key={tag}>{formatDietaryTag(tag)}</span>
@@ -262,7 +262,7 @@ export default function CreateProviderListingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
       {previousListingsOpen && (
         <PreviousListingsModal
           listings={previousListings}
@@ -276,18 +276,19 @@ export default function CreateProviderListingPage() {
           }}
         />
       )}
-      <div className="mx-auto max-w-2xl space-y-4">
+      <div className="mx-auto max-w-3xl space-y-6">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">Create Listing</h1>
-            <p className="text-sm text-zinc-600">
-              Add surplus food with pickup timing and pricing.
+            <p className="text-xs font-semibold uppercase tracking-wide text-brand">Provider workspace</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-text-primary">Give this food another chance</h1>
+            <p className="mt-2 text-sm text-text-secondary">
+              Add food details, pickup timing, and pricing in one calm workflow.
             </p>
           </div>
           <button
             type="button"
             onClick={openPreviousListings}
-            className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-950"
+            className="min-h-10 rounded-md border border-border-strong bg-surface px-3 text-sm font-semibold text-text-primary transition hover:bg-surface-muted"
           >
             Use a previous listing
           </button>

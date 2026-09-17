@@ -157,21 +157,21 @@ export default function AppNavigation() {
         id="mobile-navigation-drawer"
         aria-label="Mobile navigation"
         aria-hidden={!drawerOpen}
-        className={`fixed left-0 top-0 z-[110] flex h-dvh w-[min(20rem,calc(100vw-2rem))] flex-col border-r border-zinc-200 bg-white shadow-2xl transition-transform duration-300 ease-out lg:hidden ${
+        className={`fixed left-0 top-0 z-[110] flex h-dvh w-[min(20rem,calc(100vw-2rem))] flex-col border-r border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-elevated)] transition-transform duration-300 ease-out lg:hidden ${
           drawerOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-4">
           <Link
             href={dashboardHref}
             onClick={() => setDrawerOpen(false)}
             tabIndex={drawerTabIndex}
             className="min-w-0"
           >
-            <p className="truncate text-base font-semibold text-zinc-950">
+            <p className="truncate text-base font-semibold text-[var(--text-primary)]">
               FoodForAll
             </p>
-            <p className="mt-0.5 text-xs capitalize text-zinc-500">
+            <p className="mt-0.5 text-xs capitalize text-[var(--text-muted)]">
               {String(currentRole ?? "account")}
             </p>
           </Link>
@@ -180,13 +180,13 @@ export default function AppNavigation() {
             aria-label="Close navigation menu"
             onClick={() => setDrawerOpen(false)}
             tabIndex={drawerTabIndex}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-800 transition hover:bg-zinc-50"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-muted)]"
           >
             <X aria-hidden="true" className="h-5 w-5" />
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-5">
           {links.map((item) => {
             const active = isActive(pathname, item.href);
 
@@ -196,10 +196,10 @@ export default function AppNavigation() {
                 href={item.href}
                 onClick={() => setDrawerOpen(false)}
                 tabIndex={drawerTabIndex}
-                className={`block rounded-md px-3 py-3 text-sm font-medium transition ${
+                className={`block rounded-md px-3 py-3 text-sm font-medium transition-colors ${
                   active
-                    ? "bg-zinc-950 text-white"
-                    : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                    ? "bg-[var(--brand-soft)] text-[var(--brand-hover)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                 }`}
               >
                 {item.label}
@@ -218,13 +218,13 @@ export default function AppNavigation() {
           )}
         </nav>
 
-        <div className="border-t border-zinc-100 p-3">
+        <div className="border-t border-[var(--border)] p-3">
           <button
             type="button"
             onClick={() => void handleLogout()}
             disabled={loggingOut}
             tabIndex={drawerTabIndex}
-            className="flex w-full items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-3 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center gap-2 rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-3 text-left text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <LogOut aria-hidden="true" className="h-4 w-4" />
             {loggingOut ? "Logging out..." : "Logout"}
@@ -236,8 +236,8 @@ export default function AppNavigation() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4">
+      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -245,14 +245,14 @@ export default function AppNavigation() {
               aria-controls="mobile-navigation-drawer"
               aria-expanded={drawerOpen}
               onClick={() => setDrawerOpen(true)}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 lg:hidden"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] shadow-[var(--shadow-subtle)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-muted)] lg:hidden"
             >
               <Menu aria-hidden="true" className="h-5 w-5" />
             </button>
 
             <Link
               href={dashboardHref}
-              className="truncate text-base font-semibold text-zinc-950"
+              className="truncate text-base font-semibold text-[var(--text-primary)]"
             >
               FoodForAll
             </Link>
@@ -266,10 +266,10 @@ export default function AppNavigation() {
                 <Link
                   key={`${item.href}-${item.label}`}
                   href={item.href}
-                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
+                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                     active
-                      ? "bg-zinc-950 text-white"
-                      : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                      ? "bg-[var(--brand-soft)] text-[var(--brand-hover)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                   }`}
                 >
                   {item.label}
@@ -279,7 +279,7 @@ export default function AppNavigation() {
             {currentRole === "user" && pendingReservationCount > 0 && (
               <Link
                 href="/reservations"
-                className="whitespace-nowrap rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+                className="whitespace-nowrap rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100"
               >
                 Pending {pendingReservationCount}
               </Link>
@@ -291,7 +291,7 @@ export default function AppNavigation() {
             <Link
               href="/profile"
               aria-label="Open profile"
-              className="inline-flex rounded-full focus:outline-none focus:ring-2 focus:ring-zinc-950 focus:ring-offset-2"
+              className="inline-flex rounded-full"
             >
               <IdentityAvatar
                 src={user.profile_image_url ?? user.profile_image}
@@ -305,7 +305,7 @@ export default function AppNavigation() {
               type="button"
               onClick={() => void handleLogout()}
               disabled={loggingOut}
-              className="hidden rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex"
+              className="hidden rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex"
             >
               {loggingOut ? "Logging out..." : "Logout"}
             </button>

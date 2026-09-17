@@ -24,14 +24,14 @@ export default function NotificationsPage() {
   }, [loadNotifications]);
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-4xl space-y-5">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-4xl space-y-6">
         <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">
+            <h1 className="text-3xl font-bold tracking-tight text-text-primary">
               Notifications
             </h1>
-            <p className="mt-1 text-sm text-zinc-600">
+            <p className="mt-1 text-sm text-text-secondary">
               Full history of account and pickup updates.
             </p>
           </div>
@@ -39,14 +39,14 @@ export default function NotificationsPage() {
             type="button"
             onClick={() => void markAllAsRead()}
             disabled={!unreadCount}
-            className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            className="min-h-10 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:bg-border"
           >
             Mark all as read
           </button>
         </header>
 
         <section className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="border-b border-border px-1 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               Loaded
             </p>
@@ -54,7 +54,7 @@ export default function NotificationsPage() {
               {notifications.length}
             </p>
           </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+          <div className="border-b border-border px-1 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
               Unread
             </p>
@@ -62,7 +62,7 @@ export default function NotificationsPage() {
               {unreadCount}
             </p>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="border-b border-border px-1 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               Latest
             </p>

@@ -13,7 +13,6 @@ import {
   Package,
   Plus,
   ShieldCheck,
-  Store,
   Utensils,
 } from "lucide-react";
 import ProviderReputation from "@/components/ratings/ProviderReputation";
@@ -32,6 +31,8 @@ import {
   formatFoodDate,
   formatQuantityWithUnit,
   getListingPrice,
+  getListingOriginalPrice,
+  getListingSavings,
   getRestaurantDisplayName,
 } from "@/lib/food";
 import {
@@ -86,9 +87,9 @@ function getProviderDisplayName(listing: FoodListingRow) {
 }
 
 function getStatusClasses(status?: string) {
-  if (status === "active") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "active") return "border-brand bg-brand-soft text-brand-hover";
   if (status === "expired" || status === "inactive") {
-    return "border-zinc-200 bg-zinc-100 text-zinc-600";
+    return "border-border bg-surface-muted text-text-secondary";
   }
   return "border-amber-200 bg-amber-50 text-amber-800";
 }
@@ -410,6 +411,8 @@ export default function FoodDetailPage() {
   const totalAmount =
     pricingPreview?.totalAmount ?? foodAmount + depositAmount + processingFee;
   const dietaryTags = listing ? getDietaryTags(listing) : [];
+  const originalPrice = listing ? getListingOriginalPrice(listing) : null;
+  const savings = listing ? getListingSavings(listing) : null;
 
   const setQuantityWithinLimit = (nextValue: number) => {
     const bounded = Math.max(1, Math.min(maxReservableQuantity || 1, nextValue));
@@ -417,11 +420,11 @@ export default function FoodDetailPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-5xl space-y-5">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-6">
         <Link
           href="/food"
-          className="inline-flex min-h-10 items-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-950"
+          className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-semibold text-text-primary transition hover:border-border-strong hover:bg-surface-muted"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to Food
@@ -430,14 +433,14 @@ export default function FoodDetailPage() {
         {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {loading ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
-            Loading...
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
+            Loading food details...
           </div>
         ) : listing ? (
           <div className="space-y-5">
-            <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <FoodImageCarousel source={listing} className="h-72" />
-              <div className="space-y-5 p-6">
+            <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-card">
+              <FoodImageCarousel source={listing} className="h-[16rem] sm:h-[28rem]" />
+              <div className="space-y-4 p-4 sm:space-y-5 sm:p-6">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -465,21 +468,48 @@ export default function FoodDetailPage() {
                         </span>
                       ))}
                     </div>
-                    <h1 className="mt-3 text-3xl font-semibold leading-tight text-zinc-950">
+                    <h1 className="mt-3 text-3xl font-bold leading-tight tracking-tight text-text-primary sm:text-4xl">
                       {String(listing.title ?? "Untitled food")}
                     </h1>
+                    <div className="mt-4">
+                      <IdentityChip
+                        src={listing.provider_profile_image_url}
+                        name={providerName}
+                        role="provider"
+                        label="Provider avatar"
+                        caption="Provider"
+                      />
+                    </div>
                     {listing.description && (
-                      <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">
+                      <p className="mt-4 max-w-2xl text-base leading-7 text-text-secondary">
                         {String(listing.description)}
                       </p>
                     )}
                   </div>
-                  <span className="shrink-0 rounded-md border border-zinc-200 bg-zinc-950 px-3 py-2 text-base font-semibold text-white">
-                    {getListingPrice(listing)}
-                  </span>
+                  <div className="shrink-0 sm:text-right">
+                    {listing.is_free ? (
+                      <p className="text-3xl font-bold tracking-tight text-brand">FREE</p>
+                    ) : (
+                      <div className="flex items-baseline gap-2 sm:justify-end">
+                        <span className="text-3xl font-bold tracking-tight text-text-primary">
+                          {getListingPrice(listing)}
+                        </span>
+                        {originalPrice !== null && (
+                          <span className="text-sm text-text-muted line-through">
+                            Rs. {originalPrice.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!listing.is_free && savings && (
+                      <span className="mt-2 inline-flex items-center rounded-md bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-hover">
+                        Save Rs. {savings.savingsAmount.toFixed(2)} · {savings.percentage}% off
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 border-y border-border py-4 sm:gap-3 sm:py-5">
                   <DetailPill
                     icon={<Package className="h-4 w-4" aria-hidden="true" />}
                     label="Available"
@@ -489,39 +519,44 @@ export default function FoodDetailPage() {
                     )} of ${formatQuantityWithUnit(listing.quantity, listing)}`}
                   />
                   <DetailPill
-                    icon={<Clock3 className="h-4 w-4" aria-hidden="true" />}
-                    label="Pickup Window"
-                    value={
-                      <>
-                        <span>{formatFoodDate(listing.pickup_start_time)}</span>
-                        <span className="mt-1 block text-xs font-medium text-zinc-500">
-                          Ends {formatFoodDate(listing.pickup_end_time)}
-                        </span>
-                      </>
-                    }
-                    emphasis={pickupUrgent}
-                  />
-                  <DetailPill
-                    icon={<Store className="h-4 w-4" aria-hidden="true" />}
-                    label="Restaurant"
-                    value={
-                      <IdentityChip
-                        src={listing.provider_profile_image_url}
-                        name={providerName}
-                        role="provider"
-                        label="Provider avatar"
-                        caption="Provider"
-                      />
-                    }
-                  />
-                  <DetailPill
                     icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
                     label="Pickup Type"
                     value="Self pickup"
                   />
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div
+                  className={`rounded-lg border p-3 sm:p-4 ${
+                    pickupUrgent
+                      ? "border-amber-200 bg-amber-50"
+                      : "border-border bg-surface-muted"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
+                    <Clock3 className="h-4 w-4" aria-hidden="true" />
+                    Pickup Window
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                        Start
+                      </p>
+                      <p className="mt-1 break-words text-sm font-semibold text-text-primary">
+                        {formatFoodDate(listing.pickup_start_time)}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                        End
+                      </p>
+                      <p className="mt-1 break-words text-sm font-semibold text-text-primary">
+                        {formatFoodDate(listing.pickup_end_time)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="hidden gap-3 sm:grid sm:grid-cols-2">
                   <ImpactPill
                     icon={<Utensils className="h-4 w-4" aria-hidden="true" />}
                     label="Meals saved"
@@ -535,8 +570,8 @@ export default function FoodDetailPage() {
                 </div>
               </div>
 
-              <div className="border-t border-zinc-100 bg-zinc-50 p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="border-t border-zinc-100 bg-zinc-50 p-4 sm:p-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                   <div className="space-y-2">
                     <label
                       htmlFor="reservation-quantity"
@@ -544,12 +579,12 @@ export default function FoodDetailPage() {
                     >
                       Reserve quantity
                     </label>
-                    <div className="flex w-fit overflow-hidden rounded-md border border-zinc-300 bg-white">
+                    <div className="flex w-fit overflow-hidden rounded-md border border-border-strong bg-surface">
                       <button
                         type="button"
                         onClick={() => setQuantityWithinLimit(quantityValue - 1)}
                         disabled={!canReserve || reserving || quantityValue <= 1}
-                        className="flex h-11 w-11 items-center justify-center border-r border-zinc-200 text-zinc-700 disabled:opacity-40"
+                        className="flex h-11 w-11 items-center justify-center border-r border-border text-text-secondary transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label="Decrease quantity"
                       >
                         <Minus className="h-4 w-4" aria-hidden="true" />
@@ -561,7 +596,7 @@ export default function FoodDetailPage() {
                         min={1}
                         max={maxReservableQuantity}
                         disabled={!canReserve || reserving}
-                        className="h-11 w-16 bg-white text-center text-sm font-semibold text-zinc-950 outline-none disabled:bg-zinc-100"
+                        className="h-11 w-16 bg-surface text-center text-sm font-semibold text-text-primary outline-none disabled:bg-surface-muted"
                         onChange={(event) => setQuantity(event.target.value)}
                       />
                       <button
@@ -572,7 +607,7 @@ export default function FoodDetailPage() {
                           reserving ||
                           quantityValue >= maxReservableQuantity
                         }
-                        className="flex h-11 w-11 items-center justify-center border-l border-zinc-200 text-zinc-700 disabled:opacity-40"
+                        className="flex h-11 w-11 items-center justify-center border-l border-border text-text-secondary transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label="Increase quantity"
                       >
                         <Plus className="h-4 w-4" aria-hidden="true" />
@@ -602,7 +637,7 @@ export default function FoodDetailPage() {
                       type="button"
                       onClick={reserveAndPay}
                       disabled={!canReserve || reserving || pricingLoading}
-                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-brand px-5 text-sm font-semibold text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <CreditCard className="h-4 w-4" aria-hidden="true" />
                       {reserving
@@ -663,7 +698,7 @@ export default function FoodDetailPage() {
             </section>
           </div>
         ) : (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
             Listing not found.
           </div>
         )}
@@ -685,7 +720,7 @@ function DetailPill({
 }) {
   return (
     <div
-      className={`rounded-lg border p-4 ${
+      className={`rounded-lg border p-3 sm:p-4 ${
         emphasis ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"
       }`}
     >
@@ -693,7 +728,7 @@ function DetailPill({
         {icon}
         {label}
       </div>
-      <div className="mt-2 text-sm font-semibold text-zinc-950">{value}</div>
+      <div className="mt-1 text-sm font-semibold text-zinc-950 sm:mt-2">{value}</div>
     </div>
   );
 }

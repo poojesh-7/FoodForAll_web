@@ -153,7 +153,7 @@ type ChangeRequestReason = (typeof CHANGE_REQUEST_REASONS)[number];
 
 function payoutAccountStatusBadge(account: ProviderPayoutAccount | null) {
   const base =
-    "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide";
+    "inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold tracking-wide";
 
   if (!account) {
     return (
@@ -219,7 +219,7 @@ function payoutAccountStatusBadge(account: ProviderPayoutAccount | null) {
 
 function settlementStatusChip(status: string) {
   const normalized = String(status || "").toLowerCase();
-  const base = "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide";
+  const base = "inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold tracking-wide";
 
   if (normalized === "paid") {
     return <span className={`${base} bg-emerald-100 text-emerald-800`}>Paid</span>;
@@ -542,7 +542,7 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-6xl space-y-5">
         <header>
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">Dashboard</h1>
+            <h1 className="text-3xl font-semibold tracking-tight text-zinc-950">Dashboard</h1>
             <p className="mt-1 text-sm text-zinc-600">
               Impact, reputation, and platform rescue totals.
             </p>
@@ -636,21 +636,21 @@ export default function DashboardPage() {
                   <ProviderReputation summary={providerRatings} />
                 </div>
 
-                <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <section className="border-t border-border py-5">
                   <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
                     <div className="space-y-3">
                       <h2 className="text-base font-semibold text-zinc-950">
                         Payout Account
                       </h2>
-                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="border-y border-border bg-surface-muted p-4">
+                        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
                           <div>
                             <p className="text-xs uppercase text-zinc-500">Type</p>
                             <p className="mt-1 text-sm font-semibold text-zinc-950">
                               {payoutAccountTypeLabel(payoutAccount)}
                             </p>
                           </div>
-                          <div>
+                          <div className="col-span-2 sm:col-span-1">
                             <p className="text-xs uppercase text-zinc-500">Account</p>
                             <p className="mt-1 text-sm text-zinc-950">
                               {displayAccount(payoutAccount)}
@@ -663,7 +663,7 @@ export default function DashboardPage() {
                             </p>
                           </div>
                         </div>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-3 lg:grid-cols-3">
                           <div>
                             <p className="text-xs uppercase text-zinc-500">Last Updated</p>
                             <p className="mt-1 text-sm text-zinc-700">
@@ -684,7 +684,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                    <div className="border-l-2 border-brand bg-brand-soft p-4">
                       <p className="text-sm font-semibold text-zinc-950">Verification Status</p>
                       <p className="mt-2 text-sm text-zinc-700">
                         {payoutVerificationBanner(payoutAccount).message}
@@ -716,7 +716,7 @@ export default function DashboardPage() {
                   )}
 
                   {showPayoutEditor ? (
-                    <form className="mt-4 space-y-4" onSubmit={savePayoutAccount}>
+                    <form className="mt-3 space-y-3 sm:mt-4 sm:space-y-4" onSubmit={savePayoutAccount}>
                       <div className="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
                       {(["UPI", "BANK"] as ProviderPayoutAccountType[]).map((type) => (
                         <button
@@ -725,7 +725,7 @@ export default function DashboardPage() {
                           onClick={() => setAccountType(type)}
                           className={`rounded px-3 py-2 text-sm font-medium ${
                             accountType === type
-                              ? "bg-zinc-950 text-white"
+                              ? "bg-brand text-white"
                               : "text-zinc-700"
                           }`}
                         >
@@ -745,8 +745,8 @@ export default function DashboardPage() {
                           />
                         </label>
                       ) : (
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <label className="block text-sm">
+                        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
+                          <label className="col-span-2 block text-sm md:col-span-1">
                             <span className="font-medium text-zinc-700">
                               Account Holder
                             </span>
@@ -758,7 +758,7 @@ export default function DashboardPage() {
                               className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
                             />
                           </label>
-                          <label className="block text-sm">
+                          <label className="block min-w-0 text-sm">
                             <span className="font-medium text-zinc-700">
                               Account Number
                             </span>
@@ -770,7 +770,7 @@ export default function DashboardPage() {
                               className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
                             />
                           </label>
-                          <label className="block text-sm">
+                          <label className="block min-w-0 text-sm">
                             <span className="font-medium text-zinc-700">IFSC</span>
                             <input
                               value={ifscCode}
@@ -786,7 +786,7 @@ export default function DashboardPage() {
                       <button
                         type="submit"
                         disabled={financialSubmitting}
-                        className="inline-flex min-h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-medium text-white disabled:opacity-50"
+                        className="inline-flex min-h-10 items-center justify-center rounded-md bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
                       >
                         {financialSubmitting ? "Saving..." : "Save Payment Details"}
                       </button>
@@ -937,8 +937,8 @@ export default function DashboardPage() {
                   <h2 className="text-base font-semibold text-zinc-950">
                     Earnings
                   </h2>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
                       <p className="text-sm font-medium text-zinc-600">
                         Pending Earnings
                       </p>
@@ -949,7 +949,7 @@ export default function DashboardPage() {
                         Pending payable earnings after refund and carry-forward deductions
                       </p>
                     </div>
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
                       <p className="text-sm font-medium text-zinc-600">
                         Paid Earnings
                       </p>
@@ -960,7 +960,7 @@ export default function DashboardPage() {
                         Historical provider settlements already paid
                       </p>
                     </div>
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
                       <p className="text-sm font-medium text-zinc-600">
                         Refunds
                       </p>
@@ -971,7 +971,7 @@ export default function DashboardPage() {
                         Customer refunds attributable to provider transactions
                       </p>
                     </div>
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                    <div className="col-span-2 min-[375px]:col-span-1 rounded-2xl border border-amber-200 bg-amber-50 p-3 shadow-sm sm:col-span-1 sm:p-4">
                       <p className="text-sm font-medium text-amber-800">
                         Refund Liability / Carry-Forward
                       </p>
@@ -985,12 +985,12 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-                    <div className="border-b border-zinc-200 px-4 py-3">
+                    <div className="border-b border-zinc-200 px-3 py-2 sm:px-4 sm:py-3">
                       <h3 className="text-sm font-semibold text-zinc-950">
                         Settlement History
                       </h3>
                     </div>
-                    <div className="px-4 py-3 border-b">
+                    <div className="border-b px-3 py-2 sm:px-4 sm:py-3">
                       <label className="text-sm mr-2">Year:</label>
                       <select
                         value={selectedYear ?? ''}
@@ -1067,7 +1067,7 @@ export default function DashboardPage() {
                       </div>
                     ) : null}
                     {recordsOpen ? (
-                      <div className="p-4">
+                      <div className="p-3 sm:p-4">
                         <div className="mb-2 flex items-center justify-between">
                           <h4 className="text-sm font-semibold">Records</h4>
                           <button onClick={() => { setRecordsOpen(false); setRecordRows([]); setRecordQuery(null); }} className="text-sm text-zinc-600">Close</button>

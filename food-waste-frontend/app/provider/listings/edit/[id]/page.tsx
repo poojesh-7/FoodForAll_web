@@ -173,11 +173,12 @@ export default function EditProviderListingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
-      <div className="mx-auto max-w-2xl space-y-4">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-3xl space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-950">Edit Listing</h1>
-          <p className="text-sm text-zinc-600">
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand">Provider workspace</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-text-primary">Refine this listing</h1>
+          <p className="mt-2 text-sm text-text-secondary">
             Update listing details and pickup timing.
           </p>
         </div>
@@ -185,8 +186,8 @@ export default function EditProviderListingPage() {
         {error && <OperationalFeedbackBlock title={error} tone="error" />}
 
         {initialLoading ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm">
-            Loading...
+          <div className="rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary shadow-subtle">
+            Loading listing details...
           </div>
         ) : (
           <FoodListingForm

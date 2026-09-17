@@ -119,7 +119,7 @@ export default function ProviderModerationCasesPage() {
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               Provider listings
             </Link>
-            <h1 className="mt-3 text-2xl font-semibold text-zinc-950">
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
               Moderation Cases
             </h1>
             <p className="mt-1 text-sm text-zinc-600">
@@ -275,7 +275,7 @@ export default function ProviderModerationCasesPage() {
                       )}
                       <Link
                         href={`/provider/moderation-cases/${String(item.id)}`}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-medium text-white transition hover:bg-brand-hover"
                       >
                         <FileText className="h-4 w-4" aria-hidden="true" />
                         Open

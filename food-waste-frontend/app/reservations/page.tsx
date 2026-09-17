@@ -255,7 +255,7 @@ export default function ReservationsPage() {
             expired ||
             String(paymentProcessingId) === String(reservation.id)
           }
-          className="min-h-10 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-10 rounded-md bg-brand px-4 text-sm font-semibold text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           {String(paymentProcessingId) === String(reservation.id)
             ? "Opening..."
@@ -308,7 +308,7 @@ export default function ReservationsPage() {
       <div className="mx-auto max-w-6xl space-y-5">
         <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">
+            <h1 className="text-3xl font-semibold tracking-tight text-zinc-950">
               Reservations
             </h1>
             <p className="mt-1 text-sm text-zinc-600">
@@ -347,7 +347,7 @@ export default function ReservationsPage() {
                       onClick={() => setSelectedTab(tab)}
                       className={`min-h-11 rounded-md px-3 text-sm font-semibold transition ${
                         selected
-                          ? "bg-zinc-950 text-white shadow-sm"
+                          ? "bg-brand text-white shadow-sm"
                           : "bg-zinc-50 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
                       }`}
                     >

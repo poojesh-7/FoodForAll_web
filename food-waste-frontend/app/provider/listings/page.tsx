@@ -81,10 +81,10 @@ function ListingMetric({
   detail: string;
 }) {
   return (
-    <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-zinc-950">{value}</p>
-      <p className="mt-1 text-sm text-zinc-600">{detail}</p>
+    <article className="border-b border-border px-1 py-3 lg:border-b-0 lg:border-l lg:pl-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{label}</p>
+      <p className="mt-1 text-2xl font-semibold leading-tight text-text-primary">{value}</p>
+      <p className="mt-1 text-sm text-text-secondary">{detail}</p>
     </article>
   );
 }
@@ -411,32 +411,33 @@ export default function ProviderListingsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 p-4">
+    <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
       <ArchiveListingModal
         listing={archiveListing}
         loading={actionLoading}
         onCancel={() => setArchiveListing(null)}
         onConfirm={archiveSelectedListing}
       />
-      <div className="mx-auto max-w-7xl space-y-5">
+      <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950">Provider Listings</h1>
-            <p className="text-sm text-zinc-600">
+            <p className="text-xs font-semibold uppercase tracking-wide text-brand">Provider workspace</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-text-primary">Listings</h1>
+            <p className="mt-1 text-sm text-text-secondary">
               Manage active food availability first, then review inactive listings.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
               href="/provider/moderation-cases"
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-zinc-300 px-4 text-sm font-medium text-zinc-950 transition hover:bg-white"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border-strong bg-surface px-4 text-sm font-semibold text-text-primary transition hover:bg-surface-muted"
             >
               <ShieldAlert className="h-4 w-4" aria-hidden="true" />
               Moderation
             </Link>
             <Link
               href="/provider/listings/create"
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-medium text-white"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-semibold text-white transition hover:bg-brand-hover"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               Create
@@ -452,7 +453,7 @@ export default function ProviderListingsPage() {
         )}
 
         {selectedListingId && (
-          <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+          <section className="space-y-3 rounded-lg border border-border bg-surface p-5 shadow-subtle">
             <h2 className="text-base font-semibold text-zinc-950">Request NGO</h2>
             {ngoLoading ? (
               <p className="text-sm text-zinc-600">Loading NGOs...</p>
@@ -461,7 +462,7 @@ export default function ProviderListingsPage() {
                 <select
                   value={selectedNGOId}
                   onChange={(event) => setSelectedNGOId(event.target.value)}
-                  className="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-zinc-950 outline-none focus:border-zinc-950"
+                    className="min-h-11 min-w-0 flex-1 rounded-md border border-border-strong bg-surface px-3 py-2 text-text-primary outline-none focus:border-brand"
                 >
                   <option value="">Select NGO</option>
                   {ngos.map((ngo) => (
@@ -474,7 +475,7 @@ export default function ProviderListingsPage() {
                 <button
                   onClick={requestNGO}
                   disabled={actionLoading || !selectedNGOId}
-                  className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-11 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Send Request
                 </button>
@@ -484,23 +485,27 @@ export default function ProviderListingsPage() {
         )}
 
         {!loading && (
-          <section className="grid gap-3 lg:grid-cols-[1.2fr_repeat(3,1fr)]">
-            <ProviderReputation summary={providerRatings} />
-            <ListingMetric
-              label="Active Listings"
-              value={activeListings.length}
-              detail="Visible in current operations"
-            />
-            <ListingMetric
-              label="Remaining"
-              value={totalRemaining}
-              detail="Items still available"
-            />
-            <ListingMetric
-              label="History"
-              value={historicalListings.length}
-              detail="Expired or completed listings"
-            />
+          <section className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-[1.2fr_repeat(3,1fr)]">
+            <div className="col-span-2 lg:col-span-1">
+              <ProviderReputation summary={providerRatings} />
+            </div>
+            <div className="col-span-2 grid grid-cols-2 gap-2 lg:col-span-3 lg:grid-cols-3">
+              <ListingMetric
+                label="Active Listings"
+                value={activeListings.length}
+                detail="Visible in current operations"
+              />
+              <ListingMetric
+                label="Remaining"
+                value={totalRemaining}
+                detail="Items still available"
+              />
+              <ListingMetric
+                label="History"
+                value={historicalListings.length}
+                detail="Expired or completed listings"
+              />
+            </div>
           </section>
         )}
 
@@ -514,7 +519,7 @@ export default function ProviderListingsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <section className="rounded-lg border border-zinc-200 bg-white p-2 shadow-sm sm:p-3">
               <div className="flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
                 {(["active", "history"] as const).map((item) => (
                   <button
@@ -523,7 +528,7 @@ export default function ProviderListingsPage() {
                     onClick={() => setListingView(item)}
                     className={`min-h-10 flex-1 rounded px-3 text-sm font-medium transition ${
                       listingView === item
-                        ? "bg-white text-zinc-950 shadow-sm"
+                        ? "bg-brand text-white shadow-sm"
                         : "text-zinc-600 hover:text-zinc-950"
                     }`}
                   >
@@ -546,7 +551,7 @@ export default function ProviderListingsPage() {
                     key={String(listing.id)}
                     className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
                   >
-                    <FoodImage source={listing} className="h-44" />
+                    <FoodImage source={listing} className="h-36 sm:h-44" />
                     <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs font-medium uppercase text-zinc-500">
@@ -558,7 +563,7 @@ export default function ProviderListingsPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-4 p-5">
+                    <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="text-base font-semibold text-zinc-950">
@@ -583,8 +588,8 @@ export default function ProviderListingsPage() {
                         )}
                       </div>
 
-                      <div className="grid gap-3 text-sm sm:grid-cols-3">
-                        <div>
+                      <div className="grid grid-cols-2 gap-2 text-sm sm:gap-3 sm:grid-cols-3">
+                        <div className="col-span-2 sm:col-span-1">
                           <p className="text-xs font-medium uppercase text-zinc-500">
                             Remaining
                           </p>

@@ -52,40 +52,40 @@ export default function ReviewSummary({
     ].filter(([, value]) => value !== undefined && value !== null);
 
     return (
-      <section className="grid gap-3 sm:grid-cols-2">
-        <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <section className="grid grid-cols-2 gap-2 sm:gap-3">
+        <article className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm sm:p-5">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-zinc-600">Average Rating</p>
+            <p className="text-xs font-semibold leading-4 text-zinc-600 sm:text-sm sm:font-medium">Average Rating</p>
             <span className="flex h-9 w-9 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-700">
               <Star className="h-4 w-4" aria-hidden="true" />
             </span>
           </div>
-          <p className="mt-3 text-3xl font-semibold text-zinc-950">
+          <p className="mt-2 text-2xl font-semibold text-zinc-950 sm:mt-3 sm:text-3xl">
             {averageRating.toFixed(1)}
             <span className="text-base font-medium text-zinc-500"> / 5</span>
           </p>
-          <p className="mt-1 text-sm text-zinc-500">Provider Rating</p>
+          <p className="mt-1 text-xs text-zinc-500 sm:text-sm">Provider Rating</p>
         </article>
-        <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <article className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm sm:p-5">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-zinc-600">Total Reviews</p>
+            <p className="text-xs font-semibold leading-4 text-zinc-600 sm:text-sm sm:font-medium">Total Reviews</p>
             <span className="flex h-9 w-9 items-center justify-center rounded-md border border-sky-200 bg-sky-50 text-sky-700">
               <MessageSquare className="h-4 w-4" aria-hidden="true" />
             </span>
           </div>
-          <p className="mt-3 text-3xl font-semibold text-zinc-950">
+          <p className="mt-2 text-2xl font-semibold text-zinc-950 sm:mt-3 sm:text-3xl">
             {totalReviews}
           </p>
-          <p className="mt-1 text-sm text-zinc-500">Reservation review count</p>
+          <p className="mt-1 text-xs text-zinc-500 sm:text-sm">Reservation review count</p>
         </article>
         {showDimensions &&
           dimensions.map(([label, value]) => (
             <article
               key={String(label)}
-              className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
+              className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm sm:p-5"
             >
-              <p className="text-sm font-medium text-zinc-600">{label}</p>
-              <p className="mt-3 text-2xl font-semibold text-zinc-950">
+              <p className="text-xs font-semibold leading-4 text-zinc-600 sm:text-sm sm:font-medium">{label}</p>
+              <p className="mt-2 text-xl font-semibold text-zinc-950 sm:mt-3 sm:text-2xl">
                 {toNumber(value).toFixed(1)}
                 <span className="text-sm font-medium text-zinc-500"> / 5</span>
               </p>

@@ -21,6 +21,7 @@ import {
   savePaymentSession,
 } from "@/lib/payment-flow";
 import { ratingService } from "@/services/rating.service";
+import { canResumeReservationFetch } from "@/lib/authReady";
 import { reservationService } from "@/services/reservation.service";
 import { useAuthStore } from "@/store/authStore";
 import { useRealtimeStore } from "@/store/realtimeStore";
@@ -128,6 +129,7 @@ export default function ReservationDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const authReady = useAuthStore((state) => canResumeReservationFetch(state));
   const [reservation, setReservation] = useState<ReservationDetails | null>(null);
   const [ratings, setRatings] = useState<ListingRating[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,6 +143,8 @@ export default function ReservationDetailPage() {
   const reservationsById = useRealtimeStore((state) => state.reservations);
 
   useEffect(() => {
+    if (!authReady) return;
+
     let active = true;
 
     async function loadInitialReservation() {
@@ -168,10 +172,10 @@ export default function ReservationDetailPage() {
     return () => {
       active = false;
     };
-  }, [params.id]);
+  }, [authReady, params.id]);
 
   useEffect(() => {
-    if (!reservationVersion) return;
+    if (!authReady || !reservationVersion) return;
     const update = reservationsById[String(params.id)];
     if (!update) return;
     let active = true;
@@ -196,7 +200,7 @@ export default function ReservationDetailPage() {
     return () => {
       active = false;
     };
-  }, [params.id, reservationVersion, reservationsById]);
+  }, [authReady, params.id, reservationVersion, reservationsById]);
 
   const loadReservation = async (showLoading = true) => {
     try {

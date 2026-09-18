@@ -186,7 +186,7 @@ export default function UserHistoryPage() {
           </div>
           <Link
             href="/profile"
-            className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-50 sm:w-auto"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Back

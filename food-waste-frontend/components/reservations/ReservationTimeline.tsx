@@ -76,9 +76,9 @@ export default function ReservationTimeline({
   const safeIndex = currentIndex >= 0 ? currentIndex : 1;
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-      <h2 className="text-base font-semibold text-zinc-950">Reservation Timeline</h2>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="rounded-lg border border-zinc-200 bg-white p-2 shadow-sm sm:p-5">
+      <h2 className="text-sm font-semibold text-zinc-950 sm:text-base">Reservation Timeline</h2>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:mt-4 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
         {steps.map((step, index) => {
           const isDone = index <= safeIndex;
           const isCurrent = step.key === currentState;
@@ -86,7 +86,7 @@ export default function ReservationTimeline({
           return (
             <div
               key={step.key}
-              className={`rounded-md border p-3 text-sm font-medium ${getStepClasses({
+              className={`flex min-h-10 items-center rounded-md border px-2 py-1.5 text-[11px] font-medium leading-tight sm:p-3 sm:text-sm ${getStepClasses({
                 isCurrent,
                 isDone,
                 key: step.key,

@@ -280,7 +280,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
           </div>
           <Link
             href="/reservations"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover self-start"
           >
             Reservations
           </Link>
@@ -295,21 +295,21 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
           </div>
         ) : reservation ? (
           <>
-            <section className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center">
-              <div>
-                <p className="text-xs font-medium uppercase text-zinc-500">
-                  Backend payment state
+            <section className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  payment state
                 </p>
                 <div className="mt-2">
                   <PaymentStatusBadge state={paymentState} />
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => loadReservation(true)}
                   disabled={processing}
-                  className="rounded-md border border-border-strong bg-surface px-4 py-2 text-sm font-medium text-text-primary transition hover:bg-surface-muted disabled:opacity-50"
+                  className="inline-flex min-h-10 items-center justify-center rounded-md border border-border-strong bg-surface px-4 py-2 text-sm font-medium text-text-primary transition hover:bg-surface-muted disabled:opacity-50"
                 >
                   Refresh
                 </button>
@@ -318,7 +318,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
                     type="button"
                     onClick={retryPayment}
                     disabled={processing}
-                    className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
+                    className="inline-flex min-h-10 items-center justify-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover disabled:opacity-50"
                   >
                     {processing ? "Processing..." : "Retry Payment"}
                   </button>
@@ -326,7 +326,7 @@ export default function PaymentResultView({ expected }: PaymentResultViewProps) 
                 {!canRetryPayment && reservation.listing_id && paymentState !== "paid" && (
                   <Link
                     href={`/food/${String(reservation.listing_id)}`}
-                    className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover"
+                    className="inline-flex min-h-10 items-center justify-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-hover"
                   >
                     Reserve Again
                   </Link>

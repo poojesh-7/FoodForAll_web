@@ -424,7 +424,7 @@ export default function FoodDetailPage() {
       <div className="mx-auto max-w-6xl space-y-6">
         <Link
           href="/food"
-          className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-semibold text-text-primary transition hover:border-border-strong hover:bg-surface-muted"
+          className="inline-flex min-h-10 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to Food

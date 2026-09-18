@@ -197,21 +197,33 @@ function DetailItem({
   label,
   value,
   emphasis = false,
+  accent = "neutral",
+  className = "",
 }: {
   icon: ReactNode;
   label: string;
   value: ReactNode;
   emphasis?: boolean;
+  accent?: "amber" | "neutral";
+  className?: string;
 }) {
   return (
     <div
-      className={`rounded-md border p-3 ${
-        emphasis
-          ? "border-amber-200 bg-amber-50"
+      className={`h-full rounded-md border p-2.5 sm:h-auto sm:p-3 ${
+        accent === "amber"
+          ? "border-amber-200/80 bg-amber-50/70 sm:border-border sm:bg-surface-muted"
+          : emphasis
+            ? "border-amber-200 bg-amber-50"
           : "border-border bg-surface-muted"
-      }`}
+      } ${className}`}
     >
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
+      <div
+        className={`flex items-center gap-1.5 text-[11px] font-medium uppercase sm:gap-2 sm:text-xs ${
+          accent === "amber"
+            ? "text-amber-700 sm:text-zinc-500"
+            : "text-zinc-500"
+        }`}
+      >
         {icon}
         {label}
       </div>
@@ -376,8 +388,8 @@ export default function ReservationCard({
           <PaymentPendingNotice remainingMs={paymentRemainingMs} />
         )}
 
-        <div className="grid gap-2 border-y border-border py-3 sm:gap-3 md:grid-cols-3">
-          <div className="col-span-2 md:col-span-1">
+        <div className="grid grid-cols-2 gap-2 border-y border-border py-3 sm:gap-3">
+          {/* <div className="col-span-2 md:col-span-1">
             <SignalTile
               icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
               label="Status"
@@ -385,14 +397,14 @@ export default function ReservationCard({
               detail={getTaskProgress(reservation, status)}
               tone={getStatusTone(status)}
             />
-          </div>
+          </div> */}
           {pickupCodeVisible && (
             <div>
               <SignalTile
                 icon={<Ticket className="h-4 w-4" aria-hidden="true" />}
                 label="Pickup Code"
                 value={displayValue(reservation.pickup_code)}
-                detail="Give this code only after receiving the food to avoid disputes."
+                detail="Give this code only after receiving the food."
                 tone={reservation.pickup_code ? "amber" : "zinc"}
               />
             </div>
@@ -412,32 +424,40 @@ export default function ReservationCard({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
-          <DetailItem
-            icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
-            label="Quantity"
-            value={formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
-          />
-          <DetailItem
-            icon={<Clock3 className="h-3.5 w-3.5" aria-hidden="true" />}
-            label="Pickup Deadline"
-            value={formatFoodDate(reservation.pickup_end_time)}
-            emphasis={pickupUrgent}
-          />
-          {cancellationGuidance && (
+        <div className="grid grid-cols-2 items-stretch gap-2 sm:gap-3 lg:grid-cols-3">
+          <div className="order-2 min-w-0 sm:order-none">
             <DetailItem
-              icon={<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
-              label="Cancellation Window"
-              value={
-                <span>
-                  {cancellationRemaining}
-                  <span className="mt-1 block text-xs font-medium text-zinc-600">
-                    {cancellationGuidance}
-                  </span>
-                </span>
-              }
-              emphasis
+              icon={<Package className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Quantity"
+              value={formatQuantityWithUnit(reservation.quantity_reserved, reservation)}
             />
+          </div>
+          <div className="order-1 col-span-2 min-w-0 sm:order-none sm:col-span-1">
+            <DetailItem
+              icon={<Clock3 className="h-3.5 w-3.5" aria-hidden="true" />}
+              label="Pickup Deadline"
+              value={formatFoodDate(reservation.pickup_end_time)}
+              emphasis={pickupUrgent}
+              accent="amber"
+            />
+          </div>
+          {cancellationGuidance && (
+            <div className="order-3 min-w-0 sm:order-none">
+              <DetailItem
+                icon={<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
+                label="Cancellation Window"
+                value={
+                  <span>
+                    {cancellationRemaining}
+                    {/* <span className="mt-1 block text-xs font-medium text-zinc-600">
+                      {cancellationGuidance}
+                    </span> */}
+                  </span>
+                }
+                emphasis
+                accent="amber"
+              />
+            </div>
           )}
           {showDeposit && (
             <DetailItem

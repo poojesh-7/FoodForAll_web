@@ -15,12 +15,12 @@ type MetaChipProps = {
 };
 
 const toneClasses: Record<NonNullable<SignalTileProps["tone"]>, string> = {
-  default: "border-zinc-200 bg-white text-zinc-700",
-  amber: "border-amber-200 bg-amber-50 text-amber-800",
-  emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  sky: "border-sky-200 bg-sky-50 text-sky-700",
-  red: "border-red-200 bg-red-50 text-red-700",
-  zinc: "border-zinc-200 bg-zinc-50 text-zinc-700",
+  default: "border-zinc-200/80 bg-white text-zinc-700 sm:border-zinc-200 sm:bg-white",
+  amber: "border-amber-200/80 bg-amber-50/70 text-amber-800 sm:border-amber-200 sm:bg-amber-50",
+  emerald: "border-emerald-200/80 bg-emerald-50/70 text-emerald-700 sm:border-emerald-200 sm:bg-emerald-50",
+  sky: "border-sky-200/80 bg-sky-50/70 text-sky-700 sm:border-sky-200 sm:bg-sky-50",
+  red: "border-red-200/80 bg-red-50/70 text-red-700 sm:border-red-200 sm:bg-red-50",
+  zinc: "border-zinc-200/80 bg-zinc-50/70 text-zinc-700 sm:border-zinc-200 sm:bg-zinc-50",
 };
 
 export function SignalTile({
@@ -31,8 +31,8 @@ export function SignalTile({
   tone = "default",
 }: SignalTileProps) {
   return (
-    <div className={`rounded-md border p-3 sm:p-4 ${toneClasses[tone]}`}>
-      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase leading-4 tracking-wide">
+    <div className={`rounded-md border p-2 sm:p-4 ${toneClasses[tone]}`}>
+      <div className="flex items-center gap-1 text-[11px] font-semibold uppercase leading-4 tracking-wide sm:gap-2">
         <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
           {icon}
         </span>

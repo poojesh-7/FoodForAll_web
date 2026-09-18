@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
 import PaymentStatusBadge from "@/components/payments/PaymentStatusBadge";
 import RatingForm from "@/components/ratings/RatingForm";
@@ -380,7 +381,7 @@ export default function ReservationDetailPage() {
 
   return (
     <main className="min-h-screen bg-background px-4 py-5 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-6xl flex-col gap-6">
         <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-text-primary">
@@ -390,12 +391,6 @@ export default function ReservationDetailPage() {
               Keep the food, pickup window, and next action together for a clear handoff.
             </p>
           </div>
-          <Link
-            href="/reservations"
-            className="inline-flex min-h-10 items-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-primary transition hover:border-border-strong hover:bg-surface-muted"
-          >
-            Back
-          </Link>
         </header>
 
         {error && <OperationalFeedbackBlock title={error} tone="error" />}
@@ -407,7 +402,7 @@ export default function ReservationDetailPage() {
           </div>
         ) : reservation ? (
           <>
-            <section className="flex flex-col justify-between gap-4 rounded-lg border border-border bg-surface p-5 shadow-subtle sm:flex-row sm:items-center sm:p-6">
+            {/* <section className="flex flex-col justify-between gap-4 rounded-lg border border-border bg-surface p-5 shadow-subtle sm:flex-row sm:items-center sm:p-6">
               <div>
                 <p className="text-xs font-medium uppercase text-zinc-500">
                   Payment state
@@ -436,8 +431,7 @@ export default function ReservationDetailPage() {
                   </button>
                 )}
               </div>
-            </section>
-            <ReservationTimeline reservation={reservation} />
+            </section> */}
             <ReservationCard
               reservation={reservation}
               actions={
@@ -493,7 +487,6 @@ export default function ReservationDetailPage() {
                   </h2>
                   <p className="mt-1 text-sm text-zinc-600">
                     Flag unsafe, fake, unavailable, or abusive pickup experiences.
-                    
                   </p>
                 </div>
                 <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 px-5 py-3 text-[17px] leading-6 text-slate-800">
@@ -504,7 +497,7 @@ export default function ReservationDetailPage() {
                     <strong>“Food not received”</strong> when you visited the{" "}
                     <strong>outlet</strong> or <strong>can’t cancel</strong>.
                   </p>
-              </div>
+                </div>
                 <ProviderReportForm
                   reservationId={reservation.id}
                   onError={setError}
@@ -512,6 +505,16 @@ export default function ReservationDetailPage() {
                 />
               </section>
             )}
+            <ReservationTimeline reservation={reservation} />
+            <div className="mt-auto pt-2">
+              <Link
+                href="/reservations"
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back
+              </Link>
+            </div>
             <ReservationCancelModal
               open={cancelModalOpen}
               onClose={() => {

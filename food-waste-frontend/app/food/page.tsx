@@ -107,22 +107,22 @@ export default function FoodMarketplacePage() {
   return (
     <main className="min-h-screen bg-background px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl space-y-8">
-        <header className="flex flex-col gap-6 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between">
+        <header className="flex flex-col gap-2 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-2xl">
             <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand">
-              Food rescue marketplace
+               Discover good food that deserves another chance.
             </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-text-primary sm:text-4xl">
+            {/* <h1 className="text-3xl font-semibold tracking-tight text-text-primary sm:text-4xl">
               Discover good food that deserves another chance.
             </h1>
             <p className="mt-3 max-w-xl text-base leading-7 text-text-secondary">
               Find fresh surplus from nearby restaurants, priced for a useful
               second moment.
-            </p>
+            </p> */}
           </div>
           <Link
             href="/food/nearby"
-            className="inline-flex min-h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-semibold text-text-primary transition hover:border-brand hover:bg-brand-soft"
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-brand px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover self-start"
           >
             Explore nearby
           </Link>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { LocateFixed, MapPin, Search } from "lucide-react";
+import { ArrowLeft, LocateFixed, MapPin, Search } from "lucide-react";
 import FoodCard from "@/components/FoodCard";
 import ListingDiscoveryControls from "@/components/ListingDiscoveryControls";
 import OperationalFeedbackBlock from "@/components/OperationalFeedbackBlock";
@@ -130,8 +130,9 @@ export default function NearbyFoodPage() {
           </div>
           <Link
             href="/food"
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover self-start"
           >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             All Food
           </Link>
         </div>

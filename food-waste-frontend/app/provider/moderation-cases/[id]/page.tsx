@@ -338,7 +338,7 @@ export default function ProviderModerationCaseDetailPage() {
       <div className="mx-auto max-w-7xl space-y-5">
         <Link
           href="/provider/moderation-cases"
-          className="inline-flex items-center gap-2 text-sm font-medium text-zinc-700 transition hover:text-zinc-950"
+          className="inline-flex items-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Moderation cases

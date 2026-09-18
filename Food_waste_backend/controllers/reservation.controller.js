@@ -56,6 +56,9 @@ const {
 const {
   ensureReservationPaymentContextSchema,
 } = require("../shared/services/reservationPaymentContext.service");
+const {
+  populateReservationPickupCodes,
+} = require("../shared/services/reservationPickupCodes");
 const { recordReservationCreated } = require("../shared/services/metrics.service");
 const {
   evaluateReservationSpamGuard,
@@ -299,6 +302,8 @@ exports.createReservation = async (req, res) => {
           quantity: quantityValue,
         });
 
+        const initialCodes = populateReservationPickupCodes({});
+
         const reservationResult = await client.query(
           `
           INSERT INTO reservations
@@ -310,7 +315,7 @@ exports.createReservation = async (req, res) => {
             listing_id,
             req.user.id,
             quantityValue,
-            null,
+            initialCodes.pickup_code,
             foodAmount,
             processingFee,
             totalPaid,

@@ -135,7 +135,7 @@ export default function ReservationCancelModal({
                       workflow state.
                     </li>
                     <li>
-                      Volunteer or provider operations may already be active.
+                      You cannot reserve this listing again.
                     </li>
                     <li>This action cannot be instantly reversed.</li>
                   </ul>

@@ -337,7 +337,14 @@ export default function ReservationCard({
   const showDeposit = depositAmount > 0;
   const restaurantName = getRestaurantDisplayName(reservation);
   const distance = formatDistanceKm(reservation);
-  const pickupCodeVisible = !providerView && isPickupCodeVisible(reservation);
+  const paidAndReservedWithCode =
+    reservation.payment_status === "paid" &&
+    String(reservation.status ?? "").toLowerCase() === "reserved" &&
+    Boolean(reservation.pickup_code);
+
+  const pickupCodeVisible =
+    !providerView &&
+    (paidAndReservedWithCode || isPickupCodeVisible(reservation));
   const cancellationGuidance = !providerView
     ? getCancellationGuidance(reservation)
     : null;

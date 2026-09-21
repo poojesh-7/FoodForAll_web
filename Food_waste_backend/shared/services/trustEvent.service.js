@@ -181,6 +181,29 @@ async function appendTrustEventIfMissing(input, options = {}) {
   return appendTrustEvent(input, options);
 }
 
+async function findExistingTrustEventKeys(eventKeys, db = pool) {
+  const keys = [
+    ...new Set(
+      (eventKeys || [])
+        .map((eventKey) => compactText(eventKey, 240))
+        .filter(Boolean)
+    ),
+  ];
+
+  if (!keys.length) return new Set();
+
+  const result = await db.query(
+    `
+    SELECT event_key
+    FROM trust_events
+    WHERE event_key = ANY($1::text[])
+    `,
+    [keys]
+  );
+
+  return new Set(result.rows.map((row) => row.event_key));
+}
+
 async function claimTrustEvents(client, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit || 25), 100));
   const eventKey = compactText(options.eventKey, 240);
@@ -467,6 +490,7 @@ module.exports = {
   claimTrustEvents,
   createTrustEventIfMissing,
   enqueueTrustProcessing,
+  findExistingTrustEventKeys,
   getTrustEvents,
   getTrustProcessingStats,
   getTrustSubject,

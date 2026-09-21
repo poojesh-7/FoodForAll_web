@@ -2,7 +2,9 @@ const pool = require("../config/db");
 const logger = require("../utils/logger");
 const {
   SYSTEM_SUBJECT_ID,
+  appendTrustEvent,
   appendTrustEventIfMissing,
+  findExistingTrustEventKeys,
   isUuid,
 } = require("./trustEvent.service");
 const {
@@ -497,17 +499,62 @@ function buildListingTrustEvents(row) {
 }
 
 async function emitBuiltEvents(events, options = {}) {
-  const append = options.appendTrustEvent || appendTrustEventIfMissing;
+  const skipKnownEventKeys = options.skipKnownEventKeys === true;
+  const append =
+    options.appendTrustEvent ||
+    (skipKnownEventKeys ? appendTrustEvent : appendTrustEventIfMissing);
   const results = [];
+  const resultByEventKey = new Map();
+  const existingEventKeys = skipKnownEventKeys
+    ? await findExistingTrustEventKeys(
+        events.map((event) => event?.eventKey),
+        options.db || pool
+      )
+    : new Set();
 
   for (const event of events) {
     const startedAt = Date.now();
-    const result = await append(event, {
-      db: options.db,
-      queue: options.queue,
-      enqueue: options.enqueue,
-      recordOperationalEvent: false,
-    });
+    const priorResult = skipKnownEventKeys
+      ? resultByEventKey.get(event.eventKey)
+      : null;
+    let result = priorResult;
+
+    if (!result) {
+      if (existingEventKeys.has(event.eventKey)) {
+        result = { inserted: false, event: null };
+        incrementCounter("food_rescue_trust_events_ingested_total", {
+          event_type: event.eventType,
+          subject_type: event.subjectType,
+          result: "duplicate",
+        });
+        incrementCounter("food_rescue_trust_duplicate_events_total", {
+          event_type: event.eventType,
+          subject_type: event.subjectType,
+        });
+      } else {
+        result = await append(event, {
+          db: options.db,
+          queue: options.queue,
+          enqueue: options.enqueue,
+          recordOperationalEvent: false,
+        });
+      }
+      if (skipKnownEventKeys) {
+        resultByEventKey.set(event.eventKey, result);
+      }
+    } else if (skipKnownEventKeys) {
+      result = { inserted: false, event: null };
+      incrementCounter("food_rescue_trust_events_ingested_total", {
+        event_type: event.eventType,
+        subject_type: event.subjectType,
+        result: "duplicate",
+      });
+      incrementCounter("food_rescue_trust_duplicate_events_total", {
+        event_type: event.eventType,
+        subject_type: event.subjectType,
+      });
+    }
+
     const outcome = result.inserted ? "emitted" : "deduplicated";
 
     incrementCounter("food_rescue_trust_derived_events_total", {
@@ -737,7 +784,7 @@ async function deriveLifecycleTrustEvents(options = {}) {
 
   for (const [source, derive] of sources) {
     try {
-      const results = await derive(options);
+      const results = await derive({ ...options, skipKnownEventKeys: true });
       summary.push({
         source,
         emitted: results.filter((result) => result.inserted).length,

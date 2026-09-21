@@ -2343,3 +2343,169 @@ test("emitBuiltEvents reports duplicate lifecycle emissions without re-enqueuein
   assert.equal(first.every((result) => result.inserted), true);
   assert.equal(duplicate.every((result) => !result.inserted), true);
 });
+
+function lifecycleEventsForBatchTests() {
+  return buildReservationTrustEvents({
+    id: RESERVATION_ID,
+    user_id: USER_ID,
+    provider_id: PROVIDER_ID,
+    pickup_type: "self_pickup",
+    status: "picked_up",
+    task_status: "picked_up",
+    completed_at: new Date("2026-01-01T00:00:00.000Z"),
+  });
+}
+
+function existingTrustEventKeyDb(existingKeys = []) {
+  const calls = [];
+  const existing = new Set(existingKeys);
+
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      assert.match(String(sql), /SELECT event_key[\s\S]*FROM trust_events/);
+      return {
+        rows: (params[0] || [])
+          .filter((eventKey) => existing.has(eventKey))
+          .map((event_key) => ({ event_key })),
+      };
+    },
+  };
+}
+
+test("lifecycle batch check skips all existing keys without INSERT attempts", async () => {
+  const events = lifecycleEventsForBatchTests();
+  const db = existingTrustEventKeyDb(events.map((event) => event.eventKey));
+  let appendCalls = 0;
+
+  const results = await emitBuiltEvents(events, {
+    db,
+    skipKnownEventKeys: true,
+    appendTrustEvent: async () => {
+      appendCalls += 1;
+      return { inserted: true };
+    },
+  });
+
+  assert.equal(db.calls.length, 1);
+  assert.deepEqual(db.calls[0].params[0], events.map((event) => event.eventKey));
+  assert.equal(appendCalls, 0);
+  assert.equal(results.every((result) => !result.inserted), true);
+});
+
+test("lifecycle batch check appends every new key", async () => {
+  const events = lifecycleEventsForBatchTests();
+  const db = existingTrustEventKeyDb();
+  const attemptedKeys = [];
+
+  const results = await emitBuiltEvents(events, {
+    db,
+    skipKnownEventKeys: true,
+    appendTrustEvent: async (event) => {
+      attemptedKeys.push(event.eventKey);
+      return { inserted: true, event };
+    },
+  });
+
+  assert.equal(db.calls.length, 1);
+  assert.deepEqual(attemptedKeys, events.map((event) => event.eventKey));
+  assert.equal(results.every((result) => result.inserted), true);
+});
+
+test("lifecycle batch check appends only keys absent from trust_events", async () => {
+  const events = lifecycleEventsForBatchTests();
+  const db = existingTrustEventKeyDb([events[0].eventKey]);
+  const attemptedKeys = [];
+
+  const results = await emitBuiltEvents(events, {
+    db,
+    skipKnownEventKeys: true,
+    appendTrustEvent: async (event) => {
+      attemptedKeys.push(event.eventKey);
+      return { inserted: true, event };
+    },
+  });
+
+  assert.deepEqual(attemptedKeys, [events[1].eventKey]);
+  assert.equal(results[0].inserted, false);
+  assert.equal(results[1].inserted, true);
+});
+
+test("lifecycle batch check reads and appends duplicate built keys once", async () => {
+  const [event] = lifecycleEventsForBatchTests();
+  const events = [event, { ...event }];
+  const db = existingTrustEventKeyDb();
+  let appendCalls = 0;
+
+  const results = await emitBuiltEvents(events, {
+    db,
+    skipKnownEventKeys: true,
+    appendTrustEvent: async (candidate) => {
+      appendCalls += 1;
+      return { inserted: true, event: candidate };
+    },
+  });
+
+  assert.deepEqual(db.calls[0].params[0], [event.eventKey]);
+  assert.equal(appendCalls, 1);
+  assert.equal(results[0].inserted, true);
+  assert.equal(results[1].inserted, false);
+});
+
+test("lifecycle batch check retains ON CONFLICT protection for a concurrent insert race", async () => {
+  const [event] = lifecycleEventsForBatchTests();
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (String(sql).includes("SELECT event_key")) return { rows: [] };
+      if (String(sql).includes("INSERT INTO trust_events")) return { rows: [] };
+      throw new Error("Unexpected query");
+    },
+  };
+
+  const results = await emitBuiltEvents([event], {
+    db,
+    skipKnownEventKeys: true,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.match(String(calls[1].sql), /ON CONFLICT \(event_key\) DO NOTHING/);
+  assert.equal(results[0].inserted, false);
+});
+
+test("synchronous emitBuiltEvents callers do not use the lifecycle batch lookup", async () => {
+  const events = lifecycleEventsForBatchTests();
+  let appendCalls = 0;
+
+  const results = await emitBuiltEvents(events, {
+    db: {
+      async query() {
+        throw new Error("Synchronous emit should not pre-check event keys");
+      },
+    },
+    appendTrustEvent: async (event) => {
+      appendCalls += 1;
+      return { inserted: true, event };
+    },
+  });
+
+  assert.equal(appendCalls, events.length);
+  assert.equal(results.every((result) => result.inserted), true);
+});
+
+test("lifecycle batch check does not query trust_events for an empty event batch", async () => {
+  const db = {
+    async query() {
+      throw new Error("Empty event batches must not query trust_events");
+    },
+  };
+
+  const results = await emitBuiltEvents([], {
+    db,
+    skipKnownEventKeys: true,
+  });
+
+  assert.deepEqual(results, []);
+});

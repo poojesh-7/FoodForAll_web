@@ -33,7 +33,7 @@ const {
   buildPaymentFinancialTerms,
 } = require("./financialLedger.service");
 
-const PROCESSING_FEE = 2;
+const PROCESSING_FEE = 5;
 const PAYMENT_PENDING_REMINDER_DELAY_MS = 7 * 60 * 1000;
 
 function roundMoney(value) {

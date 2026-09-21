@@ -407,7 +407,7 @@ export default function FoodDetailPage() {
   const foodAmount = pricingPreview?.foodAmount ?? fallbackFoodAmount;
   const depositAmount = pricingPreview?.depositAmount ?? 0;
   const processingFee =
-    pricingPreview?.processingFee ?? (foodAmount > 0 ? 2 : 0);
+    pricingPreview?.processingFee ?? (foodAmount > 0 ? 5 : 0);
   const totalAmount =
     pricingPreview?.totalAmount ?? foodAmount + depositAmount + processingFee;
   const dietaryTags = listing ? getDietaryTags(listing) : [];

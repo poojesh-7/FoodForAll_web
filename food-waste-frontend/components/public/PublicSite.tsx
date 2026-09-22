@@ -25,7 +25,7 @@ export function PublicFooter() {
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 text-sm text-zinc-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
         <div>
           <p className="font-semibold text-zinc-950">FoodForAll</p>
-          <p className="mt-1">Reducing food waste through responsible rescue operations.</p>
+          <p className="mt-1">Good food. Better prices. Less waste.</p>
         </div>
         <nav className="flex flex-wrap gap-x-4 gap-y-2 font-medium">
           {publicLinks.map((link) => (

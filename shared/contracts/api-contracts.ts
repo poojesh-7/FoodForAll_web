@@ -911,11 +911,13 @@ export interface AdminMonthlySettlementQuery {
   provider_id?: DbId;
   year?: string | number;
   month?: string | number; // 1-12, or empty/null for all months
+  cutoffDate?: string;
 }
 
 export interface BatchSettleMonthRequest {
   year: number;
   month: number; // 1-12
+  cutoff_date?: string | null;
   payment_reference?: string | null;
   notes?: string | null;
 }

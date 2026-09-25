@@ -1286,6 +1286,7 @@ exports.getMonthlySettlementConsole = async (req, res) => {
       providerId,
       year: req.query.year,
       month: req.query.month,
+      cutoffDate: req.query.cutoffDate || req.query.cutoff_date,
     });
     res.json({ settlements });
   } catch (err) {
@@ -1537,11 +1538,25 @@ exports.settleMonthly = async (req, res) => {
     return res.status(400).json({ error: "Provider id is invalid" });
   }
 
-  const { year, month, paid_amount, payment_reference, notes } = req.body;
+  const {
+    year,
+    month,
+    cutoff_date,
+    paid_amount,
+    payment_reference,
+    notes,
+  } = req.body;
   if (!year || !month || month < 1 || month > 12) {
     return res
       .status(400)
       .json({ error: "Year and month (1-12) are required" });
+  }
+  const cutoffDate = cutoff_date ? new Date(`${cutoff_date}T23:59:59.999Z`) : null;
+  if (cutoff_date && !/^\d{4}-\d{2}-\d{2}$/.test(String(cutoff_date))) {
+    return res.status(400).json({ error: "Cutoff date must be YYYY-MM-DD" });
+  }
+  if (cutoff_date && Number.isNaN(cutoffDate.getTime())) {
+    return res.status(400).json({ error: "Cutoff date is invalid" });
   }
 
   try {
@@ -1583,6 +1598,7 @@ exports.settleMonthly = async (req, res) => {
         AND ps.status = ANY($2::text[])
         AND EXTRACT(YEAR FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $3
         AND EXTRACT(MONTH FROM COALESCE(ps.paid_at, ps.updated_at, ps.created_at))::int = $4
+        AND ($5::timestamp IS NULL OR COALESCE(ps.paid_at, ps.updated_at, ps.created_at) < $5::timestamp)
       ORDER BY ps.created_at ASC
       FOR UPDATE
       `,
@@ -1591,6 +1607,7 @@ exports.settleMonthly = async (req, res) => {
         ["pending", "processing", "allocated", "batched"],
         Number(year),
         Number(month),
+        cutoffDate,
       ]
     );
 
@@ -1638,6 +1655,7 @@ exports.settleMonthly = async (req, res) => {
         AND COALESCE(ps.manual_carry_forward_amount, 0) > 0
         AND COALESCE(ps.paid_at, ps.updated_at, ps.created_at) <
           (make_date($2, $3, 1) + INTERVAL '1 month')
+        AND ($4::timestamp IS NULL OR COALESCE(ps.paid_at, ps.updated_at, ps.created_at) < $4::timestamp)
         AND EXISTS (
           SELECT 1
           FROM financial_ledger_entries fle
@@ -1652,6 +1670,7 @@ exports.settleMonthly = async (req, res) => {
           providerId,
           Number(year),
           Number(month),
+          cutoffDate,
         ],
     );
 

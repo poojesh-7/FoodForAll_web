@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import type { DbId } from "@shared/contracts/api-contracts";
 import { adminService } from "@/services/admin.service";
@@ -44,7 +44,57 @@ export function SettleMonthModal({
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cutoffDate, setCutoffDate] = useState("");
+  const [preview, setPreview] = useState({
+    recordCount,
+    totalAmount: Number(totalAmount),
+    uncarriedRefundAmount: Number(uncarriedRefundAmount),
+  });
+
+  const loadPreview = useCallback(async (selectedDate: string) => {
+    if (!selectedDate) return;
+
+    try {
+      setPreviewLoading(true);
+      const result = await adminService.getMonthlySettlementConsole({
+        status: "all",
+        providerId,
+        year,
+        month,
+        cutoffDate: selectedDate,
+        limit: 1,
+      });
+      const row = result.monthly_settlements[0];
+      setPreview({
+        recordCount: row?.record_count || 0,
+        totalAmount: Number(row?.eligible_payable_amount || 0),
+        uncarriedRefundAmount: Number(row?.uncarried_refund_amount || 0),
+      });
+    } catch (err) {
+      setError(adminService.getErrorMessage(err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [month, providerId, year]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const today = new Date();
+    const todayValue = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, "0"),
+      String(today.getDate()).padStart(2, "0"),
+    ].join("-");
+    setCutoffDate(todayValue);
+    setPreview({
+      recordCount,
+      totalAmount: Number(totalAmount),
+      uncarriedRefundAmount: Number(uncarriedRefundAmount),
+    });
+    void loadPreview(todayValue);
+  }, [isOpen, loadPreview, recordCount, totalAmount, uncarriedRefundAmount]);
 
   const handleSubmit = async () => {
     if (!reference.trim()) {
@@ -52,7 +102,7 @@ export function SettleMonthModal({
       return;
     }
 
-    if (Number(uncarriedRefundAmount || 0) > 0) {
+    if (Number(preview.uncarriedRefundAmount || 0) > 0) {
       setError(
         "Pending refunded records must be carried forward before settling this month.",
       );
@@ -64,13 +114,14 @@ export function SettleMonthModal({
       setError("");
 
       await adminService.settleMonth(providerId, year, month, {
-        paid_amount: Number(totalAmount),
+        paid_amount: Number(preview.totalAmount),
+        cutoff_date: cutoffDate,
         payment_reference: reference.trim(),
         notes: notes.trim(),
       });
 
       toast.success(
-        `Settled ${recordCount} records for ${monthLabel}`
+        `Settled ${preview.recordCount} records for ${monthLabel}`
       );
       setReference("");
       setNotes("");
@@ -103,6 +154,23 @@ export function SettleMonthModal({
             </div>
           )}
 
+          <div>
+            <label className="block text-sm font-medium text-zinc-700">
+              Pay records up to
+            </label>
+            <input
+              type="date"
+              value={cutoffDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(event) => {
+                setCutoffDate(event.target.value);
+                void loadPreview(event.target.value);
+              }}
+              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-950"
+              disabled={loading || previewLoading}
+            />
+          </div>
+
           <div className="space-y-2 rounded-md bg-zinc-50 p-3">
             <div className="flex justify-between">
               <span className="text-sm text-zinc-600">Provider:</span>
@@ -114,14 +182,14 @@ export function SettleMonthModal({
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-zinc-600">Records:</span>
-              <span className="font-medium text-zinc-950">{recordCount}</span>
+              <span className="font-medium text-zinc-950">{preview.recordCount}</span>
             </div>
             <div className="border-t border-zinc-200 pt-2 flex justify-between">
               <span className="text-sm font-medium text-zinc-700">
                 Total Payable:
               </span>
               <span className="text-lg font-semibold text-zinc-950">
-                {formatCurrency(totalAmount)}
+                {previewLoading ? "Calculating..." : formatCurrency(preview.totalAmount)}
               </span>
             </div>
           </div>
@@ -164,7 +232,7 @@ export function SettleMonthModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={loading || !reference.trim()}
+            disabled={loading || previewLoading || !reference.trim() || !cutoffDate}
             className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
           >
             {loading ? "Settling..." : "Mark as Paid"}

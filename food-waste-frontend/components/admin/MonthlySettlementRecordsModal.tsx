@@ -9,9 +9,7 @@ import { CarryForwardModal } from "./CarryForwardModal";
 
 interface MonthlySettlementRecordsModalProps {
   providerId: DbId;
-  month: number; // 1-12
-  year: number;
-  monthLabel: string;
+  year?: number;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -39,9 +37,7 @@ function settlementAmountLabel(record: AdminProviderSettlementRow) {
 
 export function MonthlySettlementRecordsModal({
   providerId,
-  month,
   year,
-  monthLabel,
   isOpen,
   onClose,
 }: MonthlySettlementRecordsModalProps) {
@@ -65,7 +61,6 @@ export function MonthlySettlementRecordsModal({
       const result = await adminService.getAdminSettlementRecords({
         providerId,
         year,
-        month,
         limit: 10,
         page: pageNumber,
       });
@@ -80,7 +75,7 @@ export function MonthlySettlementRecordsModal({
     } finally {
       setLoading(false);
     }
-  }, [month, providerId, year]);
+  }, [providerId, year]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -104,7 +99,7 @@ export function MonthlySettlementRecordsModal({
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-zinc-950">
-                  Settlement Records - {monthLabel}
+                  Settlement Records - {year || "All Years"}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
                   Showing {recordCount} records
@@ -133,7 +128,7 @@ export function MonthlySettlementRecordsModal({
             ) : records.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-zinc-600">
-                  No settlement records found for {monthLabel}
+                  No settlement records found for {year || "All Years"}
                 </p>
               </div>
             ) : (

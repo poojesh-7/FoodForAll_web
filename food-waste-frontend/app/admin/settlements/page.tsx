@@ -1297,9 +1297,7 @@ export default function AdminSettlementsPage() {
     
     <MonthlySettlementRecordsModal
       providerId={recordsModalState.providerId || ""}
-      month={recordsModalState.month}
-      year={recordsModalState.year}
-      monthLabel={recordsModalState.monthLabel}
+      year={selectedYear ? Number(selectedYear) : undefined}
       isOpen={recordsModalState.isOpen}
       onClose={() => setRecordsModalState({ ...recordsModalState, isOpen: false })}
     />

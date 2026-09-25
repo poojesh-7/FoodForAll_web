@@ -2257,6 +2257,7 @@ async function listAdminMonthlySettlements({
   providerId,
   year,
   month,
+  cutoffDate,
   ensureSchema = true,
 } = {}) {
   if (ensureSchema) {
@@ -2269,6 +2270,9 @@ async function listAdminMonthlySettlements({
   const searchPattern = normalizeAdminSettlementSearch(search);
   const selectedProviderId = trimText(providerId || "", 80) || null;
   const rowLimit = normalizeLimit(limit);
+  const cutoffTimestamp = cutoffDate
+    ? new Date(`${cutoffDate}T23:59:59.999Z`)
+    : null;
   // Build summary for provider list (same as regular settlements)
   const summaryResult = await client.query(
     `
@@ -2388,7 +2392,7 @@ async function listAdminMonthlySettlements({
     client,
     status: "all",
     verificationStatus,
-    limit: rowLimit,
+    limit: Math.max(rowLimit, 500),
     search,
     providerId,
     ensureSchema: false,
@@ -2406,6 +2410,7 @@ async function listAdminMonthlySettlements({
     if (!Number.isFinite(date.getTime())) continue;
     if (year && date.getFullYear() !== Number(year)) continue;
     if (month && date.getMonth() + 1 !== Number(month)) continue;
+    if (cutoffTimestamp && date > cutoffTimestamp) continue;
 
     const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     const monthMapKey = `${record.provider_id}:${monthYear}`;

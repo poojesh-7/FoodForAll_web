@@ -407,8 +407,8 @@ export async function getSettlementRuns(params: {
 
 export async function getAdminSettlementRecords(params: {
   providerId: DbId;
-  year: number;
-  month: number;
+  year?: number;
+  month?: number;
   limit?: number;
   page?: number;
 }): Promise<{
@@ -461,7 +461,12 @@ export async function settleMonth(
   providerId: DbId,
   year: number,
   month: number,
-  payload: { paid_amount?: number | string; payment_reference?: string; notes?: string } = {}
+  payload: {
+    paid_amount?: number | string;
+    payment_reference?: string;
+    notes?: string;
+    cutoff_date?: string;
+  } = {}
 ): Promise<{ settled_count: number; total_amount: number | string }> {
   const { data } = await api.patch<
     BatchSettleMonthResponse | { settled_count: number; total_amount: number | string }

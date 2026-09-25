@@ -1331,6 +1331,37 @@ exports.getAdminSettlementRecords = async (req, res) => {
   }
 };
 
+exports.getAdminPendingCarryForwardSettlementRecords = async (req, res) => {
+  const providerId = req.query.providerId || req.query.provider_id;
+  if (!providerId || !isValidId(providerId)) {
+    return res.status(400).json({ error: "Provider id is invalid" });
+  }
+
+  try {
+    const records = await listProviderSettlementRecords({
+      providerId,
+      year: req.query.year,
+      month: req.query.month,
+      limit: req.query.limit,
+      page: req.query.page,
+      offset: req.query.offset,
+      status: "all",
+      pendingCarryForwardOnly: true,
+    });
+    res.json({ records });
+  } catch (err) {
+    logger.error("Failed to fetch pending carry-forward settlement records", {
+      err,
+      adminId: req.user?.id,
+      providerId,
+      query: req.query,
+    });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to fetch pending carry-forward records",
+    });
+  }
+};
+
 async function recordSettlementAdminEvent(
   req,
   eventName,

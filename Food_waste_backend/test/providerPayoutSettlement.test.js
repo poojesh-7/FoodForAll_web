@@ -1249,6 +1249,33 @@ test("T-FIN-2 provider records include refunded settlement rows", async () => {
   assert.equal(refunded?.amount, 950);
 });
 
+test("pending carry-forward records use contiguous query parameters without year filter", async () => {
+  let queryText = "";
+  let queryParams = [];
+  const client = {
+    async query(sql, params) {
+      queryText = String(sql);
+      queryParams = params;
+      return { rows: [] };
+    },
+  };
+
+  const result = await listProviderSettlementRecords({
+    client,
+    providerId: PROVIDER_ID,
+    pendingCarryForwardOnly: true,
+    limit: 10,
+    page: 1,
+    ensureSchema: false,
+  });
+
+  assert.deepEqual(queryParams, [PROVIDER_ID, 10, 0]);
+  assert.match(queryText, /LIMIT \$2 OFFSET \$3/);
+  assert.match(queryText, /COALESCE\(ps\.manual_carry_forward_amount, 0\) = 0/);
+  assert.match(queryText, /release_entry\.event_type = 'provider_refund_liability_released'/);
+  assert.equal(result.count, 0);
+});
+
 test("T-FIN-2 failed settlement remains outstanding and does not reduce amount due or pending earnings", async () => {
   const client = createProviderFinanceClient();
 

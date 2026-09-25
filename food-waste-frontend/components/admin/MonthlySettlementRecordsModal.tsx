@@ -47,6 +47,7 @@ export function MonthlySettlementRecordsModal({
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [recordCount, setRecordCount] = useState(0);
+  const [showPendingCarryForwardOnly, setShowPendingCarryForwardOnly] = useState(false);
   const [carryForwardModal, setCarryForwardModal] = useState<{
     isOpen: boolean;
     settlementId?: DbId;
@@ -58,7 +59,10 @@ export function MonthlySettlementRecordsModal({
     try {
       setLoading(true);
       setError("");
-      const result = await adminService.getAdminSettlementRecords({
+      const fetchRecords = showPendingCarryForwardOnly
+        ? adminService.getAdminPendingCarryForwardSettlementRecords
+        : adminService.getAdminSettlementRecords;
+      const result = await fetchRecords({
         providerId,
         year,
         limit: 10,
@@ -75,7 +79,7 @@ export function MonthlySettlementRecordsModal({
     } finally {
       setLoading(false);
     }
-  }, [providerId, year]);
+  }, [providerId, showPendingCarryForwardOnly, year]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -85,7 +89,7 @@ export function MonthlySettlementRecordsModal({
   }, [isOpen, loadRecords]);
 
   const handleCarryForwardSuccess = async () => {
-    await loadRecords(page);
+    await loadRecords(showPendingCarryForwardOnly ? 1 : page);
     toast.success("Settlement data refreshed");
   };
 
@@ -115,6 +119,16 @@ export function MonthlySettlementRecordsModal({
           </div>
 
           <div className="p-6">
+            <label className="mb-4 inline-flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={showPendingCarryForwardOnly}
+                onChange={(event) => setShowPendingCarryForwardOnly(event.target.checked)}
+                className="size-4 rounded border-zinc-300 text-amber-600 focus:ring-amber-500"
+              />
+              Show records awaiting carry forward
+            </label>
+
             {error && (
               <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {error}
@@ -128,7 +142,9 @@ export function MonthlySettlementRecordsModal({
             ) : records.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-zinc-600">
-                  No settlement records found for {year || "All Years"}
+                  {showPendingCarryForwardOnly
+                    ? "No records are awaiting carry forward."
+                    : `No settlement records found for ${year || "All Years"}`}
                 </p>
               </div>
             ) : (

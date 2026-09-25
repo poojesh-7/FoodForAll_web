@@ -36,6 +36,10 @@ router.get(
 );
 router.get("/settlements", adminCtrl.getProviderSettlementConsole);
 router.get("/settlements/monthly", adminCtrl.getMonthlySettlementConsole);
+router.get(
+  "/settlements/records/pending-carry-forward",
+  adminCtrl.getAdminPendingCarryForwardSettlementRecords,
+);
 router.get("/settlements/records", adminCtrl.getAdminSettlementRecords);
 router.get("/settlements/runs", adminCtrl.getSettlementRuns);
 router.patch(

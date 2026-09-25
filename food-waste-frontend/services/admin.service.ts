@@ -405,21 +405,28 @@ export async function getSettlementRuns(params: {
   return getEnvelopeData<{ runs: { records: ProviderSettlementRunRow[]; limit: number; offset: number; count: number } }>(data).runs;
 }
 
-export async function getAdminSettlementRecords(params: {
+type AdminSettlementRecordsParams = {
   providerId: DbId;
   year?: number;
   month?: number;
   limit?: number;
   page?: number;
-}): Promise<{
+};
+
+type AdminSettlementRecordsResult = {
   records: AdminProviderSettlementRow[];
   limit: number;
   offset: number;
   page: number;
   pageCount: number;
   count: number;
-}> {
-  const { data } = await api.get("/admin/settlements/records", { params });
+};
+
+async function getSettlementRecordsFromEndpoint(
+  endpoint: string,
+  params: AdminSettlementRecordsParams,
+): Promise<AdminSettlementRecordsResult> {
+  const { data } = await api.get(endpoint, { params });
   return getEnvelopeData<{
     records: {
       records: AdminProviderSettlementRow[];
@@ -430,6 +437,21 @@ export async function getAdminSettlementRecords(params: {
       count: number;
     };
   }>(data).records;
+}
+
+export async function getAdminSettlementRecords(
+  params: AdminSettlementRecordsParams,
+): Promise<AdminSettlementRecordsResult> {
+  return getSettlementRecordsFromEndpoint("/admin/settlements/records", params);
+}
+
+export async function getAdminPendingCarryForwardSettlementRecords(
+  params: AdminSettlementRecordsParams,
+): Promise<AdminSettlementRecordsResult> {
+  return getSettlementRecordsFromEndpoint(
+    "/admin/settlements/records/pending-carry-forward",
+    params,
+  );
 }
 
 async function patchProviderSettlement(
@@ -995,6 +1017,7 @@ export const adminService = {
   getProviderSettlementConsole,
   getMonthlySettlementConsole,
   getAdminSettlementRecords,
+  getAdminPendingCarryForwardSettlementRecords,
   getSettlementRuns,
   markProviderSettlementPaid,
   markProviderSettlementFailed,

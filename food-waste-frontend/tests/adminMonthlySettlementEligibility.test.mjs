@@ -99,9 +99,14 @@ test("monthly and view-record counts come from different audited populations", (
   assert.match(page, /recordCount: monthly\.record_count/);
   assert.match(adminService, /"\/admin\/settlements\/monthly"/);
   assert.match(recordsModal, /getAdminSettlementRecords/);
-  assert.match(recordsModal, /Showing \{recordCount\} records, including settlement runs/);
+  assert.match(recordsModal, /Showing \{recordCount\} records/);
+  assert.match(recordsModal, /checked=\{showPendingCarryForwardOnly\}/);
+  assert.match(recordsModal, /getAdminPendingCarryForwardSettlementRecords/);
+  assert.match(recordsModal, /No records are awaiting carry forward\./);
+  assert.match(adminService, /\/admin\/settlements\/records\/pending-carry-forward/);
+  assert.match(controller, /pendingCarryForwardOnly: true/);
   assert.match(controller, /listProviderSettlementRecords\(\{[\s\S]*status: "all"/);
-  assert.match(providerPayoutService, /const includeSettlementRuns = !normalizedStatus \|\| normalizedStatus === "all" \|\| normalizedStatus === "settled"/);
+  assert.match(providerPayoutService, /const includeSettlementRuns = !pendingCarryForwardOnly && \(!normalizedStatus \|\| normalizedStatus === "all" \|\| normalizedStatus === "settled"\)/);
   assert.match(providerPayoutService, /UNION ALL\s*\$\{runRecords\}/);
   assert.match(providerPayoutService, /FROM provider_settlement_runs/);
   assert.match(providerPayoutService, /COUNT\(\*\) OVER\(\)::int AS total_count/);

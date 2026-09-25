@@ -1689,6 +1689,7 @@ async function listProviderSettlementRecords({
   year,
   month,
   status,
+  pendingCarryForwardOnly = false,
   limit = 50,
   page = 1,
   offset = 0,
@@ -1713,7 +1714,33 @@ async function listProviderSettlementRecords({
   }
 
   const normalizedStatus = String(status || "").toLowerCase();
-  const includeSettlementRuns = !normalizedStatus || normalizedStatus === "all" || normalizedStatus === "settled";
+  const includeSettlementRuns = !pendingCarryForwardOnly && (!normalizedStatus || normalizedStatus === "all" || normalizedStatus === "settled");
+  if (pendingCarryForwardOnly) {
+    whereClauses.push(`
+      ps.status IN ('pending', 'processing', 'failed')
+      AND LEAST(ps.amount, COALESCE((
+        SELECT SUM(refund_entry.amount)
+        FROM financial_ledger_entries refund_entry
+        WHERE refund_entry.reservation_id = ps.reservation_id
+          AND refund_entry.payment_session_id = ps.payment_session_id
+          AND refund_entry.event_type = 'refund_issued'
+      ), 0)) > 0
+      AND COALESCE(ps.manual_carry_forward_amount, 0) = 0
+      AND COALESCE((
+        SELECT SUM(release_entry.amount)
+        FROM financial_ledger_entries release_entry
+        WHERE release_entry.event_type = 'provider_refund_liability_released'
+          AND release_entry.refund_id IN (
+            SELECT refund_entry.refund_id
+            FROM financial_ledger_entries refund_entry
+            WHERE refund_entry.reservation_id = ps.reservation_id
+              AND refund_entry.payment_session_id = ps.payment_session_id
+              AND refund_entry.event_type = 'refund_issued'
+              AND refund_entry.refund_id IS NOT NULL
+          )
+      ), 0) = 0
+    `);
+  }
   if (normalizedStatus && normalizedStatus !== 'all') {
     // Map friendly status to underlying status lists
     let statuses = [];
@@ -1809,8 +1836,11 @@ async function listProviderSettlementRecords({
     : Math.max(Math.floor(Number(offset) / safeLimit) + 1, 1);
   const safeOffset = (safePage - 1) * safeLimit;
   const runParams = [...params];
-  const runWhere = [`provider_id = $${runParams.length + 1}`];
-  runParams.push(providerId);
+  const runWhere = [];
+  if (includeSettlementRuns) {
+    runWhere.push(`provider_id = $${runParams.length + 1}`);
+    runParams.push(providerId);
+  }
   let runIndex = runParams.length + 1;
   if (includeSettlementRuns) {
     if (year && month) {

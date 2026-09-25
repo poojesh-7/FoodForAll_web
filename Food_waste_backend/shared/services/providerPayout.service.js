@@ -1741,7 +1741,7 @@ async function listProviderSettlementRecords({
       ), 0) = 0
     `);
   }
-  if (normalizedStatus && normalizedStatus !== 'all') {
+  if (normalizedStatus && normalizedStatus !== 'all' && normalizedStatus !== 'settled') {
     // Map friendly status to underlying status lists
     let statuses = [];
     if (normalizedStatus === 'refunded') {
@@ -1755,6 +1755,9 @@ async function listProviderSettlementRecords({
       whereClauses.push(`ps.status = ANY($${paramIndex}::text[])`);
       params.push(statuses);
       paramIndex++;
+      if (normalizedStatus === 'pending') {
+        whereClauses.push("fle.id IS NULL");
+      }
     }
   }
 
@@ -1835,7 +1838,7 @@ async function listProviderSettlementRecords({
     ? Math.floor(parsedPage)
     : Math.max(Math.floor(Number(offset) / safeLimit) + 1, 1);
   const safeOffset = (safePage - 1) * safeLimit;
-  const runParams = [...params];
+  const runParams = normalizedStatus === "settled" ? [] : [...params];
   const runWhere = [];
   if (includeSettlementRuns) {
     runWhere.push(`provider_id = $${runParams.length + 1}`);

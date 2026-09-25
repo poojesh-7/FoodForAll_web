@@ -1276,6 +1276,41 @@ test("pending carry-forward records use contiguous query parameters without year
   assert.equal(result.count, 0);
 });
 
+test("provider settlement record filters bind only referenced query parameters", async () => {
+  let queryText = "";
+  let queryParams = [];
+  const client = {
+    async query(sql, params) {
+      queryText = String(sql);
+      queryParams = params;
+      return { rows: [] };
+    },
+  };
+
+  for (const dateFilter of [{}, { year: 2026, month: 9 }]) {
+    for (const status of ["all", "pending", "settled", "refunded"]) {
+      await listProviderSettlementRecords({
+        client,
+        providerId: PROVIDER_ID,
+        ...dateFilter,
+        status,
+        limit: 10,
+        page: 1,
+        ensureSchema: false,
+      });
+
+      const referencedIndexes = [...new Set(
+        [...queryText.matchAll(/\$(\d+)/g)].map((match) => Number(match[1])),
+      )].sort((left, right) => left - right);
+      assert.deepEqual(
+        referencedIndexes,
+        Array.from({ length: queryParams.length }, (_, index) => index + 1),
+        `Expected contiguous SQL parameters for status ${status} and date filter ${JSON.stringify(dateFilter)}`,
+      );
+    }
+  }
+});
+
 test("T-FIN-2 failed settlement remains outstanding and does not reduce amount due or pending earnings", async () => {
   const client = createProviderFinanceClient();
 

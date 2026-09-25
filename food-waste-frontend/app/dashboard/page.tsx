@@ -21,6 +21,8 @@ import type {
 } from "@shared/contracts/api-contracts";
 import { useRouter } from "next/navigation";
 
+type SettlementRecordFilter = "all" | "pending" | "settled" | "refunded";
+
 function formatRestrictionDate(value: unknown) {
   if (!value) return null;
   const date = new Date(String(value));
@@ -267,6 +269,7 @@ export default function DashboardPage() {
     count: 0,
   });
   const [recordQuery, setRecordQuery] = useState<{ year: number; month: number } | null>(null);
+  const [recordFilter, setRecordFilter] = useState<SettlementRecordFilter>("all");
   const [accountType, setAccountType] =
     useState<ProviderPayoutAccountType>("UPI");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -295,13 +298,19 @@ export default function DashboardPage() {
     ).length / 10,
   );
 
-  async function loadSettlementRecords(year: number, month: number, page: number) {
+  async function loadSettlementRecords(
+    year: number,
+    month: number,
+    page: number,
+    status: SettlementRecordFilter = recordFilter,
+  ) {
     try {
       setRecordsLoading(true);
       setRecordsOpen(true);
       const response = await providerFinancialService.getSettlementRecords({
         year,
         month,
+        status,
         page,
         limit: 10,
       });
@@ -1031,7 +1040,8 @@ export default function DashboardPage() {
                                     className="rounded-md bg-zinc-100 px-3 py-1 text-sm"
                                     onClick={() => {
                                       setRecordQuery({ year: m.year, month: m.month });
-                                      void loadSettlementRecords(m.year, m.month, 1);
+                                      setRecordFilter("all");
+                                      void loadSettlementRecords(m.year, m.month, 1, "all");
                                     }}
                                   >
                                     View Records
@@ -1070,12 +1080,36 @@ export default function DashboardPage() {
                       <div className="p-3 sm:p-4">
                         <div className="mb-2 flex items-center justify-between">
                           <h4 className="text-sm font-semibold">Records</h4>
-                          <button onClick={() => { setRecordsOpen(false); setRecordRows([]); setRecordQuery(null); }} className="text-sm text-zinc-600">Close</button>
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 text-sm text-zinc-600">
+                              Status
+                              <select
+                                value={recordFilter}
+                                onChange={(event) => {
+                                  const status = event.target.value as SettlementRecordFilter;
+                                  setRecordFilter(status);
+                                  if (recordQuery) {
+                                    void loadSettlementRecords(recordQuery.year, recordQuery.month, 1, status);
+                                  }
+                                }}
+                                disabled={recordsLoading}
+                                className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-700"
+                              >
+                                <option value="all">All</option>
+                                <option value="pending">Pending</option>
+                                <option value="settled">Settled</option>
+                                <option value="refunded">Refunded</option>
+                              </select>
+                            </label>
+                            <button onClick={() => { setRecordsOpen(false); setRecordRows([]); setRecordQuery(null); setRecordFilter("all"); }} className="text-sm text-zinc-600">Close</button>
+                          </div>
                         </div>
                         {recordsLoading ? (
                           <p>Loading...</p>
                         ) : visibleRecordRows.length === 0 ? (
-                          <p className="text-sm text-zinc-600">No records for this month.</p>
+                          <p className="text-sm text-zinc-600">
+                            No {recordFilter === "all" ? "" : `${recordFilter} `}records for this month.
+                          </p>
                         ) : (
                           <div className="overflow-x-auto">
                             <table className="min-w-full divide-y divide-zinc-100 text-sm">
@@ -1124,7 +1158,7 @@ export default function DashboardPage() {
                             <div className="flex gap-2">
                               <button
                                 type="button"
-                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page - 1)}
+                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page - 1, recordFilter)}
                                 disabled={recordMeta.page <= 1 || recordsLoading}
                                 className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
                               >
@@ -1132,7 +1166,7 @@ export default function DashboardPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page + 1)}
+                                onClick={() => recordQuery && void loadSettlementRecords(recordQuery.year, recordQuery.month, recordMeta.page + 1, recordFilter)}
                                 disabled={recordMeta.page >= recordMeta.pageCount || recordsLoading}
                                 className="rounded-md border border-zinc-200 px-3 py-1 disabled:opacity-50"
                               >

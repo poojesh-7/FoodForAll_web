@@ -8,15 +8,16 @@ const { withWorkerBoundary } = require("../shared/utils/workerBoundary");
 const pool = require("../shared/config/db");
 const notificationQueue = require("../queues/notification.queue");
 const { findNearbyNGOs } = require("../services/geo.service");
+const { matchesExpiryDeadline } = require("../shared/utils/listingExpiry");
 
 const expiryAlertWorker = new Worker(
   "expiry-alert-queue",
   withWorkerBoundary("expiry-alert-queue", async (job) => {
     logger.info("Processing expiry alert", { listingId: job.data.listingId });
-    const { listingId } = job.data;
+    const { listingId, expectedEndTimeMs } = job.data;
 
     const listing = await pool.query(
-      `SELECT id,title,latitude,longitude,is_free
+      `SELECT id,title,latitude,longitude,is_free,pickup_end_time
        FROM food_listings
        WHERE id=$1 AND status='active'`,
       [listingId]
@@ -25,6 +26,13 @@ const expiryAlertWorker = new Worker(
     if (!listing.rows.length) return;
 
     const food = listing.rows[0];
+    if (
+      !matchesExpiryDeadline(expectedEndTimeMs, food.pickup_end_time) ||
+      new Date(food.pickup_end_time).getTime() <= Date.now()
+    ) {
+      logger.info("Skipping stale or overdue expiry alert", { listingId });
+      return;
+    }
 
     // No send alerts for paid food listings
     if (!food.is_free) {
@@ -57,6 +65,7 @@ const expiryAlertWorker = new Worker(
         type: "food_expiring",
         title: "Food Expiring Soon",
         message: `${food.title} will expire soon. Rescue it now!`,
+        idempotencyKey: `listing-expiry-alert:${listingId}:${expectedEndTimeMs ?? job.id}:${ngo.user_id}`,
         data: {
           href: "/ngo/nearby-listings",
           listing_id: listingId,

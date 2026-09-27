@@ -22,7 +22,7 @@ logger.info("Expiry worker started");
 const expiryWorker = new Worker(
   "expiry-queue",
   withWorkerBoundary("expiry-queue", async (job) => {
-    const { listingId } = job.data;
+    const { listingId, expectedEndTimeMs } = job.data;
 
     logger.info("Processing listing expiry", { listingId });
 
@@ -38,10 +38,15 @@ const expiryWorker = new Worker(
         `
         UPDATE food_listings
         SET status='expired'
-        WHERE id=$1 AND status IN ('active', 'completed')
+        WHERE id=$1
+          AND status IN ('active', 'completed')
+          AND pickup_end_time <= NOW()
+          AND ($2::double precision IS NULL
+            OR date_trunc('milliseconds', pickup_end_time) =
+              to_timestamp($2::double precision / 1000))
         RETURNING id, provider_id
         `,
-        [listingId]
+        [listingId, expectedEndTimeMs ?? null]
       );
 
       if (!listingResult.rows.length) {

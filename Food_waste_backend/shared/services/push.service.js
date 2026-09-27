@@ -2,7 +2,7 @@ const admin = require("../config/firebase");
 const pool = require("../config/db");
 const logger = require("../utils/logger");
 
-async function sendPush(userId, type, title, message) {
+async function sendPush(userId, type, title, message, notificationId) {
   if (!admin || !admin.messaging) {
     return;
   }
@@ -25,7 +25,11 @@ async function sendPush(userId, type, title, message) {
       },
       data: {
         type,
+        ...(notificationId ? { notification_id: String(notificationId) } : {}),
       },
+      ...(notificationId
+        ? { android: { notification: { tag: String(notificationId) } } }
+        : {}),
     });
   } catch (err) {
     logger.error("Push notification failed", { err, userId });

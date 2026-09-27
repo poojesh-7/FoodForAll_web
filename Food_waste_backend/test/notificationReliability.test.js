@@ -61,8 +61,8 @@ test("notifyUser persists notifications with queue idempotency before delivery",
     },
   });
   setCacheExport(PUSH_PATH, {
-    async sendPush(userId, type, title, message) {
-      pushes.push({ userId, type, title, message });
+    async sendPush(userId, type, title, message, notificationId) {
+      pushes.push({ userId, type, title, message, notificationId });
     },
   });
   setCacheExport(WEBPUSH_PATH, {
@@ -107,7 +107,15 @@ test("notifyUser persists notifications with queue idempotency before delivery",
       },
       options: { throwOnError: true },
     });
-    assert.equal(pushes.length, 1);
+    assert.deepEqual(pushes, [
+      {
+        userId: "22222222-2222-4222-8222-222222222222",
+        type: "queue_test",
+        title: "Queue Test",
+        message: "Retry-safe notification",
+        notificationId: "11111111-1111-4111-8111-111111111111",
+      },
+    ]);
     assert.deepEqual(browserPushEvents, [
       {
         notification: {

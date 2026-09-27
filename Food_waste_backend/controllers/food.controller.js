@@ -358,14 +358,7 @@ exports.getMyRestaurant = async (req, res) => {
 
 const expiryQueue = require("../queues/expiry.queue");
 const alertQueue = require("../queues/expiryAlert.queue");
-
-function expiryJobId(listingId) {
-  return `expiry-${listingId}`;
-}
-
-function expiryAlertJobId(listingId) {
-  return `alert-${listingId}`;
-}
+const { expiryJobIds } = require("../shared/utils/listingExpiry");
 
 function expiryDelayFromEndTime(endTimeMs) {
   return Math.max(endTimeMs - Date.now(), 0);
@@ -378,37 +371,45 @@ function expiryAlertDelayFromEndTime(endTimeMs) {
   );
 }
 
-async function removeExpiryJobs(listingId) {
+async function removeExpiryJobs(listingId, endTime) {
+  const {
+    expiryJobId,
+    alertJobId,
+    legacyExpiryJobId,
+    legacyAlertJobId,
+  } = expiryJobIds(listingId, endTime);
   await Promise.all([
-    expiryQueue.remove(expiryJobId(listingId)),
-    alertQueue.remove(expiryAlertJobId(listingId)),
+    expiryQueue.remove(expiryJobId),
+    alertQueue.remove(alertJobId),
+    expiryQueue.remove(legacyExpiryJobId),
+    alertQueue.remove(legacyAlertJobId),
   ]);
 }
 
 async function scheduleExpiryJobs(listingId, endTimeMs) {
+  const { expiryJobId, alertJobId, expectedEndTimeMs } = expiryJobIds(
+    listingId,
+    endTimeMs
+  );
+
   await Promise.all([
     expiryQueue.add(
       "expire-food",
-      { listingId },
+      { listingId, expectedEndTimeMs },
       jobOptions("critical", {
         delay: expiryDelayFromEndTime(endTimeMs),
-        jobId: expiryJobId(listingId),
+        jobId: expiryJobId,
       })
     ),
     alertQueue.add(
       "expiry-alert",
-      { listingId },
+      { listingId, expectedEndTimeMs },
       jobOptions("critical", {
         delay: expiryAlertDelayFromEndTime(endTimeMs),
-        jobId: expiryAlertJobId(listingId),
+        jobId: alertJobId,
       })
     ),
   ]);
-}
-
-async function rescheduleExpiryJobs(listingId, endTimeMs) {
-  await removeExpiryJobs(listingId);
-  await scheduleExpiryJobs(listingId, endTimeMs);
 }
 
 exports.createFood = async (req, res) => {
@@ -1002,11 +1003,18 @@ exports.updateFood = async (req, res) => {
       new Date(current.pickup_end_time).getTime() !==
       new Date(responseListing.pickup_end_time).getTime();
 
-    if (expiryTimingChanged) {
-      await rescheduleExpiryJobs(id, endTime);
-    }
+    if (expiryTimingChanged) await scheduleExpiryJobs(id, endTime);
 
     await client.query("COMMIT");
+
+    if (expiryTimingChanged) {
+      await removeExpiryJobs(id, current.pickup_end_time).catch((err) => {
+        logger.warn("Previous listing expiry job cleanup failed", {
+          err,
+          listingId: id,
+        });
+      });
+    }
 
     await deleteRemovedImages(removedPublicIds);
 
@@ -1087,9 +1095,14 @@ exports.deleteFood = async (req, res) => {
       [id],
     );
 
-    await removeExpiryJobs(id);
-
     await client.query("COMMIT");
+
+    await removeExpiryJobs(id, food.rows[0].pickup_end_time).catch((err) => {
+      logger.warn("Deleted listing expiry job cleanup failed", {
+        err,
+        listingId: id,
+      });
+    });
 
     await publishListingUpdated(id, {
       action: "deleted",

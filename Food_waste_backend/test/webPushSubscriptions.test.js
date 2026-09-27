@@ -21,6 +21,19 @@ test("web-push payload validation rejects invalid browser subscription payloads"
   );
 });
 
+test("browser push payload uses a stable, non-renotifying notification tag", () => {
+  const notificationId = "11111111-1111-4111-8111-111111111111";
+  const payload = webPushService.buildPushPayload({
+    id: notificationId,
+    type: "reservation_created",
+    title: "Reservation confirmed",
+    message: "Your reservation is ready",
+  });
+
+  assert.equal(payload.tag, notificationId);
+  assert.equal(payload.renotify, false);
+});
+
 test("web-push subscription validation rejects non-HTTPS endpoints", () => {
   assert.equal(
     webPushService.isSubscriptionPayloadValid({

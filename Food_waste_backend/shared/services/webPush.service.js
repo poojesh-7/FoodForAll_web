@@ -58,7 +58,8 @@ function buildPushPayload(notification, extraData = {}) {
 
   return {
     ...payload,
-    renotify: true,
+    tag: notification?.id ? String(notification.id) : payload.tag,
+    renotify: false,
     requireInteraction: false,
   };
 }

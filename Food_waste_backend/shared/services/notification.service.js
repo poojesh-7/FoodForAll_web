@@ -38,7 +38,7 @@ async function notifyUser(userId, type, title, message, data = {}, options = {})
     { throwOnError: true }
   );
 
-  await sendPush(userId, type, title, message);
+  await sendPush(userId, type, title, message, notification?.id);
 
   try {
     await sendBrowserPushNotification(notification, data);

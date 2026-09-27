@@ -1,9 +1,7 @@
 const { Worker } = require("bullmq");
 const connection = require("../shared/config/bullmq");
 
-const redis = require("../shared/config/redis");
 const pool = require("../shared/config/db");
-const notificationQueue = require("../queues/notification.queue");
 const logger = require("../shared/utils/logger");
 const { registerWorkerEvents } = require("../shared/utils/queueEvents");
 const { workerOptions } = require("../shared/utils/queueOptions");
@@ -17,17 +15,9 @@ const { retainReliabilityDeposit } = require("../shared/services/payment.service
 const {
   recordReservationLifecycleTrustEvents,
 } = require("../shared/services/trustEnforcement.service");
-
-
-/*
-Socket publisher (unchanged)
-*/
-async function publishSocketEvent(room, event, data) {
-  await redis.publish(
-    "socket_events",
-    JSON.stringify({ room, event, data })
-  );
-}
+const {
+  enqueueNotificationOutbox,
+} = require("../shared/services/notificationOutbox.service");
 
 async function penalizeVolunteer(client, volunteerId, reservationId, reason) {
   await client.query(
@@ -131,18 +121,8 @@ const deliveryTimeoutWorker = new Worker(
         terminalReason: "volunteer_delivery_failed",
       });
 
-      await client.query("COMMIT");
-      await Promise.all([
-        publishReservationUpdated(reservationId, { action: "expired" }),
-        publishVolunteerUpdated(reservationId, { action: "delivery_timeout" }),
-        publishTaskAvailabilityUpdated(reservationId, { action: "unavailable" }),
-      ]);
-
-      /*
-      Notifications
-      */
-
-      await notificationQueue.add("notify-user", {
+      await enqueueNotificationOutbox(client, {
+        idempotencyKey: `delivery-timeout:${reservationId}:${r.assigned_volunteer_id}`,
         userId: r.assigned_volunteer_id,
         type: "delivery_failed",
         title: "Delivery Failed",
@@ -151,13 +131,16 @@ const deliveryTimeoutWorker = new Worker(
           href: "/volunteer/tasks",
           reservation_id: reservationId,
         },
-});
+        socketEvent: "task:failed",
+        socketData: { reservation_id: reservationId },
+      });
 
-      await publishSocketEvent(
-        `user:${r.assigned_volunteer_id}`,
-        "task:failed",
-        { reservation_id: reservationId }
-      );
+      await client.query("COMMIT");
+      await Promise.all([
+        publishReservationUpdated(reservationId, { action: "expired" }),
+        publishVolunteerUpdated(reservationId, { action: "delivery_timeout" }),
+        publishTaskAvailabilityUpdated(reservationId, { action: "unavailable" }),
+      ]);
 
       logger.info("Delivery timeout handled", { reservationId });
     } catch (err) {

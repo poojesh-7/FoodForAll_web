@@ -182,6 +182,8 @@ test("appendTrustEvent inserts once and protects duplicate event keys", async ()
   assert.equal(first.inserted, true);
   assert.equal(duplicate.inserted, false);
   assert.equal(queue.jobs.length, 1);
+  assert.doesNotMatch(queue.jobs[0].opts.jobId, /:/);
+  assert.equal(queue.jobs[0].data.eventKey, input.eventKey);
   assert.match(db.queries[0].sql, /ON CONFLICT \(event_key\) DO NOTHING/);
 });
 

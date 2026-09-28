@@ -1,7 +1,4 @@
-const {
-  isProductionLike,
-  validateEnvironment,
-} = require("../../shared/config/env");
+const { validateEnvironment } = require("../../shared/config/env");
 validateEnvironment();
 const logger = require("../../shared/utils/logger");
 const {
@@ -72,9 +69,7 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function startWorkers() {
-  if (isProductionLike(process.env.APP_ENV)) {
-    await assertMigrationsCurrent();
-  }
+  await assertMigrationsCurrent();
 
   require("../../workers/expiry.worker");
   require("../../workers/notification.worker");

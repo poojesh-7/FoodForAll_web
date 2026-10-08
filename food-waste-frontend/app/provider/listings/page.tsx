@@ -14,6 +14,7 @@ import {
   getListingPrice,
   isFreeRescueListing,
 } from "@/lib/food";
+import { isActiveListing } from "@/lib/listingLifecycle";
 import { mergeListingRows } from "@/lib/realtimeMerge";
 import { foodService } from "@/services/food.service";
 import { isPendingVerificationError, pendingVerificationRoute } from "@/lib/onboarding";
@@ -34,19 +35,6 @@ type ListingView = "active" | "history";
 function toNumber(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
-}
-
-function isActiveListing(listing: FoodListingRow) {
-  if (listing.is_deleted || listing.status === "deleted") return false;
-
-  const status = String(listing.status ?? "active").toLowerCase();
-  const pickupEnd = listing.pickup_end_time
-    ? new Date(listing.pickup_end_time).getTime()
-    : Number.NaN;
-  const hasFuturePickup = Number.isFinite(pickupEnd) ? pickupEnd > Date.now() : true;
-  const remaining = toNumber(listing.remaining_quantity ?? listing.quantity);
-
-  return status === "active" && hasFuturePickup && remaining > 0;
 }
 
 function getListingStatusLabel(listing: FoodListingRow) {

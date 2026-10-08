@@ -76,6 +76,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+@media (max-width: 63.999rem) {
+  body.has-mobile-bottom-navigation {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 :where(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;

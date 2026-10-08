@@ -418,7 +418,7 @@ export default function AppNavigation() {
                 key={`${item.href}-${item.label}`}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-16 flex-1 items-center justify-center gap-1.5 px-2 text-sm font-semibold transition-colors ${
+                className={`flex min-h-16 flex-1 items-center justify-center gap-2 px-3 text-sm font-semibold transition-colors ${
                   index > 0 ? "border-l border-[var(--border)]" : ""
                 } ${
                   active
@@ -427,8 +427,27 @@ export default function AppNavigation() {
                 }`}
               >
                 <span>{item.label}</span>
-                <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs font-semibold text-[var(--text-secondary)]">
-                  ({count ?? "..."})
+
+                <span
+                  className="
+                    inline-flex
+                    h-6
+                    w-6
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-full
+                    border
+                    border-[var(--border)]
+                    bg-[var(--surface)]
+                    text-[12px]
+                    font-semibold
+                    leading-none
+                    tabular-nums
+                    text-[var(--text-primary)]
+                  "
+                >
+                  {count ?? "..."}
                 </span>
               </Link>
             );
